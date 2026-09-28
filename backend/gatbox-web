@@ -9,13 +9,15 @@
   /csv/<csv>             download the raw CSV
   /font/<file>           the two UI fonts, from $GATBOX_WEB_FONTS (the hotspot has no internet)
   POST /control          action=start|stop: flag files in $STATE_DIRECTORY that gatbox-raillog polls
+  GET  /kiosk/state      {"exit_at": <epoch of the last EXIT KIOSK, 0 if none>}, polled by gatbox-kiosk-launch
+  POST /kiosk/exit       EXIT KIOSK (loopback only: the 7" itself, never a phone); closes the kiosk for this login
                          ("stopped" exists = don't log; "start-request" newer than the session = new file)
 
 Stdlib only. Runs gatbox-rail-report for the analysis so the numbers match the CLI.
 Plots are cached in $CACHE_DIRECTORY, keyed by file size+mtime and window.
 The meter mode (DC voltage, resistance, ...) comes from the CSV's unit + flags columns.
 """
-import functools, html, io, math, os, re, subprocess, sys, textwrap, threading, time
+import functools, html, io, json, math, os, re, subprocess, sys, textwrap, threading, time
 from collections import namedtuple
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
@@ -97,6 +99,31 @@ def reading(raw, m):
     return f"{raw} {m.unit}".rstrip()
 
 
+def kiosk_exit_at():
+    try:
+        with open(os.path.join(CTRL, "kiosk-exit")) as f:
+            return int(f.read().strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+# EXIT KIOSK: shown only to the Pi's own screen. A long-press (1.5 s), so a stray tap in a cabinet can't close it.
+KIOSK_EXIT = """<div class="card kx"><button id="kx" type="button">Hold to exit kiosk</button>
+<span class="mut">This screen only. Closes the kiosk until the next login; gatbox-kiosk off keeps it off.</span></div>
+<script>
+(function () {
+  const b = document.getElementById('kx');
+  let t = null;
+  const stop = () => { clearTimeout(t); b.classList.remove('arm'); if (!b.dataset.done) b.textContent = 'Hold to exit kiosk'; };
+  b.addEventListener('pointerdown', e => {
+    e.preventDefault(); b.classList.add('arm'); b.textContent = 'Keep holding…';
+    t = setTimeout(() => { b.dataset.done = 1; b.textContent = 'Closing…'; fetch('/kiosk/exit', {method: 'POST'}); }, 1500);
+  });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(k => b.addEventListener(k, stop));
+})();
+</script>"""
+
+
 def warnings(flags, when):
     w = dict(WARN[f] for f in sorted(flags))
     return "".join(f'<div class="warn">{html.escape(k)} {when}: {v}</div>' for k, v in w.items())
@@ -131,6 +158,8 @@ button.stop{background:transparent;color:var(--bad);border-color:var(--bad);marg
 .mode{display:inline-block;padding:0 8px;border:1px solid var(--cyan);border-radius:999px;color:var(--cyan);
 background:rgba(125,250,255,.08);box-shadow:0 0 6px rgba(125,250,255,.25);font:13px/1.5 var(--mono);
 vertical-align:middle;text-shadow:none}.modes div{margin-top:5px}.modes .warn{font-size:14px}
+.kx button{min-height:56px;background:transparent;color:var(--mut);border-color:var(--line);margin-right:10px}
+.kx button.arm{color:var(--bad);border-color:var(--bad);box-shadow:0 0 10px rgba(255,77,109,.45)}
 .cyan{color:var(--cyan)}.clk{display:inline-block;padding:0 6px;border:1px solid currentColor;border-radius:4px;
 font:12px/1.5 var(--mono);vertical-align:middle;font-weight:normal}
 """
@@ -364,6 +393,8 @@ class H(BaseHTTPRequestHandler):
         try:
             if u.path in ("/", ""):
                 return self.index(q)
+            if u.path == "/kiosk/state":
+                return self.send(200, json.dumps({"exit_at": kiosk_exit_at()}), "application/json")
             if len(parts) == 2 and parts[0] == "font" and parts[1] in FONT_FILES:
                 try:
                     with open(os.path.join(FONTS, parts[1]), "rb") as f:
@@ -393,8 +424,19 @@ class H(BaseHTTPRequestHandler):
         except Exception as e:  # keep serving; show the error instead of a dropped connection
             self.send(500, page("Error", f"<h1>Error</h1><pre>{html.escape(repr(e))}</pre>"))
 
+    def is_local(self):
+        return self.client_address[0] in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
     def do_POST(self):
         u = urlsplit(self.path)
+        if u.path == "/kiosk/exit":
+            if not self.is_local():                    # only the screen on the Pi can close its own kiosk
+                return self.send(403, page("Forbidden", "<h1>EXIT KIOSK works on the Pi's own screen only</h1>"))
+            os.makedirs(CTRL, exist_ok=True)
+            with open(os.path.join(CTRL, "kiosk-exit"), "w") as f:
+                f.write(f"{int(time.time())}\n")
+            sys.stderr.write(f"{self.address_string()} kiosk: exit\n")
+            return self.send(204, b"")
         n = int(self.headers.get("Content-Length") or 0)
         form = parse_qs(self.rfile.read(min(n, 1024)).decode(errors="replace"))
         action = form.get("action", [""])[0]
@@ -461,7 +503,7 @@ class H(BaseHTTPRequestHandler):
                     '<div class="mut">Meter off, D02 head out of the top slot, or adapter unplugged.</div></div>')
         live = self.controls(is_live) + live
         body = (f'<h1>GATBOX rail log</h1><div class="mut">Pi time {time.strftime("%Y-%m-%d %H:%M:%S")}'
-                f' · refreshes every 30 s</div>{live}'
+                f' · refreshes every 30 s</div>{KIOSK_EXIT if self.is_local() else ""}{live}'
                 f'<form method="get" action="/"><span class="mut">Window (V)</span>'
                 f'<input name="lo" value="{lo:g}" inputmode="decimal"><input name="hi" value="{hi:g}" inputmode="decimal">'
                 f'<button>Apply</button></form>'

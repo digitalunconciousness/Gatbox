@@ -27,8 +27,10 @@
 #   5  files from this checkout (table below): logger, web view, RTC sync, hotspot fallback, tools, udev, journald,
 #      menu launcher
 #   6  services: gatbox-raillog, gatbox-web (+ its fonts), gatbox-rtc-sync.timer
-#   7  minipro (XGecu T48), built from a pinned upstream tag
-#   8  optional hotspot fallback
+#   7  desktop (for the sudo user): the 7" kiosk autostart (gatbox-kiosk on|off), Pi OS autotouch off and its
+#      port-pinned touch line removed, so the panel works on either HDMI port with real touch events
+#   8  minipro (XGecu T48), built from a pinned upstream tag
+#   9  optional hotspot fallback
 
 set -euo pipefail
 
@@ -47,6 +49,8 @@ backend/gatbox-ap-fallback                      /usr/local/sbin/gatbox-ap-fallba
 backend/gatbox-ap-fallback.service              /etc/systemd/system/gatbox-ap-fallback.service        644
 tools/gatbox-status                             /usr/local/bin/gatbox-status                          755
 tools/gatbox-rail-report                        /usr/local/bin/gatbox-rail-report                     755
+tools/gatbox-kiosk                              /usr/local/bin/gatbox-kiosk                           755
+backend/gatbox-kiosk-launch                     /usr/local/bin/gatbox-kiosk-launch                    755
 bootstrap/files/99-gatbox-dmm.rules             /etc/udev/rules.d/99-gatbox-dmm.rules                 644
 bootstrap/files/minipro-0.7.4/60-minipro.rules  /etc/udev/rules.d/60-minipro.rules                    644
 bootstrap/files/minipro-0.7.4/61-minipro-plugdev.rules /etc/udev/rules.d/61-minipro-plugdev.rules    644
@@ -54,6 +58,15 @@ bootstrap/files/minipro-0.7.4/61-minipro-uaccess.rules /etc/udev/rules.d/61-mini
 bootstrap/files/journald-gatbox.conf            /etc/systemd/journald.conf.d/gatbox.conf              644
 bootstrap/files/gatbox-rail-monitor.desktop     /usr/share/applications/gatbox-rail-monitor.desktop   644
 "
+# repo path -> path under the desktop user's home, mode (owned by that user). XDG autostart entries: the kiosk, and a
+# Hidden=true override that turns off Pi OS's autotouch (it pins touch to one USB + one HDMI port, with mouse emulation).
+USER_MANIFEST="
+bootstrap/files/user/gatbox-kiosk.desktop       .config/autostart/gatbox-kiosk.desktop                644
+bootstrap/files/user/autotouch-off.desktop      .config/autostart/autotouch.desktop                   644
+"
+# the line autotouch wrote into ~/.config/labwc/rc.xml for the Waveshare: removed, so touch stays unmapped (either
+# HDMI port, any USB port) and sends real touch events (no mouse emulation) for the dashboard's gestures
+TOUCH_LINE='<touch[^>]*deviceName="WaveShare WS170120'
 PKGS=(sigrok-cli python3-matplotlib rsync git curl util-linux-extra
       build-essential pkg-config libusb-1.0-0-dev zlib1g-dev       # minipro build
       mame)                                                        # mame -romident only, no gameplay
@@ -121,6 +134,19 @@ check_file() {   # <repo path> <installed path> <mode>
     elif ! cmp -s "$REPO/$1" "$2"; then DIFFS+=("update     $2")
     elif [ "$(stat -c %a "$2")" != "$3" ]; then DIFFS+=("mode $3   $2"); fi
 }
+user_manifest() { grep -v '^[[:space:]]*$' <<<"$USER_MANIFEST"; }
+put_user_file() {   # <repo path> <path under $HOME_U> <mode>: installed owned by the desktop user $U
+    local src="$REPO/$1" dst="$ROOT$HOME_U/$2"
+    [ -f "$src" ] || die "missing in the checkout: $1"
+    if [ -f "$dst" ] && cmp -s "$src" "$dst" && [ "$(stat -c %a "$dst")" = "$3" ]; then return 0; fi
+    if [ -n "$ROOT" ]; then
+        install -D -m "$3" "$src" "$dst"
+    else
+        install -d -m 755 -o "$U" -g "$(id -gn "$U")" "$(dirname "$dst")"
+        install -m "$3" -o "$U" -g "$(id -gn "$U")" "$src" "$dst"
+    fi
+    CHANGED+=("~$U/$2")
+}
 changed() {      # changed <glob>...: did this run change an installed path matching one of them?
     local p g
     for p in "${CHANGED[@]}"; do for g in "$@"; do [[ $p == $g ]] && return 0; done; done
@@ -136,14 +162,18 @@ font_ok() { echo "$2  $FONTDIR/$1" | sha256sum -c --status 2>/dev/null; }
 
 if [ "${1:-}" = "--extract" ]; then
     [ -n "${2:-}" ] || { echo "usage: $0 --extract DIR" >&2; exit 2; }
-    ROOT=${2%/}
+    ROOT=${2%/}; U=$(id -un); HOME_U=/home/$U
     while read -r src dst mode; do put_file "$src" "$dst" "$mode"; done < <(manifest)
+    while read -r src rel mode; do put_user_file "$src" "$rel" "$mode"; done < <(user_manifest)
     echo "${#CHANGED[@]} file(s) written under $ROOT"
     exit 0
 fi
 
 if [ "${1:-}" = "--check" ]; then
     while read -r src dst mode; do check_file "$src" "$dst" "$mode"; done < <(manifest)
+    while read -r src rel mode; do check_file "$src" "$HOME/$rel" "$mode"; done < <(user_manifest)
+    grep -qE "$TOUCH_LINE" "$HOME/.config/labwc/rc.xml" 2>/dev/null \
+        && DIFFS+=("edit       ~/.config/labwc/rc.xml: remove autotouch's port-pinned Waveshare touch line")
     for p in "${PKGS[@]}"; do pkg_ok "$p" || DIFFS+=("install    package $p"); done
     [ "$(minipro_version)" = "$MINIPRO_TAG" ] || DIFFS+=("build      minipro $MINIPRO_TAG (installed: $(minipro_version))")
     while read -r _ name sum; do font_ok "$name" "$sum" || DIFFS+=("fetch      font $name"); done < <(grep -v '^$' <<<"$FONTS")
@@ -164,6 +194,8 @@ MODEL=$( { tr -d '\0' < /proc/device-tree/model; } 2>/dev/null || echo unknown)
 case "$MODEL" in *"Pi 5"*) ;; *) warn "this is '$MODEL', not a Pi 5. Continuing, but the power fix is Pi 5-specific." ;; esac
 U="${SUDO_USER:-}"
 [ -n "$U" ] && [ "$U" != root ] || die "run via sudo from your normal user (so groups land on the right account)"
+HOME_U=$(getent passwd "$U" | cut -d: -f6)
+[ -d "$HOME_U" ] || die "no home directory for $U"
 AP="${GATBOX_AP_PSK:-}"
 if [ -n "$AP" ] && [ "$AP" != off ]; then
     [ "${#AP}" -ge 8 ] && [ "${#AP}" -le 63 ] || die "GATBOX_AP_PSK must be 8-63 characters (or 'off')"
@@ -176,7 +208,7 @@ printf '%sGDD-GAT/01 bootstrap%s  %s  %s  user=%s  checkout=%s (%s)\n' "$M" "$N"
     "$(git -c safe.directory="$REPO" -C "$REPO" describe --always --dirty 2>/dev/null || echo ?)"
 
 # 1 ---------------------------------------------------------------------------
-step "1/8 packages"
+step "1/9 packages"
 missing=()
 for p in "${PKGS[@]}"; do pkg_ok "$p" || missing+=("$p"); done
 if ((${#missing[@]})); then
@@ -192,7 +224,7 @@ if grep -q 'uni-t-ut61e-ser' <<<"$drivers"; then log "driver uni-t-ut61e-ser pre
 else warn "uni-t-ut61e-ser not listed by sigrok-cli -L; check before trusting the logger"; fi
 
 # 2 ---------------------------------------------------------------------------
-step "2/8 serial-port squatters"
+step "2/9 serial-port squatters"
 safe_purge() {   # purge only if nothing else would go with it; otherwise mask the services
     local pkg=$1; shift
     if ! dpkg -s "$pkg" >/dev/null 2>&1; then log "$pkg not installed"; return; fi
@@ -210,7 +242,7 @@ safe_purge modemmanager ModemManager.service
 safe_purge brltty brltty.service brltty-udev.service
 
 # 3 ---------------------------------------------------------------------------
-step "3/8 groups, I2C, SPI, hostname"
+step "3/9 groups, I2C, SPI, hostname"
 need=()
 for g in dialout plugdev gpio i2c spi video; do
     getent group "$g" >/dev/null || continue
@@ -233,7 +265,7 @@ case "$(hostname)" in
 esac
 
 # 4 ---------------------------------------------------------------------------
-step "4/8 power: no-PD supply fix; RTC charging guard"
+step "4/9 power: no-PD supply fix; RTC charging guard"
 if [ "${GATBOX_PSU_5A:-1}" = 1 ]; then
     cur=$(rpi-eeprom-config 2>/dev/null || true)
     if grep -q '^PSU_MAX_CURRENT=5000$' <<<"$cur"; then
@@ -275,7 +307,7 @@ else
 fi
 
 # 5 ---------------------------------------------------------------------------
-step "5/8 files from the checkout"
+step "5/9 files from the checkout"
 while read -r src dst mode; do put_file "$src" "$dst" "$mode"; done < <(manifest)
 if ((${#CHANGED[@]})); then printf '   written: %s\n' "${CHANGED[@]}"; else log "all $(manifest | wc -l) files already match the checkout"; fi
 if changed '/etc/udev/rules.d/*'; then
@@ -294,7 +326,7 @@ fi
 changed '/etc/systemd/system/*' && systemctl daemon-reload && log "systemd units reloaded"
 
 # 6 ---------------------------------------------------------------------------
-step "6/8 services"
+step "6/9 services"
 svc() {   # <unit> <installed path glob>...: enable it; restart only if its files changed; start it if it's down
     local unit=$1; shift
     systemctl enable "$unit" >/dev/null 2>&1
@@ -326,7 +358,22 @@ log "RTC stamp: $(cat /var/lib/gatbox/rtc-synced 2>/dev/null || echo 'none yet (
     "charging_voltage $(cat /sys/class/rtc/rtc0/charging_voltage 2>/dev/null || echo n/a) (0 = off)"
 
 # 7 ---------------------------------------------------------------------------
-step "7/8 minipro $MINIPRO_TAG (XGecu T48)"
+step "7/9 desktop: 7\" kiosk + touch (either HDMI port)"
+while read -r src rel mode; do put_user_file "$src" "$rel" "$mode"; done < <(user_manifest)
+changed "~$U/.config/autostart/*" && log "autostart: gatbox-kiosk on; Pi OS autotouch off (for $U)"
+RC="$HOME_U/.config/labwc/rc.xml"
+if [ -f "$RC" ] && grep -qE "$TOUCH_LINE" "$RC"; then
+    cp -p "$RC" "$RC.pre-gatbox-touch"
+    sed -i -E "/$TOUCH_LINE/d" "$RC"
+    chown "$U:$(id -gn "$U")" "$RC"
+    CHANGED+=("~$U/.config/labwc/rc.xml")
+    log "rc.xml: autotouch's port-pinned Waveshare touch line removed (backup: $RC.pre-gatbox-touch)"
+    pkill -HUP -x -u "$U" labwc && log "labwc config reloaded"
+fi
+log "kiosk: $(cat "$HOME_U/.config/gatbox/kiosk" 2>/dev/null || echo on) at login  (as $U: gatbox-kiosk on|off|start|status)"
+
+# 8 ---------------------------------------------------------------------------
+step "8/9 minipro $MINIPRO_TAG (XGecu T48)"
 if [ "$(minipro_version)" = "$MINIPRO_TAG" ]; then
     log "minipro $MINIPRO_TAG already installed"
 else
@@ -345,8 +392,8 @@ else
 fi
 grep -q 'T48' <<<"$(minipro_info)" && log "T48 is in minipro's supported programmers (udev: plugdev group)"
 
-# 8 ---------------------------------------------------------------------------
-step "8/8 optional: fallback hotspot"
+# 9 ---------------------------------------------------------------------------
+step "9/9 optional: fallback hotspot"
 if [ "$AP" = off ]; then
     systemctl disable gatbox-ap-fallback.service >/dev/null 2>&1 || true
     nmcli connection delete gatbox-ap >/dev/null 2>&1 || true

@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# gatbox-kiosk-launch — the 7" dashboard kiosk. Started at desktop login by ~/.config/autostart/gatbox-kiosk.desktop
+# (XDG autostart, which adds to the desktop's own startup rather than replacing it). If the kiosk is on
+# (`gatbox-kiosk on|off`), it waits until gatbox-web answers, then runs Chromium full screen on the dashboard and
+# restarts it if it dies. EXIT KIOSK (a local-only long-press on the dashboard) ends it for this login/boot without
+# changing on/off; `gatbox-kiosk off` ends it and keeps it off from the next login.
+#
+# Port-agnostic: nothing here names an HDMI output. With one display (the Waveshare on either HDMI port) Chromium
+# goes full screen on it, and touch (left unmapped on purpose) covers it.
+set -u
+
+STATE="${XDG_CONFIG_HOME:-$HOME/.config}/gatbox/kiosk"            # "on" | "off"; missing = on
+PROFILE="${XDG_DATA_HOME:-$HOME/.local/share}/gatbox-kiosk"      # Chromium profile, separate from the desktop's
+BASE="${GATBOX_KIOSK_BASE:-http://127.0.0.1}"                    # gatbox-web (override: tests only)
+URL="${GATBOX_KIOSK_URL:-$BASE/}"                                # gatbox-web's / until the M5 dashboard (/dash/)
+BROWSER="${GATBOX_KIOSK_BROWSER:-chromium}"                      # override: tests only
+WAIT="${GATBOX_KIOSK_WAIT:-120}"                                 # seconds to wait for gatbox-web at boot
+say() { echo "gatbox-kiosk: $*"; }
+kiosk_on() { [ "$(cat "$STATE" 2>/dev/null || echo on)" = on ]; }
+
+kiosk_on || { say "off ($STATE); plain desktop"; exit 0; }
+mkdir -p "${XDG_RUNTIME_DIR:-/tmp}"
+exec 9>"${XDG_RUNTIME_DIR:-/tmp}/gatbox-kiosk.lock"
+flock -n 9 || { say "already running"; exit 0; }
+# Never blank while the kiosk runs (the 7" (C) has its own backlight switch). raspi-config's blanking is a swayidle
+# started from ~/.config/labwc/autostart: stop it for this login only, so the plain desktop keeps its setting.
+pkill -u "$(id -u)" -x swayidle && say "screen blanking (swayidle) stopped while the kiosk runs"
+
+# Chromium started before the page is up comes up white or on an error page: wait for gatbox-web first
+for ((i = 0; i < WAIT; i++)); do
+    curl -fs -o /dev/null --max-time 2 "$URL" && break
+    sleep 1
+done
+((i < WAIT)) || say "gatbox-web didn't answer in ${WAIT}s; starting anyway"
+# EXIT KIOSK: gatbox-web keeps the time of the last request. Remember it now; a different value later means someone
+# pressed it during this login. (A changed value, not a time comparison: NTP can step the clock after boot.)
+exit_at() { curl -fs --max-time 2 "$BASE/kiosk/state" 2>/dev/null | sed -n 's/.*"exit_at": *\([0-9]*\).*/\1/p'; }
+baseline=$(exit_at)
+pid=""
+trap '[ -n "$pid" ] && kill "$pid" 2>/dev/null; exit 0' TERM INT HUP
+
+while :; do
+    # A power cut leaves the profile marked "crashed", and Chromium then offers "Restore pages?". Mark it clean.
+    prefs="$PROFILE/Default/Preferences"
+    [ -f "$prefs" ] && sed -i 's/"exited_cleanly":false/"exited_cleanly":true/; s/"exit_type":"[A-Za-z]*"/"exit_type":"Normal"/' "$prefs"
+    flags=(
+        --kiosk                                  # full screen, no browser UI
+        --ozone-platform=wayland                 # native Wayland under labwc
+        --user-data-dir="$PROFILE"               # its own profile: no clash with the desktop Chromium
+        --no-first-run                           # no welcome / first-run pages
+        --noerrdialogs                           # no error dialogs over the dashboard
+        --disable-infobars                       # no "controlled by automated software" style bars
+        --password-store=basic                   # no keyring unlock prompt
+        --hide-crash-restore-bubble              # belt and braces with the Preferences fix above
+        --overscroll-history-navigation=0        # a sideways swipe doesn't navigate back
+        --disable-pinch                          # no browser pinch-zoom; the dashboard zooms its own graph
+        --disable-features=Translate             # no "translate this page?" bubble
+        --check-for-update-interval=31536000     # no update nags
+    )
+    say "starting $BROWSER on $URL"
+    "$BROWSER" "${flags[@]}" "$URL" >/dev/null 2>&1 &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep 2
+        now=$(exit_at)
+        if [ -n "$now" ] && [ "$now" != "$baseline" ]; then
+            say "EXIT KIOSK pressed; closing for this login (still $(cat "$STATE" 2>/dev/null || echo on) for the next)"
+            kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+            exit 0
+        fi
+    done
+    wait "$pid" 2>/dev/null
+    kiosk_on || { say "turned off; not restarting"; exit 0; }
+    say "$BROWSER exited; restarting in 2 s"
+    sleep 2
+done

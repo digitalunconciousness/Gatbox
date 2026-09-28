@@ -16,7 +16,10 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       line, web badge, tests (36 pass), installed 09:16, ⏸ offline warehouse test **passed** (notes below)
 - [x] **M2 2A foundation** (2026-09-28): repo layout, bootstrap installs from the checkout, logger SD sync,
       minipro 0.7.4 + mame 0.276 installed, GitHub (public, scrubbed), MAME smoke test, ⏸ T48 re-verify **passed**
-- [ ] **M3 2B face**: ⏸ panel connected; mode; touch; power; kiosk; blanking; ⏸ kiosk on/off reboots
+- [ ] **M3 2B face**: [x] ⏸ panel connected (HDMI0 now; either port supported) [x] mode (EDID 1024×600, both
+      ports, no cmdline.txt) [x] touch (unmapped + real touch; autotouch off) [x] kiosk + gatbox-kiosk + EXIT KIOSK
+      [x] blanking (never in kiosk) [x] tests (27) [ ] install (waiting on the owner's OK) [ ] power under load
+      [ ] ⏸ reboot tests (kiosk / off / on / other HDMI port)
 - [ ] **M4 2C backend**: 4a replay harness; 4b data model + logger header/marks/splits; 4c report; 4d JSON API
 - [ ] **M5 2D dashboard** at `/dash/`; screenshot tests; ⏸ on the real panel
 - [ ] **M6 2E scanner**: gatbox-scand; labels; ⏸ scan slug / MARK / NEW
@@ -119,6 +122,34 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   - For M7: minipro's chip-ID check caught a real mismatch and named the right part, so surface that message and
     re-select explicitly (never `-y`). `-z` pin check → "Pin test is not supported." for this part: handle it. Read
     progress uses `\r`/`ESC[K`: strip it from logs.
+### M3 notes (2026-09-28)
+- **Either HDMI port, by design:** nothing names an output. EDID gives 1024×600 @ 59.85 on HDMI-A-1 and HDMI-A-2
+  (the panel identifies as "Addi-Data GmbH 0x0004"), so no `video=` in cmdline.txt. Touch is left **unmapped**, which
+  with one display covers the panel on either port and any USB port. Chromium in kiosk goes full screen on the only
+  output. With a second display (the future GBS path), touch and the kiosk would need pinning to the panel's output:
+  find it by EDID make, not by port.
+- **autotouch (Pi OS):** runs at every login from `/etc/xdg/autostart`. The first time it sees one touchscreen + one
+  display with no mapping, it writes `<touch deviceName="WaveShare WS170120 (USB 1-1)" mapToOutput="HDMI-A-1"
+  mouseEmulation="yes"/>` into `~/.config/labwc/rc.xml` (done 09-28 11:00, `rc.bak` = before), then never updates it.
+  libinput names carry the USB port, so after replugging (now `(USB 3-1)`) it no longer even matched. It also turns
+  on mouse emulation, and the dashboard needs real touch for multi-finger gestures. The bootstrap now installs a
+  `Hidden=true` override (`~/.config/autostart/autotouch.desktop`) and removes that line (backup
+  `rc.xml.pre-gatbox-touch`).
+- **Kiosk:** `gatbox-kiosk-launch` starts from XDG autostart (`~/.config/autostart/gatbox-kiosk.desktop`). That's a
+  deliberate deviation from the spec's `~/.config/labwc/autostart`: XDG autostart is additive, so the desktop's own
+  startup (panel, desktop icons) always runs. It waits for gatbox-web, clears Chromium's crash state (no "Restore
+  pages?" after a power cut), runs Chromium 153 with commented flags in its own profile
+  (`~/.local/share/gatbox-kiosk`), restarts it if it dies, and one launcher at a time (flock). `gatbox-kiosk
+  on|off|start|status` (state in `~/.config/gatbox/kiosk`, missing = on). URL: gatbox-web's `/` until M5 → `/dash/`.
+- **EXIT KIOSK:** `POST /kiosk/exit` works from 127.0.0.1 only (403 otherwise). `GET /kiosk/state` gives `exit_at`,
+  and the launcher polls it and acts when the value *changes* (not on a time comparison: NTP can step the clock
+  after boot). A 1.5 s long-press "Hold to exit kiosk" sits at the top of `/`, shown only to the Pi's own screen.
+  M5 moves it to the SYSTEM panel.
+- **Blanking: never while the kiosk runs.** Today nothing blanks (no swayidle; raspi-config get_blanking = 1).
+  raspi-config's blanking is a swayidle line in `~/.config/labwc/autostart`, so the launcher stops the user's
+  swayidle for its login only, and the plain desktop keeps whatever is set. The (C) has a backlight switch.
+- **Found in the warehouse log:** the first sample after a dial change can be junk (11:16:27: `726.4 V AC` right
+  after mV DC, then 2.77 V, then 7.4 V). M4b's per-mode files should drop or flag the first sample after a change.
 - **Site config, not in the bootstrap:** the home Wi-Fi's static address (09-24, `nmcli connection modify … ipv4.method
   manual …`). It belongs to the network the Pi is on, not to the Pi, and the repo is public.
 

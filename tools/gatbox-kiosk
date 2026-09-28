@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# gatbox-kiosk on|off|start|status — boot the Pi to the 7" dashboard, or to the plain desktop.
+#   on      kiosk from the next login (reboot, or log out and in; `start` for right now)
+#   off     plain desktop from the next login, and closes a running kiosk now
+#   start   start the kiosk now in this desktop session (if it's on)
+#   status  on/off, and whether it's running
+# Runs as the desktop user, no sudo. The state lives in ~/.config/gatbox/kiosk.
+set -u
+STATE="${XDG_CONFIG_HOME:-$HOME/.config}/gatbox/kiosk"
+PROFILE="${XDG_DATA_HOME:-$HOME/.local/share}/gatbox-kiosk"
+LAUNCH="${GATBOX_KIOSK_LAUNCH:-/usr/local/bin/gatbox-kiosk-launch}"
+state() { cat "$STATE" 2>/dev/null || echo on; }
+running() { pgrep -u "$(id -u)" -f "$LAUNCH" >/dev/null; }
+
+case "${1:-status}" in
+    on)
+        mkdir -p "${STATE%/*}"; echo on > "$STATE"
+        echo "kiosk ON: the dashboard comes up at the next login (reboot), or now with: gatbox-kiosk start" ;;
+    off)
+        mkdir -p "${STATE%/*}"; echo off > "$STATE"
+        pkill -u "$(id -u)" -f "$LAUNCH" 2>/dev/null
+        pkill -u "$(id -u)" -f -- "--user-data-dir=$PROFILE" 2>/dev/null
+        echo "kiosk OFF: plain desktop from the next login; a running kiosk was closed" ;;
+    start)
+        [ "$(state)" = on ] || { echo "kiosk is off (gatbox-kiosk on first)"; exit 1; }
+        export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+        export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+        [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] || { echo "no desktop session ($XDG_RUNTIME_DIR/$WAYLAND_DISPLAY)"; exit 1; }
+        setsid "$LAUNCH" >/dev/null 2>&1 < /dev/null &
+        echo "kiosk starting" ;;
+    status)
+        echo "kiosk $(state) ($STATE); $(running && echo running || echo 'not running')" ;;
+    *)
+        echo "usage: gatbox-kiosk on|off|start|status" >&2; exit 2 ;;
+esac

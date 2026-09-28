@@ -49,3 +49,9 @@
   (`~/t48-dumps/` now, `/srv/gatbox/roms/` from M7).
 - NEXT: M3, the 7" panel as a boot-to-kiosk dashboard. Panel is on HDMI-A-2 (the Pi's HDMI1): move it to HDMI0 or
   target HDMI-A-2.
+- M3 code (not installed yet): the 7" works on **either HDMI port** with nothing to configure (EDID mode on both,
+  touch unmapped). Pi OS's autotouch had pinned touch to one USB + one HDMI port with mouse emulation; it's turned
+  off for the user. Boot-to-kiosk Chromium via XDG autostart, `gatbox-kiosk on|off|start|status`, and a local-only
+  "Hold to exit kiosk". Never blanks while the kiosk runs. 27 kiosk tests pass.
+- DECIDED: touch stays unmapped with real touch events (no mouse emulation). The M5 graph needs multi-finger gestures.
+- FOUND: the first reading after a dial change can be junk (726.4 V AC for one sample). M4b drops/flags it.

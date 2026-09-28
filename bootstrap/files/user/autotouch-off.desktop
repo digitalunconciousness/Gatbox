@@ -1,0 +1,8 @@
+[Desktop Entry]
+# GATBOX: turn off Pi OS's autotouch for this user. It writes a touch mapping pinned to one USB port and one HDMI
+# output (and mouse emulation) into ~/.config/labwc/rc.xml once, then never updates it. Touch is left unmapped on
+# purpose so the 7" works on either HDMI port with real touch events. XDG rule: a user entry with Hidden=true
+# overrides /etc/xdg/autostart/autotouch.desktop.
+Type=Application
+Name=Auto Touch Configure
+Hidden=true

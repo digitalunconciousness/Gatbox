@@ -12,12 +12,16 @@ check() { if eval "$2"; then pass=$((pass + 1)); echo "  ok    $1"; else fail=$(
 
 check "bash -n"                                'bash -n "$BOOT"'
 out1=$(bash "$BOOT" --extract "$T/root" 2>&1)
-n=$(sed -n '/^MANIFEST="/,/^"/p' "$BOOT" | grep -c '^[a-z]')
+n=$(sed -n '/^MANIFEST="/,/^"/p;/^USER_MANIFEST="/,/^"/p' "$BOOT" | grep -c '^[a-z]')
 check "--extract writes all $n manifest files"  '[[ $out1 == "$n file(s) written under $T/root" ]]'
 bad=0
 while read -r src dst mode; do
     cmp -s "$REPO/$src" "$T/root$dst" && [ "$(stat -c %a "$T/root$dst")" = "$mode" ] || { bad=1; echo "        mismatch: $dst"; }
 done < <(sed -n '/^MANIFEST="/,/^"/p' "$BOOT" | grep '^[a-z]')
+while read -r src rel mode; do
+    dst="/home/$(id -un)/$rel"
+    cmp -s "$REPO/$src" "$T/root$dst" && [ "$(stat -c %a "$T/root$dst")" = "$mode" ] || { bad=1; echo "        mismatch: $dst"; }
+done < <(sed -n '/^USER_MANIFEST="/,/^"/p' "$BOOT" | grep '^[a-z]')
 check "every file byte-identical, right mode"   '[ $bad = 0 ]'
 out2=$(bash "$BOOT" --extract "$T/root" 2>&1)
 check "second --extract writes nothing"         '[[ $out2 == "0 file(s) written under $T/root" ]]'

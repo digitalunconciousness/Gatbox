@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=GATBOX kiosk
+Comment=7" dashboard kiosk (gatbox-kiosk on|off decides whether it runs)
+Exec=/usr/local/bin/gatbox-kiosk-launch
+X-GNOME-Autostart-enabled=true
+NoDisplay=true

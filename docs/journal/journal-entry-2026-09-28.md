@@ -60,3 +60,14 @@
   the kiosk and panel on the Pi's USB: 5.11 V minimum, no throttling, 61.5 °C. **M3 done.**
 - NEXT: M4 (backend: replay harness, profiles/machine data model, logger header + marks + per-mode files, report
   powered/OV/marks, JSON API + SSE). The first reading after a dial change gets dropped/flagged there.
+- FOUND (09-25 GL log, re-read for the M4 regression fixture): the "~25 s at ~20.28 V in two bursts" isn't in the
+  data. There are **three single readings** over 5.775 V: 18.667 V (03:22:52), 20.277 V (03:22:53), 20.284 V
+  (03:23:17), each **one sample at the instant the rail came back on**, between mV readings. They fit the rising
+  edge if the decimal point is off: 186.67 mV between 92.3 → 246.7 mV, 2.0277 V between 676.3 mV → 5.018 V,
+  2.0284 V between 2.9 mV → 5.021 V. So they're almost certainly **UT61E autorange glitches** (right digits, wrong
+  range during a fast change), not a real 20 V and not a backfeed.
+- The rest of 03:22:48–03:23:17 is the half-off switch bouncing the supply: collapse at 03:22:48 (capacitor decay
+  1.17 V → 92 mV), back at 03:22:53 for ~4 s at 5.02 V, collapse again at 03:22:58 (decay to 2.9 mV), back at 03:23:17.
+- Gameplay (02:16 → 03:22:47, 8015 samples): **5.020–5.024 V, mean 5.022 V**. That's 100% inside the GL spec (4.90–5.10) and
+  mid-window, not "at the bottom". The 4.936 V session mean came from the 62 s at 0 V before the cab was switched on.
+  So the +5V rail doesn't need a trim, and slow sag is ruled out for this crash (a 2 S/s DMM still can't see ms dropouts).

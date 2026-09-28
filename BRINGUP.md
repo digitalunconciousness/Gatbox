@@ -160,6 +160,13 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   (`logger -t gatbox-kiosk`) with M4's first install.
 - **Found in the warehouse log:** the first sample after a dial change can be junk (11:16:27: `726.4 V AC` right
   after mV DC, then 2.77 V, then 7.4 V). M4b's per-mode files should drop or flag the first sample after a change.
+### M4 notes
+- **The 09-25 fixture vs the spec:** the spec expected ~25 s at ~20.28 V in two bursts and a powered mean of 4.93–4.98 V.
+  The file has three single-sample readings over 5.775 V (18.667 / 20.277 / 20.284 V), each at a rail power-on edge
+  between mV readings, and consistent with UT61E autorange glitches (see the 09-28 journal). Gameplay 02:16–03:22:47
+  is 5.020–5.024 V (mean 5.022). Off: 62 s at the start, 5 s at 02:15:09, and the 03:22:48–03:23:17 switch
+  bounce. **Question for the owner (blocks the OV alarm design):** treat a lone over-voltage sample next to a range
+  change as "suspect", and have the alarm need 2+ consecutive samples?
 - **Site config, not in the bootstrap:** the home Wi-Fi's static address (09-24, `nmcli connection modify … ipv4.method
   manual …`). It belongs to the network the Pi is on, not to the Pi, and the repo is public.
 

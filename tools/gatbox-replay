@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""gatbox-replay — play a rail CSV back as the lines `sigrok-cli -O analog` printed when it was logged.
+
+    gatbox-replay [--rate N | --speed X | --fast] [--from ISO] [--to ISO] FILE...
+
+Each data row becomes "P1: <value> <unit>[ <flags>]" exactly as sigrok wrote it, so gatbox-raillog parses it
+the same way: SI prefix kept, Ω as U+2126, OL as "inf" with a T prefix, mode switches, HOLD/REL/MAX/MIN, and
+continuity's unit-less rows ("P1: 1 " and "P1: 1  AUTO", where the flag lands in the unit column). Comment
+lines, the header and the NUL tail a power cut leaves are skipped.
+
+    --rate N     N lines per second (default 2, the UT61E's own rate)
+    --speed X    the original timing (from uptime_s, or epoch) sped up X times; gaps over 10 s are capped
+    --fast       as fast as possible
+    --from/--to  only rows whose iso_time is in [from, to] (YYYY-MM-DDTHH:MM[:SS], compared as text)
+
+Test hook: gatbox-raillog runs $GATBOX_SIGROK instead of sigrok-cli when it's set. Called that way (with
+sigrok-cli's own arguments, which are ignored), this reads its options from the environment instead:
+GATBOX_REPLAY_FILE (colon-separated), GATBOX_REPLAY_RATE / _SPEED / _FAST=1, and GATBOX_REPLAY_HOLD=1 to stay
+silent afterwards with the "port" open (like a D02 head coming off) instead of exiting (like the meter
+switching off). It never opens a serial port.
+"""
+import argparse, os, sys, time
+
+FLAGS = {"AC", "DC", "RMS", "DIODE", "HOLD", "MAX", "MIN", "AUTO", "REL", "AVG", "REF", "UNSTABLE"}
+
+
+def sigrok_line(value, unit, flags):
+    """CSV value/unit/flags -> the sigrok-cli line it came from."""
+    if unit in FLAGS:                       # continuity: no unit, so sigrok printed "1  AUTO" (two spaces)
+        return f"P1: {value}  {unit}" + (f" {flags}" if flags else "")
+    return f"P1: {value} {unit}" + (f" {flags}" if flags else "")
+
+
+def rows(paths, t0=None, t1=None):
+    """(iso, seconds, line) for every data row, in file order; seconds = uptime_s, else epoch."""
+    for path in paths:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                raw = raw.replace("\0", "").rstrip("\n")
+                if not raw or raw.startswith("#") or raw.startswith("iso_time"):
+                    continue
+                p = raw.split(",")
+                if len(p) < 5:
+                    continue
+                iso = p[0]
+                if (t0 and iso < t0) or (t1 and iso > t1):
+                    continue
+                try:
+                    sec = float(p[5]) if len(p) > 5 and p[5] else float(p[1])
+                except ValueError:
+                    sec = None
+                yield iso, sec, sigrok_line(p[2], p[3], p[4])
+
+
+def main():
+    if "--driver" in sys.argv[1:]:          # called by gatbox-raillog as its sigrok-cli (test hook)
+        env = os.environ
+        paths = [p for p in env.get("GATBOX_REPLAY_FILE", "").split(":") if p]
+        if not paths:
+            sys.exit("gatbox-replay: GATBOX_REPLAY_FILE not set")
+        rate, speed = float(env.get("GATBOX_REPLAY_RATE", "2")), float(env.get("GATBOX_REPLAY_SPEED", "0"))
+        fast, hold, t0, t1 = env.get("GATBOX_REPLAY_FAST") == "1", env.get("GATBOX_REPLAY_HOLD") == "1", None, None
+    else:
+        ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+        ap.add_argument("files", nargs="+")
+        g = ap.add_mutually_exclusive_group()
+        g.add_argument("--rate", type=float, default=2.0)
+        g.add_argument("--speed", type=float, default=0.0)
+        g.add_argument("--fast", action="store_true")
+        ap.add_argument("--from", dest="t0")
+        ap.add_argument("--to", dest="t1")
+        a = ap.parse_args()
+        paths, rate, speed, fast, hold, t0, t1 = a.files, a.rate, a.speed, a.fast, False, a.t0, a.t1
+    prev = None
+    try:
+        for _, sec, line in rows(paths, t0, t1):
+            if not fast:
+                if speed > 0 and prev is not None and sec is not None:
+                    time.sleep(min(max(sec - prev, 0.0), 10.0) / speed)
+                elif speed <= 0 and prev is not None:
+                    time.sleep(1.0 / rate)
+            prev = sec if sec is not None else prev
+            print(line, flush=True)         # flush per line: stdbuf doesn't reach Python's own buffering
+        if hold:
+            time.sleep(3600)
+    except (BrokenPipeError, KeyboardInterrupt):
+        pass
+
+
+if __name__ == "__main__":
+    main()

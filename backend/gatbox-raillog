@@ -31,6 +31,7 @@
 set -u
 
 DRIVER="${GATBOX_DMM_DRIVER:-uni-t-ut61e-ser}"
+SIGROK="${GATBOX_SIGROK:-sigrok-cli}"     # tests only: tools/gatbox-replay stands in for the meter
 LINK="${GATBOX_DMM_PORT:-/dev/gatbox-dmm}"
 LOGDIR="${GATBOX_LOGDIR:-/var/log/gatbox}"
 RUNDIR="${RUNTIME_DIRECTORY:-/run/gatbox}"
@@ -190,7 +191,7 @@ while :; do
     # stdbuf: line-buffered, so samples hit the file as they happen (matters if power dies)
     # --samples, not --continuous: --continuous stops at once when stdin is not a terminal
     # (systemd gives it /dev/null). 1e9 samples at ~2/s is ~15 years.
-    if stdbuf -oL sigrok-cli --driver "$DRIVER:conn=$PORT" -O analog --samples 1000000000 2>&1 | session; then
+    if stdbuf -oL "$SIGROK" --driver "$DRIVER:conn=$PORT" -O analog --samples 1000000000 2>&1 | session; then
         if ctl_stopped || ctl_restart; then
             led 0; sleep 1        # let the killed sigrok release the port
             continue

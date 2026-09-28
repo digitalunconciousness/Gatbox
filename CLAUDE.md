@@ -1,45 +1,101 @@
 # GATBOX (GDD-GAT/01) — context for Claude sessions
 
-Portable arcade-board diagnostic box. This Raspberry Pi 5 (4 GB, Raspberry Pi OS Trixie 64-bit **Desktop**,
-hostname `gatbox`, user `<user>`) is a self-starting **rail logger** that gets left inside an arcade cabinet
-overnight. There's no enclosure yet, so the Pi sits bare in the cabinet.
+Portable arcade-board diagnostic box (Greybard Diagnostics and Design). This Raspberry Pi 5 (4 GB + Active Cooler,
+Raspberry Pi OS Trixie 64-bit **Desktop**, labwc, hostname `gatbox`, user `<user>`) is a self-starting **rail
+logger** that gets left inside an arcade cabinet overnight, and is becoming the bench brain: 7" touch dashboard,
+T48 EPROM dumps, scanner → roster. No enclosure yet, so the Pi sits bare in the cabinet.
+
+**Phase 2 is in progress.** The spec is `handoff/PROMPT.md` (moves to `docs/phase2-handoff.md` in M2), with the
+plan in `handoff/ref/gatbox-phase2-plan.md`. Where they differ, PROMPT.md wins. **Resuming? Re-read the spec and
+the progress checklist in BRINGUP.md, then carry on from the first unchecked milestone.**
 
 ## Signal chain
 UNI-T UT61E (original ES51922) → UT-D02 optical cable → CableCreation PL-2303 USB-RS232 → `/dev/gatbox-dmm`
 → sigrok driver `uni-t-ut61e-ser`. Protocol: **19200 7O1**. Serial group: **dialout**.
 If readings come back as garbage, suspect the adapter chip or parity before the meter.
+- The link is **one-way**: the meter's dial sets the function; software can only detect it and prompt "SET DIAL TO …".
+- CSV `value,unit` are exactly as sigrok printed them, **SI prefix included** (`812.0,mV`, `4.70,kΩ`). Normalize to
+  base units before any math. sigrok writes Ω as **U+2126 OHM SIGN**; OL arrives as `inf` with a `T` prefix;
+  continuity rows have no unit (a flag can land in the unit column).
+- A power cut mid-session can leave a run of NUL bytes at the end of a CSV (ext4). Both readers skip it; keep it that way.
 
 ## Installed by gatbox-bootstrap.sh (patched copy: ~/gatbox/gatbox-bootstrap.sh; see BRINGUP.md)
-- `gatbox-raillog.service` → `/usr/local/bin/gatbox-raillog`. It writes one CSV per contiguous session:
-  `/var/log/gatbox/rail_YYYYmmdd_HHMMSS.csv`. The ACT LED blinks while it's logging.
-- `gatbox-status [-f]`, `gatbox-rail-report [csv] [--lo --hi --plot]` (default window 4.75–5.25 V)
+- `gatbox-raillog.service` (root) → `/usr/local/bin/gatbox-raillog`. It writes one CSV per contiguous session:
+  `/var/log/gatbox/rail_YYYYmmdd_HHMMSS.csv` (`iso_time,epoch,value,unit,flags,uptime_s` + `# clock=` line;
+  `uptime_s` is monotonic, use it for durations), and `/run/gatbox/current`. The ACT LED blinks while it's logging.
+  Start/Stop flag files in `/var/lib/gatbox-web`.
+  **Not yet (as of 2026-09-28, despite the handoff/project docs):** no `# mode=` header, no `/run/gatbox/mode`, and
+  no new file on a dial change. Those arrive with M4b.
+- `gatbox-status [-f]`, `gatbox-rail-report [csv] [--lo --hi --plot]` (mode-aware; default window 4.75–5.25 V)
+- `gatbox-web` + `gatbox-web.service`: phone web view on port 80 (live reading + meter mode, sessions, report/plot,
+  PDF, CSV, Start/Stop). Fonts in `/usr/local/share/gatbox-web/fonts`. Stdlib, DynamicUser.
 - udev `/etc/udev/rules.d/99-gatbox-dmm.rules`, persistent journal, menu entry "GATBOX Rail Monitor"
 - EEPROM `PSU_MAX_CURRENT=5000`, config.txt `usb_max_current_enable=1`
-- `gatbox-web` + `gatbox-web.service`: phone web view on port 80 (live reading + meter mode, sessions, report/plot,
-  PDF, CSV, Start/Stop). Fonts in `/usr/local/share/gatbox-web/fonts`. Bootstrap payload since 2026-09-24.
-- Fallback hotspot NM profile `gatbox-ap`, **SSID GATBOX** (it was WalkinAround 09-23..09-24, renamed back to match
-  the script and the docs). It comes up only if no known network appears
-  ~60 s after boot. Pi = 10.42.0.1. There's no barcade client Wi-Fi profile yet (the user doesn't know those credentials).
-- Pristine script copy: `~/gatbox/gatbox-bootstrap.orig.sh`; extracted payload: `~/gatbox/payload/`
+- Fallback hotspot NM profile `gatbox-ap`, **SSID GATBOX**, up only if no known network appears ~60 s after boot.
+  Pi = 10.42.0.1. No barcade client Wi-Fi profile yet. Home Wi-Fi (<home-wifi>) is static <home-lan-ip>
+  (set by hand 09-24; M2 folds it into the bootstrap or documents it as site config); eth0 is DHCP.
+- Pristine script copy: `gatbox-bootstrap.orig.sh`; its extracted payload: `payload/`.
+- Installs need `sudo`, which asks for a password: the owner runs the install command herself.
 
-## Rules
-- Keep the desktop. Don't change boot mode, display/HDMI config, or bootloader settings beyond what the script does.
+## Hardware
+**Owned:** Pi 5 4GB + Active Cooler · UT61E + UT-D02 + PL-2303 · XGecu T48 · Eyoyo EY-H2 USB scanner (HID keyboard
+wedge) · Waveshare 7inch HDMI LCD (C) (1024×600 IPS, capacitive USB-HID touch) · coin-cell holder on the RTC
+connector J5 with a **non-rechargeable** cell (fitted 2026-09-26/27, BATT_V ~3.13 V).
+**Not owned: don't write code that assumes these, don't ask the owner to test with them:** ADALM2000, UUGear MEGA4 /
+uhubctl, INA226, relays, MAK Strike, GBS-Control, RP2350B bus driver, InfiRay P2 Pro. The build journal
+(`gatbox-journal.md`) is the record of what's owned.
+
+## Hard rules
+1. **Never enable RTC trickle charging.** No `dtparam=rtc_bbat_vchg`, never `GATBOX_RTC_BATTERY=1`. Only a real
+   ML2020 could ever justify `GATBOX_RTC_CHARGE=ML2020`.
+2. **The logger owns the serial port.** Nothing else opens `/dev/gatbox-dmm`; everything reads its CSVs and `/run/gatbox/*`.
+3. **The logger always works.** Never end a turn with `gatbox-raillog` broken or half-installed. Unfinished changes
+   stay uninstalled.
+4. **One install path.** Every system change goes into the repo/bootstrap and is applied by re-running it. Nothing is
+   hand-configured. The bootstrap stays idempotent, and an offline re-run succeeds when everything is installed.
+5. **Show before you change system config** (`/boot/firmware/*`, udev, systemd units, labwc config, `/etc`): show
+   The owner the diff and why, and wait for her OK. Repo-only changes don't need approval.
+6. **No hardware writes from the dashboard.** Phase 2 does Pi-side state and T48 **reads** only. No part auto-detect.
+7. **GPIO is 3.3 V only, Pi 5 included.** gpiozero (+lgpio), never RPi.GPIO. GPIO3 and GPIO26 reserved; keep I²C
+   (2/3), UART (14/15) and SPI free. Anything at 5 V goes through a divider / opto / level shifter.
+8. **The board under test is always external.** Nothing here energizes a board.
+9. **apt before pip.** Trixie blocks system pip. Ask before adding a venv.
+10. **Dashboard stack:** plain HTML/CSS/JS, no framework, no build step, no CDN (fonts come from the Pi), no
+    localStorage/sessionStorage/IndexedDB/cookies for state.
+11. **Design tokens** (below), not the mockup's flat-black palette.
+12. **Don't guess hardware facts.** Read USB IDs, minipro part names (`minipro -L`), mode strings and free GPIOs off
+    this Pi, or ask. Machine-spec numbers come only from a manual the owner cites.
+13. **Secrets never go in git:** AP PSK, Wi-Fi credentials, SSH keys, API tokens.
+14. **Backward-compatible, always.** Every existing CSV keeps loading (the 09-25 fixture
+    `rail_20260925_021402.csv` is never modified), and every existing gatbox-web URL keeps working: `/`, `/s/…`,
+    `/png/…`, `/pdf/…`, `/csv/…`, `/font/…`, `POST /control`.
+- Keep the desktop. Don't change boot mode or bootloader settings beyond what the bootstrap does.
 - On failure: find the cause first (journalctl, dmesg, lsusb) and explain it before changing system config.
-  Script fixes go in a copy in ~/gatbox, with the diff shown and the reason given.
-- No system-wide pip (Trixie blocks it): use apt or a venv.
-- Do **not** set GATBOX_RTC_BATTERY=1. There's no ML2020 RTC battery yet.
-- **Never suggest wiring anything from the cabinet to the Pi.** The D02 optical link is the only connection, on purpose.
+- **Never suggest wiring anything from the cabinet to the Pi.** The D02 optical link is the only connection.
+- QR codes encode the roster `slug`; the roster (`gatbox-barcade-roster.json`) is data of record shared with the owner's
+  maintenance app: never change its schema. Per-machine rail limits live in `gatbox-machine-specs.json`.
 - Keep narration short; show command output when it matters.
 
+## Design tokens (any UI)
+Synthwave: neon on a deep violet gradient, scanlines, mono type, glow only on badges / active states / headline edges.
+bg `#150a28`, bg2 `#1f0f3d`, panel `#1f1240`, border `#3d1e6b`, magenta (primary) `#ff2e9f`, cyan (secondary)
+`#7dfaff`, lime (OK) `#5ef2b0`, red (trip/danger) `#ff4d6d`, amber (warn) `#ffb74d`, text `#ece3ff`, dim `#9080b0`.
+Body `linear-gradient(180deg, bg2, bg)`. Fonts: Chakra Petch (display), Share Tech Mono (body), served from the Pi.
+
+## Conventions
+- Backend = the existing **gatbox-web, grown** (stdlib, one server on :80, DynamicUser). FastAPI only if a concrete
+  wall appears, and ask the owner first.
+- Pi shell tooling: bash, `set -u`, no per-sample forks in hot loops, shellcheck-clean. Python: 4-space indent;
+  JS/HTML: 2-space. Comment the hardware-facing code.
+- Git: repo in `~/gatbox`, branch `main`; `handoff/` is input and ignored. Forgejo remote: ask the owner (M2).
+- Per milestone: plan → code → install via bootstrap → tests → BRINGUP.md → journal
+  (`docs/journal/journal-entry-YYYY-MM-DD.md`, the owner's format) → commit → short summary.
+
 ## Project docs (not on the Pi)
-The build journal (`gatbox-journal.md`, the record of which hardware is owned vs only planned), `gatbox-pi5-starter.md`
-and the project `CLAUDE.md` (design tokens, hard rules) live in the claude.ai project. Ask the owner to upload them when
-needed. Pi-side script changes get folded back there by uploading `~/gatbox/gatbox-bootstrap.sh`.
+The build journal, `gatbox-pi5-starter.md`, the master guide and the project `CLAUDE.md` live in the claude.ai
+project (a copy of the project CLAUDE.md is in `handoff/ref/`). Pi-side changes get folded back there by uploading
+the bootstrap, CLAUDE.md, the plan/progress and journal entries.
 
 ## Status
-Bring-up done 2026-09-23: bootstrap run + bench test (BRINGUP.md "Bring-up 1/2"; the bench test needed three script
-fixes). In the project's terms Phase 0 and Phase 1 (rail flight recorder) are done, and **project Phase 2 (software on
-owned hardware: minipro rebuild, display, gpiozero, dashboard) hasn't started**. 2026-09-24: mode-aware report + web
-view, web view restyled and added to the bootstrap. For any re-run, use `~/gatbox/gatbox-bootstrap.sh` (the patched
-copy), not the Downloads/orig copy.
-Next: the first overnight cabinet run.
+Bring-up done 2026-09-23 (BRINGUP.md "Bring-up 1/2"). Phase 0 and Phase 1 (rail flight recorder) done and in use:
+first cabinet log 2026-09-25 (Gauntlet Legends). **Phase 2 started 2026-09-28**: progress checklist in BRINGUP.md.

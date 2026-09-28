@@ -6,6 +6,35 @@ Pi 5 Model B Rev 1.1, 4 GB · Raspberry Pi OS Trixie 64-bit Desktop · hostname 
 flight recorder (done) and Phase 2 is the software on owned hardware (minipro, display, gpiozero, dashboard;
 not started). These headings were called "Phase 1/2" until 2026-09-24.
 
+## Phase 2 — progress (spec: `handoff/PROMPT.md`, later `docs/phase2-handoff.md`)
+
+Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardware).
+
+- [x] **M0 orient** (2026-09-28): git repo + baseline `83ba066`; installed files == bootstrap payload (nothing to
+      reconcile); CLAUDE.md merged with the project CLAUDE.md + the handoff's hard rules.
+- [ ] **M1 RTC**: read-only checks done 2026-09-28 (charging OFF, BATT_V 3.13 V); bootstrap guard; gatbox-rtc-sync
+      timer; logger `clock=rtc`; status line; report/web badge; tests; install; ⏸ unplug + offline boot test
+- [ ] **M2 2A foundation**: repo layout; bootstrap shape; Forgejo remote; minipro; MAME CLI; ⏸ T48 re-verify
+- [ ] **M3 2B face**: ⏸ panel connected; mode; touch; power; kiosk; blanking; ⏸ kiosk on/off reboots
+- [ ] **M4 2C backend**: 4a replay harness; 4b data model + logger header/marks/splits; 4c report; 4d JSON API
+- [ ] **M5 2D dashboard** at `/dash/`; screenshot tests; ⏸ on the real panel
+- [ ] **M6 2E scanner**: gatbox-scand; labels; ⏸ scan slug / MARK / NEW
+- [ ] **M7 2F T48 dump**: gatbox-dump; dashboard flow; ⏸ real board dump
+- [ ] **M8 2G stretch**: ask first
+
+### M0 notes (2026-09-28)
+- **Spec vs reality:** the handoff and the project CLAUDE.md say the logger already writes `# mode=`, a
+  `/run/gatbox/mode` file, and one file per dial mode. It doesn't: the installed logger is the 09-23 one + web
+  Start/Stop (the 09-24 dial-through landed in one file). Those behaviours are built in M4b instead.
+- **RTC (M1 step 1, read-only):** `rpi-rtc` rtc0, hctosys=1, `charging_voltage` 0 (min 1.3 V, max 4.4 V), no
+  `rtc_bbat` line, BATT_V 3.126 V. At the 09-27 boot the RTC read 1970-01-01T00:00:13 (cell just fitted), so the
+  system clock started at timesyncd's saved 09-25 16:33 until NTP at 19:31. The kernel's 11-min sync
+  (`CONFIG_RTC_SYSTOHC=y`) set the RTC after that: RTC − system = 0 s on 09-28. No fake-hwclock on this image
+  (timesyncd's `/var/lib/systemd/timesync/clock` plays that role); `hwclock` missing (util-linux-extra).
+- `/dev/rtc0` is root-only (0600); sysfs `since_epoch` is world-readable.
+- Two 09-25 files end in a run of NUL bytes (power pulled while logging); report and web both skip it.
+- A 137 MB `Warp-ARM64.AppImage` sits in `~/gatbox`: not source, git-ignored, left alone.
+
 ## Bring-up 1: bootstrap run — 2026-09-23
 
 ### What ran

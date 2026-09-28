@@ -33,3 +33,7 @@
 - Logger SD fix: session file synced to the card every ~10 s and at session end (09-25 lost 7–15 s to NUL tails).
 - minipro isn't packaged in Trixie: bootstrap builds pinned tag 0.7.4 (test-built here; T48 supported) and installs
   its udev rules (T48 → plugdev). mame 0.276 from apt for `-romident`.
+- Repo pushed to GitHub (`digitalunconciousness/Gatbox`, public) with a repo-only deploy key. History scrubbed before
+  the first push: noreply identity, UTC timestamps, no names, home network or workplace roster.
+- DECIDED: no personal info on GitHub, ever. Site values stay in a git-ignored `SITE.local.md`, the roster stays
+  git-ignored on the Pi, and a local pre-push hook enforces it.

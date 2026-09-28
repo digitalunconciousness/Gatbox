@@ -15,8 +15,8 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
 - [x] **M1 RTC** (2026-09-28): read-only checks, bootstrap guard, gatbox-rtc-sync timer, logger `clock=rtc`, status
       line, web badge, tests (36 pass), installed 09:16, ⏸ offline warehouse test **passed** (notes below)
 - [ ] **M2 2A foundation**: [x] repo layout [x] bootstrap shape (install from checkout) [x] logger SD sync fix
-      [x] minipro module (0.7.4, test-built) [x] MAME module [ ] install (waiting on the owner's OK) [ ] GitHub push
-      (waiting on the owner: public repo) [ ] MAME smoke test [ ] ⏸ T48 re-verify
+      [x] minipro module (0.7.4, test-built) [x] MAME module [ ] install (waiting on the owner's OK) [x] GitHub push
+      (2026-09-28, history scrubbed first: see below) [ ] MAME smoke test [ ] ⏸ T48 re-verify
 - [ ] **M3 2B face**: ⏸ panel connected; mode; touch; power; kiosk; blanking; ⏸ kiosk on/off reboots
 - [ ] **M4 2C backend**: 4a replay harness; 4b data model + logger header/marks/splits; 4c report; 4d JSON API
 - [ ] **M5 2D dashboard** at `/dash/`; screenshot tests; ⏸ on the real panel
@@ -94,6 +94,12 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   `udev.pc`), so `bootstrap/files/minipro-0.7.4/` carries upstream's three rules byte for byte: T48 = `a466:0a53`,
   group `plugdev` (the owner is in it) + `uaccess`. Bump the tag and the rules together.
 - **MAME:** `mame` 0.276 from apt (+ mame-data, libportaudio2, libutf8proc3; ~515 MB), for `mame -romident` only.
+- **GitHub (public):** `digitalunconciousness/Gatbox`, pushed over SSH with a repo-only deploy key
+  (`~/.ssh/gatbox_github`, `Host github-gatbox` in `~/.ssh/config`; GitHub's ed25519 host key checked against its
+  published fingerprint). Before the first push the whole history was rewritten: noreply author/committer, UTC
+  timestamps, names/username/home network/timezone replaced by placeholders, the workplace roster dropped (now
+  git-ignored in `data/`). Real values: `SITE.local.md` (git-ignored). A local `.git/hooks/pre-push` refuses
+  personal details, the roster, `*.local.md` and non-UTC timestamps. Commit with `TZ=UTC git commit`.
 - **Site config, not in the bootstrap:** the home Wi-Fi's static address (09-24, `nmcli connection modify … ipv4.method
   manual …`). It belongs to the network the Pi is on, not to the Pi, and the repo is public.
 

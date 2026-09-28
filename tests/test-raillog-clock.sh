@@ -4,7 +4,7 @@
 # /var/log/gatbox are never touched. Runs as a normal user.
 #   bash tests/test-raillog-clock.sh [path/to/gatbox-raillog]
 set -u
-LOGGER=$(readlink -f "${1:-$(dirname "$0")/../gatbox-raillog}")
+LOGGER=$(readlink -f "${1:-$(dirname "$0")/../backend/gatbox-raillog}")
 T=$(mktemp -d); trap 'pkill -f -- "$T/bin/sigrok-cli" 2>/dev/null; rm -rf "$T"' EXIT
 mkdir -p "$T/bin" "$T/led" "$T/rtc0"
 cat > "$T/bin/sigrok-cli" <<'EOF'

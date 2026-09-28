@@ -4,7 +4,7 @@
 # so this works as a normal user and changes nothing).
 #   bash tests/test-rtc-guard.sh [path/to/gatbox-bootstrap.sh]
 set -u
-BOOT=$(readlink -f "${1:-$(dirname "$0")/../gatbox-bootstrap.sh}")
+BOOT=$(readlink -f "${1:-$(dirname "$0")/../bootstrap/gatbox-bootstrap.sh}")
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 pass=0; fail=0
 check() { if eval "$2"; then pass=$((pass + 1)); echo "  ok    $1"; else fail=$((fail + 1)); echo "  FAIL  $1"; fi; }

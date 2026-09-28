@@ -4,7 +4,7 @@
 # overrides. Runs as a normal user and touches nothing outside a temp dir.
 #   bash tests/test-clock-label.sh [path/to/gatbox-raillog]
 set -u
-LOGGER=$(readlink -f "${1:-$(dirname "$0")/../gatbox-raillog}")
+LOGGER=$(readlink -f "${1:-$(dirname "$0")/../backend/gatbox-raillog}")
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/rtc0"; : > "$T/rtc0-dev"
 pass=0; fail=0

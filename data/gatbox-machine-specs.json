@@ -1,0 +1,20 @@
+{
+  "meta": {
+    "title": "GATBOX machine specs: per-machine rail limits",
+    "unit": "GDD-GAT/01 (GATBOX)",
+    "updated": "2026-09-26",
+    "keyed_by": "roster slug (gatbox-barcade-roster.json). Slugs are permanent; names are not.",
+    "why_separate": "Kept out of the roster on purpose, so the maintenance app's roster import never sees a new field.",
+    "rails_format": "rail id -> [lo, hi] in volts DC at the board's power input. Rail ids are ASCII: \"+5V\", \"+12V\", \"-5V\" (plain hyphen-minus; show a real minus sign only on screen).",
+    "rule": "Only numbers from the machine's own manual or service docs, with the source cited. A machine's spec for a rail overrides the profile window for that rail."
+  },
+  "machines": {
+    "gauntlet-legends": {
+      "rails": {
+        "+5V": [4.90, 5.10],
+        "+12V": [11.5, 12.5]
+      },
+      "source": "Gauntlet Legends manual, DC voltage limits (per the owner, 2026-09-25)"
+    }
+  }
+}

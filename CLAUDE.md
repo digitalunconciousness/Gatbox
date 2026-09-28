@@ -70,6 +70,10 @@ uhubctl, INA226, relays, MAK Strike, GBS-Control, RP2350B bus driver, InfiRay P2
 12. **Don't guess hardware facts.** Read USB IDs, minipro part names (`minipro -L`), mode strings and free GPIOs off
     this Pi, or ask. Machine-spec numbers come only from a manual the owner cites.
 13. **Secrets never go in git:** AP PSK, Wi-Fi credentials, SSH keys, API tokens.
+    The GitHub repo is **public**: no personal info either (names, emails, username, home network, timezone,
+    workplace data). Site values live in `SITE.local.md` and the roster in `data/`, both git-ignored; a local
+    `.git/hooks/pre-push` refuses pushes that carry them. Commit as digitalunconciousness (noreply email) and
+    with `TZ=UTC git commit …` (a local timestamp gives away the timezone; the hook refuses those too).
 14. **Backward-compatible, always.** Every existing CSV keeps loading (the 09-25 fixture
     `rail_20260925_021402.csv` is never modified), and every existing gatbox-web URL keeps working: `/`, `/s/…`,
     `/png/…`, `/pdf/…`, `/csv/…`, `/font/…`, `POST /control`.

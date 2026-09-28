@@ -15,3 +15,7 @@ __pycache__/
 *.token
 id_*
 secrets/
+
+# Local only, never public: site-specific values (owner, username, home network) and workplace data
+*.local.md
+data/gatbox-barcade-roster.json

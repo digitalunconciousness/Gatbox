@@ -3,7 +3,8 @@
 # (XDG autostart, which adds to the desktop's own startup rather than replacing it). If the kiosk is on
 # (`gatbox-kiosk on|off`), it waits until gatbox-web answers, then runs Chromium full screen on the dashboard and
 # restarts it if it dies. EXIT KIOSK (a local-only long-press on the dashboard) ends it for this login/boot without
-# changing on/off; `gatbox-kiosk off` ends it and keeps it off from the next login.
+# changing on/off; `gatbox-kiosk off` ends it and keeps it off from the next login. SHUT DOWN (a local-only 3 s
+# long-press) closes it and runs `systemctl poweroff` from this desktop session (allowed without a password).
 #
 # Port-agnostic: nothing here names an HDMI output. With one display (the Waveshare on either HDMI port) Chromium
 # goes full screen on it, and touch (left unmapped on purpose) covers it.
@@ -15,7 +16,7 @@ BASE="${GATBOX_KIOSK_BASE:-http://127.0.0.1}"                    # gatbox-web (o
 URL="${GATBOX_KIOSK_URL:-$BASE/}"                                # gatbox-web's / until the M5 dashboard (/dash/)
 BROWSER="${GATBOX_KIOSK_BROWSER:-chromium}"                      # override: tests only
 WAIT="${GATBOX_KIOSK_WAIT:-120}"                                 # seconds to wait for gatbox-web at boot
-say() { echo "gatbox-kiosk: $*"; }
+say() { echo "gatbox-kiosk: $*"; logger -t gatbox-kiosk -- "$*" 2>/dev/null; }   # autostart drops stdout: journal too
 kiosk_on() { [ "$(cat "$STATE" 2>/dev/null || echo on)" = on ]; }
 
 kiosk_on || { say "off ($STATE); plain desktop"; exit 0; }
@@ -32,10 +33,11 @@ for ((i = 0; i < WAIT; i++)); do
     sleep 1
 done
 ((i < WAIT)) || say "gatbox-web didn't answer in ${WAIT}s; starting anyway"
-# EXIT KIOSK: gatbox-web keeps the time of the last request. Remember it now; a different value later means someone
-# pressed it during this login. (A changed value, not a time comparison: NTP can step the clock after boot.)
-exit_at() { curl -fs --max-time 2 "$BASE/kiosk/state" 2>/dev/null | sed -n 's/.*"exit_at": *\([0-9]*\).*/\1/p'; }
-baseline=$(exit_at)
+# EXIT KIOSK / SHUT DOWN: gatbox-web keeps the time of the last request of each. Remember them now; a different value
+# later means someone pressed it during this login. (A changed value, not a time comparison: NTP can step the clock.)
+kstate() { curl -fs --max-time 2 "$BASE/kiosk/state" 2>/dev/null | tr -d ' {}"' | tr ',' '\n'; }   # exit_at:N / shutdown_at:N
+field() { sed -n "s/^$1://p" <<<"$2"; }
+st=$(kstate); base_exit=$(field exit_at "$st"); base_off=$(field shutdown_at "$st")
 pid=""
 trap '[ -n "$pid" ] && kill "$pid" 2>/dev/null; exit 0' TERM INT HUP
 
@@ -62,8 +64,20 @@ while :; do
     pid=$!
     while kill -0 "$pid" 2>/dev/null; do
         sleep 2
-        now=$(exit_at)
-        if [ -n "$now" ] && [ "$now" != "$baseline" ]; then
+        st=$(kstate)
+        off=$(field shutdown_at "$st")
+        if [ -n "$off" ] && [ "$off" != "$base_off" ]; then
+            # SHUT DOWN: the same as the desktop's Shutdown menu. This session is the active one on seat0, which
+            # polkit lets power off without a password. The logger gets a normal stop and its files are synced.
+            say "SHUT DOWN pressed on the 7\": powering off"
+            kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+            if systemctl poweroff; then exit 0; fi
+            say "systemctl poweroff failed; the kiosk comes back"
+            base_off=$off
+            continue
+        fi
+        now=$(field exit_at "$st")
+        if [ -n "$now" ] && [ "$now" != "$base_exit" ]; then
             say "EXIT KIOSK pressed; closing for this login (still $(cat "$STATE" 2>/dev/null || echo on) for the next)"
             kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
             exit 0

@@ -77,3 +77,5 @@
 - M4c report: header window/limit/profile/machine, powered vs off with POWER CYCLES (the slopes of a power-off are
   part of the cycle, not excursions), OVER-VOLTAGE with suspect tagging, MARKS, `--json`. The 09-25 file now reads:
   4 power cycles, rail 5.009–5.024 V (100% in window, also at the GL spec), 3 suspect glitches, no excursions.
+- Kiosk SHUT DOWN button (owner's request): a 3 s hold on the 7" powers the Pi off cleanly (the logger stops normally,
+  files synced). Pi screen only, never from a phone. No new permissions needed: the desktop session may power off.

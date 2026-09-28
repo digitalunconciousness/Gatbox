@@ -157,8 +157,12 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   (kiosk now). A kiosk boot on the other port wasn't tried, but nothing in it names a port.
 - **Power under load:** kiosk Chromium up, panel powered from the Pi's USB, 60 s of 4-core busy loops: EXT5V min
   5.11 V (5.16 idle), `get_throttled` 0x0 before and after, peak 61.5 °C, arm at 2.4 GHz. No need for the 27 W PSU.
-- **Next install:** the launcher's messages go nowhere (XDG autostart discards stdout). Send them to the journal
-  (`logger -t gatbox-kiosk`) with M4's first install.
+- The launcher's messages now also go to the journal (`journalctl -t gatbox-kiosk`).
+- **SHUT DOWN (added 2026-09-28, owner's request):** "Hold 3 s to shut down" next to EXIT KIOSK, on the Pi's own
+  screen only (`POST /kiosk/shutdown` = 403 from the network). The kiosk launcher sees `shutdown_at` change and runs
+  `systemctl poweroff` from the desktop session: polkit's `org.freedesktop.login1.power-off` is `implicit active:
+  yes` for the active seat0 session, so no new permissions or root service. If poweroff fails, the kiosk comes
+  back. The page says to unplug only when the screen is dark and the LED is red.
 - **Found in the warehouse log:** the first sample after a dial change can be junk (11:16:27: `726.4 V AC` right
   after mV DC, then 2.77 V, then 7.4 V). M4b's per-mode files should drop or flag the first sample after a change.
 ### M4 notes

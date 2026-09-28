@@ -34,8 +34,8 @@ The bootstrap's MANIFEST maps repo files to installed paths. `--check` (no root)
 - udev `/etc/udev/rules.d/99-gatbox-dmm.rules`, persistent journal, menu entry "GATBOX Rail Monitor"
 - EEPROM `PSU_MAX_CURRENT=5000`, config.txt `usb_max_current_enable=1`
 - Fallback hotspot NM profile `gatbox-ap`, **SSID GATBOX**, up only if no known network appears ~60 s after boot.
-  Pi = 10.42.0.1. No barcade client Wi-Fi profile yet. Home Wi-Fi (<home-wifi>) is static <home-lan-ip>
-  (set by hand 09-24; M2 folds it into the bootstrap or documents it as site config); eth0 is DHCP.
+  Pi = 10.42.0.1. No barcade client Wi-Fi profile yet. The home Wi-Fi profile has a static address: site config,
+  set by hand, deliberately not in the bootstrap (BRINGUP M2 notes); eth0 is DHCP.
 - minipro 0.7.4 (built from the pinned upstream tag into /usr/local; T48 via udev → plugdev) and mame 0.276 (apt,
   for `mame -romident` only).
 - The original Phase 1 script and its payload are in `docs/history/`.
@@ -98,7 +98,7 @@ Body `linear-gradient(180deg, bg2, bg)`. Fonts: Chakra Petch (display), Share Te
 
 ## Project docs (not on the Pi)
 The build journal, `gatbox-pi5-starter.md`, the master guide and the project `CLAUDE.md` live in the claude.ai
-project (a copy of the project CLAUDE.md is in `handoff/ref/`). Pi-side changes get folded back there by uploading
+project (a copy of the project CLAUDE.md is in `docs/ref/`). Pi-side changes get folded back there by uploading
 the bootstrap, CLAUDE.md, the plan/progress and journal entries.
 
 ## Status

@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# gatbox-raillog — GDD-GAT/01 rail flight recorder (appliance mode)
+#
+# Waits for the UT61E chain (UT-D02 -> PL-2303 -> /dev/gatbox-dmm), logs every
+# reading with wall-clock AND monotonic timestamps, and toggles the Pi's green
+# ACT LED on every sample so you can see it's alive with the cabinet open.
+#
+#   ACT LED blinking ~1 Hz  = logging
+#   ACT LED dark            = waiting (adapter unplugged, meter off, head off the IR window)
+#
+# One CSV per contiguous session. A file is only created when the first reading
+# arrives and ends when the stream stops, so gaps between files are diagnostic.
+#
+#   /var/log/gatbox/rail_YYYYmmdd_HHMMSS.csv
+#   iso_time,epoch,value,unit,flags,uptime_s
+#   # clock=ntp | clock=unverified ...        (line 2: was NTP synced at session start?)
+#
+# uptime_s is monotonic: durations stay right even if the wall clock steps.
+# Runs as root under systemd (the LED sysfs needs it).
+
+set -u
+
+DRIVER="${GATBOX_DMM_DRIVER:-uni-t-ut61e-ser}"
+LINK="${GATBOX_DMM_PORT:-/dev/gatbox-dmm}"
+LOGDIR="${GATBOX_LOGDIR:-/var/log/gatbox}"
+RUNDIR="${RUNTIME_DIRECTORY:-/run/gatbox}"
+LED="${GATBOX_LED:-/sys/class/leds/ACT}"
+CLOCK_WAIT="${GATBOX_CLOCK_WAIT:-90}"   # seconds to wait for NTP before logging starts
+
+mkdir -p "$LOGDIR" "$RUNDIR"
+chmod 755 "$LOGDIR"
+
+say() { echo "gatbox-raillog: $*"; }
+
+# --- ACT LED: take it over, give it back on exit ---------------------------
+orig_trigger=""
+[ -r "$LED/trigger" ] && orig_trigger=$(sed -n 's/.*\[\([^]]*\)\].*/\1/p' "$LED/trigger")
+led_trigger() { [ -w "$LED/trigger" ] && echo "$1" > "$LED/trigger" 2>/dev/null; }
+led()         { [ -w "$LED/brightness" ] && echo "$1" > "$LED/brightness" 2>/dev/null; }
+cleanup() {
+    led_trigger "${orig_trigger:-mmc0}"
+    rm -f "$RUNDIR/current"
+    say "stopped"
+    exit 0
+}
+trap cleanup TERM INT
+led_trigger none
+led 0
+
+# --- clock ------------------------------------------------------------------
+clock_synced() { [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = yes ]; }
+clock_label() {
+    if clock_synced; then echo "ntp"
+    else echo "unverified (no NTP at session start - absolute times may be off; uptime_s durations are good)"
+    fi
+}
+
+if ! clock_synced; then
+    say "waiting up to ${CLOCK_WAIT}s for NTP so timestamps are real"
+    for ((i = 0; i < CLOCK_WAIT; i += 3)); do clock_synced && break; sleep 3; done
+    if clock_synced; then say "clock synced"
+    else say "no NTP; logging anyway. Fit the RTC battery or push time from the laptop."
+    fi
+fi
+
+# --- one session: reads sigrok stdout, returns 0 if any reading was logged ---
+session() {
+    local F="" state=0 tag val unit rest up _
+    while read -r tag val unit rest; do
+        if [ "$tag" != "P1:" ]; then
+            [ -z "$tag" ] && continue
+            if [ -n "$F" ]; then
+                say "sigrok: $tag $val $unit $rest"            # mid-session chatter -> journal
+            else
+                echo "$tag $val $unit $rest" >> "$RUNDIR/last-error"   # pre-session -> rate-limited
+            fi
+            continue
+        fi
+        if [ -z "$F" ]; then
+            F="$LOGDIR/rail_$(date +%Y%m%d_%H%M%S).csv"
+            {
+                echo "iso_time,epoch,value,unit,flags,uptime_s"
+                echo "# clock=$(clock_label)"
+            } > "$F"
+            chmod 644 "$F"
+            echo "$F" > "$RUNDIR/current"
+            rm -f "$RUNDIR/last-error"
+            say "logging to $F"
+        fi
+        read -r up _ < /proc/uptime
+        # bash-builtin time formatting + EPOCHREALTIME: no forks per sample
+        printf '%(%FT%T)T,%s,%s,%s,%s,%s\n' -1 "$EPOCHREALTIME" "$val" "$unit" "$rest" "$up" >> "$F"
+        state=$((1 - state)); led "$state"
+    done
+    rm -f "$RUNDIR/current"
+    [ -n "$F" ]
+}
+
+# --- main loop ----------------------------------------------------------------
+misses=0
+while :; do
+    if [ ! -e "$LINK" ]; then
+        say "waiting for $LINK (PL-2303 adapter)"
+        until [ -e "$LINK" ]; do led 0; sleep 2; done
+        misses=0
+    fi
+    PORT=$(readlink -f "$LINK")
+    : > "$RUNDIR/last-error"
+
+    # stdbuf: line-buffered, so samples hit the file as they happen (matters if power dies)
+    if stdbuf -oL sigrok-cli --driver "$DRIVER:conn=$PORT" -O analog --continuous 2>&1 | session; then
+        say "stream ended (meter off, head knocked off the IR window, or adapter pulled); retrying"
+        misses=0
+    else
+        if (( misses % 60 == 0 )); then
+            say "adapter $PORT present but no readings: meter on? V DC selected? D02 head on the IR window?" \
+                "sigrok: $(tr '\n' ' ' < "$RUNDIR/last-error" 2>/dev/null)"
+        fi
+        misses=$((misses + 1))
+    fi
+    led 0
+    sleep 5
+done

@@ -1,0 +1,241 @@
+#!/usr/bin/env python3
+"""gatbox-rail-report — morning-after analysis for gatbox-raillog CSVs.
+
+Usage:
+    gatbox-rail-report                        # newest session in /var/log/gatbox
+    gatbox-rail-report rail_20260924_021500.csv [--lo 4.75] [--hi 5.25] [--plot out.png]
+
+Reads the format written by gatbox-raillog
+(iso_time,epoch,value,unit,flags[,uptime_s], plus "# ..." note lines) and reports:
+
+  * session duration and sample count
+  * steady stats: mean / min / max / p-p
+  * EXCURSIONS: contiguous runs outside [lo, hi], with start time, duration,
+    and worst value. This is the "what was the rail doing when it crashed" list
+  * OPEN-INPUT events (inf/OL): a lead fell off, or the rail died entirely
+  * GAPS in the timeline (>10 s between samples): optical link dropped
+  * CLOCK STEPS: the wall clock jumped mid-session (NTP arrived late, or date -s).
+    Durations use the monotonic uptime_s column when present, so they stay right.
+
+A plot is written if matplotlib is available (python3-matplotlib); the text
+report works without it. If the CSV's folder isn't writable, the plot goes to
+the current directory.
+"""
+
+import argparse
+import csv
+import glob
+import math
+import os
+import statistics as st
+import sys
+from collections import namedtuple
+from datetime import datetime, timezone
+
+Row = namedtuple("Row", "epoch iso v unit flags up")
+DEFAULT_DIR = "/var/log/gatbox"
+
+
+def load(path):
+    notes, body = [], []
+    with open(path, newline="") as f:
+        for line in f:
+            if line.startswith("#"):
+                notes.append(line[1:].strip())
+            else:
+                body.append(line)
+    r = csv.reader(body)
+    next(r, None)  # header
+    rows = []
+    for line in r:
+        if len(line) < 5:
+            continue
+        iso, epoch, val, unit, flags = line[:5]
+        try:
+            e = float(epoch)
+        except ValueError:
+            continue
+        try:
+            v = float(val)  # 'inf' / '-inf' parse as infinities
+        except ValueError:
+            v = math.nan
+        up = None
+        if len(line) >= 6:
+            try:
+                up = float(line[5])
+            except ValueError:
+                up = None
+        rows.append(Row(e, iso, v, unit, flags, up))
+    return rows, notes
+
+
+def group_runs(rows, predicate):
+    """Yield (start_idx, end_idx_inclusive) for contiguous rows where predicate holds."""
+    start = None
+    for i, row in enumerate(rows):
+        if predicate(row):
+            if start is None:
+                start = i
+        elif start is not None:
+            yield (start, i - 1)
+            start = None
+    if start is not None:
+        yield (start, len(rows) - 1)
+
+
+def fmt_dur(seconds):
+    if seconds < 90:
+        return f"{seconds:.1f}s"
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    return f"{h}h{m:02d}m{s:02d}s" if h else f"{m}m{s:02d}s"
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("csvfile", nargs="?",
+                    help=f"session CSV (default: newest in {DEFAULT_DIR})")
+    ap.add_argument("--lo", type=float, default=4.75,
+                    help="low threshold, V (default 4.75 = 5V - 5%%)")
+    ap.add_argument("--hi", type=float, default=5.25,
+                    help="high threshold, V (default 5.25 = 5V + 5%%)")
+    ap.add_argument("--plot", default=None,
+                    help="write PNG here (default: <csvfile>.png)")
+    args = ap.parse_args()
+
+    if not args.csvfile:
+        files = sorted(glob.glob(os.path.join(DEFAULT_DIR, "rail_*.csv")), key=os.path.getmtime)
+        if not files:
+            sys.exit(f"no rail_*.csv in {DEFAULT_DIR}")
+        args.csvfile = files[-1]
+
+    rows, notes = load(args.csvfile)
+    if len(rows) < 2:
+        sys.exit("no usable samples in file")
+
+    mono = all(r.up is not None for r in rows)
+
+    def t(r):
+        return r.up if mono else r.epoch
+
+    dts = sorted(t(b) - t(a) for a, b in zip(rows, rows[1:]))
+    period = max(dts[len(dts) // 2], 0.0)   # median sample interval (~0.5 s on the UT61E)
+
+    def span(a, b):                         # a run of N samples lasts ~N sample periods
+        return t(rows[b]) - t(rows[a]) + period
+
+    dur = t(rows[-1]) - t(rows[0])
+    finite = [r.v for r in rows if math.isfinite(r.v)]
+
+    print(f"file:      {args.csvfile}")
+    for n in notes:
+        print(f"note:      {n}")
+    print(f"session:   {rows[0].iso}  ->  {rows[-1].iso}   ({fmt_dur(dur)})")
+    print(f"samples:   {len(rows)}   ({len(rows) / max(dur, 1):.2f} S/s)"
+          f"   timebase: {'monotonic uptime' if mono else 'wall clock'}")
+    if finite:
+        print(f"stats:     mean {st.mean(finite):+.4f} V   "
+              f"min {min(finite):+.4f}   max {max(finite):+.4f}   "
+              f"p-p {(max(finite) - min(finite)) * 1000:.1f} mV")
+    print(f"window:    [{args.lo}, {args.hi}] V")
+    print()
+
+    # --- clock steps (only detectable with the monotonic column) -----------
+    steps = []
+    if mono:
+        for a, b in zip(rows, rows[1:]):
+            jump = (b.epoch - a.epoch) - (b.up - a.up)
+            if abs(jump) > 5:
+                steps.append((b.iso, jump))
+        if steps:
+            print(f"CLOCK STEPS ({len(steps)}): wall clock jumped mid-session; "
+                  f"durations below are still correct:")
+            for iso, jump in steps:
+                print(f"  {jump:+.0f}s  at {iso}")
+            print()
+
+    # --- timeline gaps -------------------------------------------------------
+    gaps = [(t(b) - t(a), b.iso) for a, b in zip(rows, rows[1:]) if t(b) - t(a) > 10]
+    if gaps:
+        print(f"GAPS ({len(gaps)}): optical link dropped or sigrok stalled:")
+        for d, iso in gaps:
+            print(f"  {fmt_dur(d):>9}  ending at {iso}")
+        print()
+
+    # --- open-input / dead-rail events ---------------------------------------
+    ol = list(group_runs(rows, lambda r: not math.isfinite(r.v)))
+    if ol:
+        print(f"OPEN-INPUT events ({len(ol)}): lead detached or rail fully dead:")
+        for a, b in ol:
+            print(f"  {rows[a].iso}  for {fmt_dur(span(a, b))}")
+        print()
+
+    # --- excursions -----------------------------------------------------------
+    def outside(r):
+        return math.isfinite(r.v) and not (args.lo <= r.v <= args.hi)
+
+    exc = list(group_runs(rows, outside))
+    if exc:
+        mid = (args.lo + args.hi) / 2
+        print(f"EXCURSIONS ({len(exc)}): outside [{args.lo}, {args.hi}] V:")
+        for a, b in exc:
+            seg = [rows[i].v for i in range(a, b + 1)]
+            worst = max(seg, key=lambda v: abs(v - mid))
+            print(f"  {rows[a].iso}  {fmt_dur(span(a, b)):>8}"
+                  f"   worst {worst:+.3f} V   ({b - a + 1} samples)")
+        print()
+    else:
+        print("EXCURSIONS: none. The rail held the window all session.")
+        print("If the game still crashed, this log exonerates this rail;")
+        print("next suspects: the other rails, on-board regulation, thermals.")
+        print()
+
+    # --- plot -----------------------------------------------------------------
+    out = args.plot or (args.csvfile.rsplit(".", 1)[0] + ".png")
+    if not args.plot and not os.access(os.path.dirname(os.path.abspath(out)), os.W_OK):
+        out = os.path.join(os.getcwd(), os.path.basename(out))
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("(no matplotlib; skipped plot. sudo apt install python3-matplotlib)")
+        return
+
+    CYAN, DIM = "#7dfaff", "#9080b0"
+    BG, PANEL, GRID, TXT = "#150a28", "#1f1240", "#3d1e6b", "#ece3ff"
+    if steps:  # wall clock is unreliable: plot elapsed monotonic minutes instead
+        xs = [(r.up - rows[0].up) / 60 for r in rows]
+        xlabel = "elapsed (min, monotonic; wall clock stepped mid-session)"
+    else:
+        xs = [datetime.fromtimestamp(r.epoch, tz=timezone.utc).astimezone() for r in rows]
+        xlabel = None
+    vs = [r.v if math.isfinite(r.v) else math.nan for r in rows]
+
+    fig, ax = plt.subplots(figsize=(11, 4.5), dpi=150)
+    fig.patch.set_facecolor(BG)
+    ax.set_facecolor(PANEL)
+    ax.plot(xs, vs, color=CYAN, lw=0.9)
+    ax.axhline(args.lo, color=DIM, ls="--", lw=0.8)
+    ax.axhline(args.hi, color=DIM, ls="--", lw=0.8)
+    for a, b in exc:
+        ax.axvspan(xs[a], xs[b], color="#ff4d6d", alpha=0.35)
+    ax.set_ylabel("V DC", family="monospace", color=TXT)
+    if xlabel:
+        ax.set_xlabel(xlabel, family="monospace", color=TXT, fontsize=8)
+    ax.set_title(f"GDD-GAT/01 rail log · {rows[0].iso[:10]}",
+                 family="monospace", color=TXT, fontsize=10)
+    for s in ax.spines.values():
+        s.set_color(GRID)
+    ax.tick_params(colors=TXT, labelsize=8)
+    ax.grid(color=GRID, lw=0.4, alpha=0.6)
+    if not steps:
+        fig.autofmt_xdate()
+    plt.tight_layout()
+    plt.savefig(out, facecolor=BG)
+    print(f"plot:      {out}")
+
+
+if __name__ == "__main__":
+    main()

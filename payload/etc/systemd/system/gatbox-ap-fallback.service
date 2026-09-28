@@ -1,0 +1,11 @@
+[Unit]
+Description=GATBOX: raise the GATBOX Wi-Fi hotspot if no known network appears after boot
+Wants=NetworkManager.service
+After=NetworkManager.service
+
+[Service]
+Type=exec
+ExecStart=/usr/local/sbin/gatbox-ap-fallback
+
+[Install]
+WantedBy=multi-user.target

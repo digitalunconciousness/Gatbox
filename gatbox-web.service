@@ -1,0 +1,25 @@
+[Unit]
+Description=GATBOX rail log web view (http://10.42.0.1 on the GATBOX hotspot)
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/gatbox-web
+Restart=always
+RestartSec=5
+# unprivileged throwaway user; only needs to read /var/log/gatbox and bind port 80
+DynamicUser=yes
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+CacheDirectory=gatbox-web
+# Start/Stop flag files, read by gatbox-raillog (root) at /var/lib/gatbox-web
+StateDirectory=gatbox-web
+# matplotlib wants a writable config/font-cache dir; without one it rebuilds the font cache every run
+Environment=MPLCONFIGDIR=/var/cache/gatbox-web/mpl
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

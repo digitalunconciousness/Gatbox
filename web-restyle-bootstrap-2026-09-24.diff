@@ -1,0 +1,701 @@
+# 2026-09-24 (2): gatbox-web restyle + /font route; gatbox-web + unit + font fetch added to gatbox-bootstrap.sh; hotspot name in the unit
+--- gatbox-web (previous)	2026-09-24 14:01:28.941648639 -0500
++++ gatbox-web	2026-09-24 14:01:28.972772750 -0500
+@@ -7,6 +7,7 @@
+   /pdf/<csv>?lo=&hi=&from=&to=   header + plot + report as a PDF to save/share
+                          (from/to are Pi wall-clock times, YYYY-MM-DDTHH:MM[:SS]; on /s and /png too)
+   /csv/<csv>             download the raw CSV
++  /font/<file>           the two UI fonts, from $GATBOX_WEB_FONTS (the hotspot has no internet)
+   POST /control          action=start|stop: flag files in $STATE_DIRECTORY that gatbox-raillog polls
+                          ("stopped" exists = don't log; "start-request" newer than the session = new file)
+ 
+@@ -24,6 +25,8 @@
+ CTRL = os.environ.get("STATE_DIRECTORY", "/var/lib/gatbox-web")
+ PORT = int(os.environ.get("GATBOX_WEB_PORT", "80"))
+ REPORT = os.environ.get("GATBOX_REPORT", "/usr/local/bin/gatbox-rail-report")
++FONTS = os.environ.get("GATBOX_WEB_FONTS", "/usr/local/share/gatbox-web/fonts")   # fetched by gatbox-bootstrap.sh
++FONT_FILES = {"ChakraPetch-SemiBold.ttf", "ShareTechMono-Regular.ttf"}
+ NAME = re.compile(r"^rail_\d{8}_\d{6}\.csv$")
+ TS = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d)?$")
+ PDF_LOCK = threading.Lock()  # matplotlib isn't thread-safe
+@@ -96,31 +99,46 @@
+ 
+ def warnings(flags, when):
+     w = dict(WARN[f] for f in sorted(flags))
+-    return "".join(f'<div class="bad">{html.escape(k)} {when}: {v}</div>' for k, v in w.items())
++    return "".join(f'<div class="warn">{html.escape(k)} {when}: {v}</div>' for k, v in w.items())
+ 
++# Project design tokens (synthwave). The fonts come from this Pi, since the hotspot has no internet. If they're
++# missing, /font/ 404s and each stack falls back to the system fonts after it.
+ CSS = """
+-:root{--bg:#15101f;--fg:#e8e4f0;--mut:#9a92ad;--card:#221a33;--ok:#5fd38d;--bad:#ff6b8a;--acc:#7fd8e8}
+-*{box-sizing:border-box}body{margin:0;padding:16px;background:var(--bg);color:var(--fg);
+-font:16px/1.4 system-ui,sans-serif;max-width:900px;margin:auto}
+-a{color:var(--acc)}h1{font-size:20px;margin:0 0 12px}.mut{color:var(--mut);font-size:14px}
+-.card{background:var(--card);border-radius:10px;padding:12px 14px;margin:10px 0}
+-.card a{text-decoration:none;display:block;color:var(--fg)}.big{font-size:28px;font-weight:600}
+-.ok{color:var(--ok)}.bad{color:var(--bad)}pre{white-space:pre-wrap;font-size:13px;overflow-x:auto}
+-img{width:100%;height:auto;border-radius:8px}form{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+-input{width:5.5em;padding:6px;border-radius:6px;border:1px solid #444;background:#0e0a16;color:var(--fg)}
+-button,.btn{padding:6px 12px;border-radius:6px;border:0;background:var(--acc);color:#111;font-weight:600;
+-text-decoration:none;display:inline-block}.rng{display:flex;gap:8px;flex-wrap:wrap;width:100%}
+-.rng label{color:var(--mut);font-size:14px}.rng input{width:auto}
+-button.stop{background:var(--bad);margin-left:8px}
+-.mode{display:inline-block;padding:1px 8px;border-radius:999px;background:#33284d;color:var(--acc);
+-font-size:13px;font-weight:600;vertical-align:middle}.modes div{margin-top:4px}.modes .bad{font-size:14px}
++@font-face{font-family:"Chakra Petch";font-weight:600;font-display:swap;src:url(/font/ChakraPetch-SemiBold.ttf)}
++@font-face{font-family:"Share Tech Mono";font-display:swap;src:url(/font/ShareTechMono-Regular.ttf)}
++:root{--bg:#150a28;--bg2:#1f0f3d;--panel:#1f1240;--line:#3d1e6b;--mag:#ff2e9f;--cyan:#7dfaff;--ok:#5ef2b0;
++--bad:#ff4d6d;--warn:#ffb74d;--fg:#ece3ff;--mut:#9080b0;--disp:"Chakra Petch",system-ui,sans-serif;
++--mono:"Share Tech Mono",ui-monospace,monospace}
++*{box-sizing:border-box}html{background:var(--bg) linear-gradient(180deg,var(--bg2),var(--bg) 100vh) no-repeat}
++body{margin:0 auto;padding:16px;max-width:900px;color:var(--fg);font:15px/1.45 var(--mono)}
++body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
++background:repeating-linear-gradient(0deg,rgba(0,0,0,.22) 0 1px,transparent 1px 3px)}
++a{color:var(--cyan)}.mut{color:var(--mut);font-size:14px}
++h1{font:600 22px/1.2 var(--disp);letter-spacing:.03em;margin:0 0 10px;text-shadow:0 0 12px rgba(255,46,159,.5)}
++.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:10px 0}
++.card a{text-decoration:none;display:block;color:var(--fg)}
++.big{font:600 32px/1.2 var(--disp);color:var(--cyan);text-shadow:0 0 10px rgba(125,250,255,.35)}
++.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
++pre{white-space:pre-wrap;font:13px/1.4 var(--mono);overflow-x:auto;margin:0}
++img{width:100%;height:auto;border-radius:6px;border:1px solid var(--line)}
++form{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
++input{width:5.5em;padding:6px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg);
++font:inherit}input:focus{outline:1px solid var(--cyan)}
++button,.btn{padding:7px 14px;border-radius:6px;border:1px solid var(--mag);background:var(--mag);color:var(--bg);
++font:600 15px var(--disp);text-decoration:none;display:inline-block;cursor:pointer}
++button.stop{background:transparent;color:var(--bad);border-color:var(--bad);margin-left:8px}
++.rng{display:flex;gap:8px;flex-wrap:wrap;width:100%}.rng label{color:var(--mut);font-size:14px}.rng input{width:auto}
++.mode{display:inline-block;padding:0 8px;border:1px solid var(--cyan);border-radius:999px;color:var(--cyan);
++background:rgba(125,250,255,.08);box-shadow:0 0 6px rgba(125,250,255,.25);font:13px/1.5 var(--mono);
++vertical-align:middle;text-shadow:none}.modes div{margin-top:5px}.modes .warn{font-size:14px}
+ """
+ 
+ 
+ def page(title, body, refresh=None):
+     meta = f'<meta http-equiv="refresh" content="{refresh}">' if refresh else ""
+     return (f'<!doctype html><html><head><meta charset="utf-8">'
+-            f'<meta name="viewport" content="width=device-width,initial-scale=1">{meta}'
++            f'<meta name="viewport" content="width=device-width,initial-scale=1">'
++            f'<meta name="theme-color" content="#150a28">{meta}'
+             f'<title>{html.escape(title)}</title><style>{CSS}</style></head><body>{body}</body></html>')
+ 
+ 
+@@ -299,12 +317,12 @@
+ class H(BaseHTTPRequestHandler):
+     server_version = "gatbox-web"
+ 
+-    def send(self, code, body, ctype="text/html; charset=utf-8", extra=()):
++    def send(self, code, body, ctype="text/html; charset=utf-8", extra=(), cache="no-store"):
+         data = body if isinstance(body, bytes) else body.encode()
+         self.send_response(code)
+         self.send_header("Content-Type", ctype)
+         self.send_header("Content-Length", str(len(data)))
+-        self.send_header("Cache-Control", "no-store")
++        self.send_header("Cache-Control", cache)
+         for k, v in extra:
+             self.send_header(k, v)
+         self.end_headers()
+@@ -320,6 +338,12 @@
+         try:
+             if u.path in ("/", ""):
+                 return self.index(q)
++            if len(parts) == 2 and parts[0] == "font" and parts[1] in FONT_FILES:
++                try:
++                    with open(os.path.join(FONTS, parts[1]), "rb") as f:
++                        return self.send(200, f.read(), "font/ttf", cache="public, max-age=31536000, immutable")
++                except OSError:
++                    pass                               # not installed: 404, and the page uses system fonts
+             if len(parts) == 2 and NAME.match(parts[1]) and os.path.exists(os.path.join(LOGDIR, parts[1])):
+                 kind, name = parts
+                 if kind == "s":
+--- gatbox-bootstrap.sh (previous)	2026-09-24 14:02:36.397418082 -0500
++++ gatbox-bootstrap.sh	2026-09-24 14:03:27.861826791 -0500
+@@ -12,12 +12,13 @@
+ # Other knobs: GATBOX_PSU_5A=0 skips the PSU_MAX_CURRENT EEPROM change.
+ #
+ # What it does:
+-#   1  packages: sigrok-cli, python3-matplotlib, rsync, git
++#   1  packages: sigrok-cli, python3-matplotlib, rsync, git, curl
+ #   2  removes ModemManager (hijacks ttyUSB0) and brltty (grabs USB-serial adapters)
+ #   3  groups (dialout, plugdev, gpio, i2c, spi, video) for your user; enables I2C + SPI
+ #   4  power fix: PSU_MAX_CURRENT=5000 (EEPROM) + usb_max_current_enable=1 (config.txt)
+ #   5  /dev/gatbox-dmm udev symlink for the PL-2303
+-#   6  gatbox-raillog service, gatbox-status, gatbox-rail-report, desktop menu launcher
++#   6  gatbox-raillog service, gatbox-status, gatbox-rail-report, desktop menu launcher,
++#      gatbox-web (phone view on port 80, Start/Stop, PDF) + its two fonts
+ #   7  persistent journal; optional hotspot fallback; optional RTC trickle charge
+ 
+ set -euo pipefail
+@@ -712,6 +713,514 @@
+ [Install]
+ WantedBy=multi-user.target
+ GATBOX_EOF
++    put "$R/usr/local/bin/gatbox-web" 755 <<'GATBOX_EOF'
++#!/usr/bin/env python3
++"""gatbox-web: phone-friendly read-only view of the rail logs.
++
++  /                      sessions, newest first, plus what's logging right now
++  /s/<csv>?lo=&hi=       gatbox-rail-report text + plot for one session
++  /png/<csv>?lo=&hi=     the plot on its own
++  /pdf/<csv>?lo=&hi=&from=&to=   header + plot + report as a PDF to save/share
++                         (from/to are Pi wall-clock times, YYYY-MM-DDTHH:MM[:SS]; on /s and /png too)
++  /csv/<csv>             download the raw CSV
++  /font/<file>           the two UI fonts, from $GATBOX_WEB_FONTS (the hotspot has no internet)
++  POST /control          action=start|stop: flag files in $STATE_DIRECTORY that gatbox-raillog polls
++                         ("stopped" exists = don't log; "start-request" newer than the session = new file)
++
++Stdlib only. Runs gatbox-rail-report for the analysis so the numbers match the CLI.
++Plots are cached in $CACHE_DIRECTORY, keyed by file size+mtime and window.
++The meter mode (DC voltage, resistance, ...) comes from the CSV's unit + flags columns.
++"""
++import functools, html, io, math, os, re, subprocess, sys, textwrap, threading, time
++from collections import namedtuple
++from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
++from urllib.parse import urlsplit, parse_qs
++
++LOGDIR = os.environ.get("GATBOX_LOGDIR", "/var/log/gatbox")
++CACHE = os.environ.get("CACHE_DIRECTORY", "/tmp/gatbox-web")
++CTRL = os.environ.get("STATE_DIRECTORY", "/var/lib/gatbox-web")
++PORT = int(os.environ.get("GATBOX_WEB_PORT", "80"))
++REPORT = os.environ.get("GATBOX_REPORT", "/usr/local/bin/gatbox-rail-report")
++FONTS = os.environ.get("GATBOX_WEB_FONTS", "/usr/local/share/gatbox-web/fonts")   # fetched by gatbox-bootstrap.sh
++FONT_FILES = {"ChakraPetch-SemiBold.ttf", "ShareTechMono-Regular.ttf"}
++NAME = re.compile(r"^rail_\d{8}_\d{6}\.csv$")
++TS = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d)?$")
++PDF_LOCK = threading.Lock()  # matplotlib isn't thread-safe
++LIVE_S = 10  # a session whose last sample is newer than this is "logging now"
++
++# gatbox-raillog splits sigrok's "P1: 119.68 V AC AUTO" into value, unit (SI prefix + unit) and flags.
++# Continuity has no unit, so its first flag (if any) lands in the unit column: "1,AUTO,".
++FLAGS = {"AC", "DC", "RMS", "DIODE", "HOLD", "MAX", "MIN", "AUTO", "REL", "AVG", "REF", "UNSTABLE"}
++PREFIX = {"f": 1e-15, "p": 1e-12, "n": 1e-9, "µ": 1e-6, "μ": 1e-6, "u": 1e-6, "m": 1e-3, "": 1.0,
++          "k": 1e3, "M": 1e6, "G": 1e9, "T": 1e12}   # sigrok can tag OL as e.g. "inf TV"
++KIND = {"V": "voltage", "A": "current", "Ω": "resistance", "F": "capacitance", "Hz": "frequency",
++        "%": "duty cycle", "": "continuity"}
++WARN = {"HOLD": ("HOLD", "the meter repeats one frozen reading"),     # these make the log misleading
++        "REL": ("REL (Δ)", "readings are offsets, not the real value"),
++        "MAX": ("MAX/MIN", "the meter sends its max or min, not the live value"),
++        "MIN": ("MAX/MIN", "the meter sends its max or min, not the live value")}
++RAIL = "DC voltage"   # the only mode the V window and gatbox-rail-report are meant for
++Mode = namedtuple("Mode", "label base scale unit warn")
++
++
++@functools.lru_cache(maxsize=64)
++def mode(unit, flags):
++    """CSV unit + flags -> Mode, e.g. ('kΩ', 'AUTO') -> label 'Resistance', base 'Ω', scale 1e3."""
++    fl = flags.split()
++    unit = unit.replace("\u2126", "\u03a9")          # sigrok writes OHM SIGN; "Ω" here is Greek omega
++    if unit in FLAGS:
++        fl, unit = [unit] + fl, ""
++    base, scale = unit, 1.0
++    for b in ("V", "A", "Ω", "F", "Hz", "%"):
++        if unit.endswith(b) and unit[:-len(b)] in PREFIX:
++            base, scale = b, PREFIX[unit[:-len(b)]]
++            break
++    if "DIODE" in fl:
++        label = "diode"
++    elif base in ("V", "A"):
++        ac, dc = "AC" in fl, "DC" in fl
++        label = ("AC+DC " if ac and dc else "AC " if ac else "DC " if dc else "") + KIND[base]
++    elif base in KIND:
++        label = KIND[base]
++    else:
++        label = unit                                   # not a UT61E unit: show it as sigrok wrote it
++    if base in KIND:
++        label = label[:1].upper() + label[1:]
++    return Mode(label, base, scale, unit, frozenset(f for f in fl if f in WARN))
++
++
++def fmt(v, base):
++    """Value in base units -> text: volts as before (3 decimals), other units with an SI prefix."""
++    if base == "V":
++        return f"{v:.3f} V"
++    if base not in KIND or base in ("%", ""):
++        return f"{v:g} {base}".rstrip()
++    for p, k in (("M", 1e6), ("k", 1e3), ("", 1.0), ("m", 1e-3), ("µ", 1e-6), ("n", 1e-9), ("p", 1e-12)):
++        if abs(v) >= k:
++            return f"{v / k:.4g} {p}{base}"
++    return f"{v:g} {base}"
++
++
++def reading(raw, m):
++    """The live value the way the meter's display would put it."""
++    if raw.lstrip("+-") == "inf":
++        return "OL"
++    if m.label == "Continuity":
++        try:
++            return "closed" if float(raw) > 0 else "open"
++        except ValueError:
++            pass
++    return f"{raw} {m.unit}".rstrip()
++
++
++def warnings(flags, when):
++    w = dict(WARN[f] for f in sorted(flags))
++    return "".join(f'<div class="warn">{html.escape(k)} {when}: {v}</div>' for k, v in w.items())
++
++# Project design tokens (synthwave). The fonts come from this Pi, since the hotspot has no internet. If they're
++# missing, /font/ 404s and each stack falls back to the system fonts after it.
++CSS = """
++@font-face{font-family:"Chakra Petch";font-weight:600;font-display:swap;src:url(/font/ChakraPetch-SemiBold.ttf)}
++@font-face{font-family:"Share Tech Mono";font-display:swap;src:url(/font/ShareTechMono-Regular.ttf)}
++:root{--bg:#150a28;--bg2:#1f0f3d;--panel:#1f1240;--line:#3d1e6b;--mag:#ff2e9f;--cyan:#7dfaff;--ok:#5ef2b0;
++--bad:#ff4d6d;--warn:#ffb74d;--fg:#ece3ff;--mut:#9080b0;--disp:"Chakra Petch",system-ui,sans-serif;
++--mono:"Share Tech Mono",ui-monospace,monospace}
++*{box-sizing:border-box}html{background:var(--bg) linear-gradient(180deg,var(--bg2),var(--bg) 100vh) no-repeat}
++body{margin:0 auto;padding:16px;max-width:900px;color:var(--fg);font:15px/1.45 var(--mono)}
++body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
++background:repeating-linear-gradient(0deg,rgba(0,0,0,.22) 0 1px,transparent 1px 3px)}
++a{color:var(--cyan)}.mut{color:var(--mut);font-size:14px}
++h1{font:600 22px/1.2 var(--disp);letter-spacing:.03em;margin:0 0 10px;text-shadow:0 0 12px rgba(255,46,159,.5)}
++.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:10px 0}
++.card a{text-decoration:none;display:block;color:var(--fg)}
++.big{font:600 32px/1.2 var(--disp);color:var(--cyan);text-shadow:0 0 10px rgba(125,250,255,.35)}
++.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
++pre{white-space:pre-wrap;font:13px/1.4 var(--mono);overflow-x:auto;margin:0}
++img{width:100%;height:auto;border-radius:6px;border:1px solid var(--line)}
++form{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
++input{width:5.5em;padding:6px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg);
++font:inherit}input:focus{outline:1px solid var(--cyan)}
++button,.btn{padding:7px 14px;border-radius:6px;border:1px solid var(--mag);background:var(--mag);color:var(--bg);
++font:600 15px var(--disp);text-decoration:none;display:inline-block;cursor:pointer}
++button.stop{background:transparent;color:var(--bad);border-color:var(--bad);margin-left:8px}
++.rng{display:flex;gap:8px;flex-wrap:wrap;width:100%}.rng label{color:var(--mut);font-size:14px}.rng input{width:auto}
++.mode{display:inline-block;padding:0 8px;border:1px solid var(--cyan);border-radius:999px;color:var(--cyan);
++background:rgba(125,250,255,.08);box-shadow:0 0 6px rgba(125,250,255,.25);font:13px/1.5 var(--mono);
++vertical-align:middle;text-shadow:none}.modes div{margin-top:5px}.modes .warn{font-size:14px}
++"""
++
++
++def page(title, body, refresh=None):
++    meta = f'<meta http-equiv="refresh" content="{refresh}">' if refresh else ""
++    return (f'<!doctype html><html><head><meta charset="utf-8">'
++            f'<meta name="viewport" content="width=device-width,initial-scale=1">'
++            f'<meta name="theme-color" content="#150a28">{meta}'
++            f'<title>{html.escape(title)}</title><style>{CSS}</style></head><body>{body}</body></html>')
++
++
++def sessions():
++    try:
++        names = [n for n in os.listdir(LOGDIR) if NAME.match(n)]
++    except OSError:
++        names = []
++    return sorted(names, reverse=True)
++
++
++def summary(name, t0=None, t1=None):
++    """First/last sample, and per meter mode the sample count and cheap min/max in base units
++    (V, Ω, ...), without running the full report. Optionally only the samples from t0 to t1."""
++    first = last = None
++    modes, warn, n = {}, set(), 0
++    with open(os.path.join(LOGDIR, name), errors="replace") as f:
++        for line in f:
++            p = line.rstrip("\n").split(",")
++            if len(p) < 4 or p[0].startswith("#") or p[0] == "iso_time":
++                continue
++            if (t0 and p[0] < t0) or (t1 and p[0] > t1):
++                continue
++            m = mode(p[3], p[4] if len(p) > 4 else "")
++            try:
++                e, v = float(p[1]), float(p[2]) * m.scale
++            except ValueError:
++                continue
++            n += 1
++            if first is None:
++                first = (p[0], e)
++            last = (p[0], e, m, p[2])
++            s = modes.setdefault(m.label, [0, float("inf"), float("-inf"), m.base])
++            s[0] += 1
++            if math.isfinite(v):
++                s[1], s[2] = min(s[1], v), max(s[2], v)
++            warn |= m.warn
++    return dict(first=first, last=last, n=n, modes=modes, warn=warn)
++
++
++def mode_lines(s, lo, hi, when="was on"):
++    """One line per meter mode seen: chip, min/max, and for DC voltage the rail-window tag.
++    Then a warning for HOLD/REL/MAX/MIN."""
++    out = []
++    for label, (n, vmin, vmax, base) in s["modes"].items():
++        line = f'<span class="mode">{html.escape(label)}</span>'
++        if vmin <= vmax and label != "Continuity":   # all-OL has no finite values
++            line += f' <span class="mut">min {html.escape(fmt(vmin, base))} · max {html.escape(fmt(vmax, base))}</span>'
++        if label == RAIL:
++            line += (' · <span class="ok">in window</span>' if lo <= vmin and vmax <= hi
++                     else ' · <span class="bad">left the window</span>')
++        out.append(f"<div>{line}</div>")
++    return f'<div class="modes">{"".join(out)}{warnings(s["warn"], when)}</div>'
++
++
++def window(q):
++    def f(k, d):
++        try:
++            return float(q.get(k, [d])[0])
++        except ValueError:
++            return d
++    return f("lo", 4.75), f("hi", 5.25)
++
++
++def span(q):
++    """from/to query values -> (t0, t1) as 'YYYY-MM-DDTHH:MM:SS', or None if absent/invalid.
++    Compared as strings against the CSV's iso_time column (same local wall-clock format)."""
++    def f(k, pad):
++        v = q.get(k, [""])[0]
++        return (v if len(v) == 19 else v + pad) if TS.match(v) else None
++    return f("from", ":00"), f("to", ":59")
++
++
++def span_qs(t0, t1):
++    return (f"&from={t0}" if t0 else "") + (f"&to={t1}" if t1 else "")
++
++
++def report(name, lo, hi, t0=None, t1=None, light=False):
++    """Run gatbox-rail-report (on the from/to slice if given); returns (text, png path or None)."""
++    src = os.path.join(LOGDIR, name)
++    st = os.stat(src)
++    os.makedirs(CACHE, exist_ok=True)
++    rng = f"_{t0 or ''}_{t1 or ''}".replace(":", "") if (t0 or t1) else ""
++    ver = f"{st.st_size}_{int(st.st_mtime)}_{int(os.stat(REPORT).st_mtime)}"   # new report -> new cache
++    key = f"{name[:-4]}_{ver}_{lo:g}_{hi:g}{rng}{'_light' if light else ''}"
++    png, txt = os.path.join(CACHE, key + ".png"), os.path.join(CACHE, key + ".txt")
++    if not os.path.exists(txt):
++        for old in os.listdir(CACHE):          # drop stale versions of this session (file grew)
++            if old.startswith(name[:-4] + "_") and f"_{ver}_" not in old:
++                try: os.remove(os.path.join(CACHE, old))
++                except OSError: pass
++        run_on = src
++        if rng:                                # slice the CSV, keep header + "# ..." notes
++            run_on, kept = os.path.join(CACHE, key + ".csv"), 0
++            with open(src, errors="replace") as fi, open(run_on, "w") as fo:
++                for i, line in enumerate(fi):
++                    if i == 0 or line.startswith("#"):
++                        fo.write(line)
++                        continue
++                    iso = line[:19]
++                    if (not t0 or iso >= t0) and (not t1 or iso <= t1):
++                        fo.write(line); kept += 1
++            if not kept:
++                with open(txt, "w") as f:
++                    f.write(f"No samples between {t0 or 'start'} and {t1 or 'end'}.\n")
++                return report_text(txt, name, t0, t1), None
++        r = subprocess.run([REPORT, run_on, "--lo", str(lo), "--hi", str(hi), "--plot", png]
++                           + (["--light"] if light else []),
++                           capture_output=True, text=True, timeout=120)
++        with open(txt, "w") as f:
++            f.write(r.stdout + (("\n" + r.stderr) if r.returncode else ""))
++        if rng:
++            os.remove(run_on)
++    return report_text(txt, name, t0, t1), (png if os.path.exists(png) else None)
++
++
++def report_text(txt, name, t0, t1):
++    out = []
++    with open(txt) as f:
++        for l in f:
++            if l.startswith("plot:"):          # cache path means nothing on a phone
++                continue
++            if l.startswith("file:"):          # show the real session, not the cache slice
++                l = f"file:      {name}\n"
++                if t0 or t1:
++                    l += f"range:     {t0 or 'start'}  ->  {t1 or 'end'}\n"
++            out.append(l)
++    return "".join(out)
++
++
++def make_pdf(name, lo, hi, t0, t1):
++    """Letter-size PDF: header, plot, then the report text (continued on more pages if long)."""
++    text, png = report(name, lo, hi, t0, t1, light=True)
++    s = summary(name, t0, t1)
++    mode_txt = ("meter mode: " + (", ".join(s["modes"]) or "no samples")
++                + "".join(f"   ·   {k} was on" for k in dict(WARN[f] for f in sorted(s["warn"]))))
++    from matplotlib.figure import Figure
++    from matplotlib.backends.backend_pdf import PdfPages
++    import matplotlib.image as mpimg
++    lines = text.rstrip("\n").split("\n")
++    buf = io.BytesIO()
++    with PDF_LOCK, PdfPages(buf, metadata={"Title": f"GATBOX rail report {name}", "Creator": "gatbox-web"}) as pdf:
++        first, per_page, page_no = True, 72, 1
++        while first or lines:
++            fig = Figure(figsize=(8.5, 11))
++            fig.text(0.06, 0.965, "GATBOX rail report (GDD-GAT/01)", fontsize=14, weight="bold")
++            fig.text(0.94, 0.965, f"page {page_no}", fontsize=8, ha="right", color="0.4")
++            if first:
++                sub = (f"{name}   ·   window {lo:g}–{hi:g} V   ·   "
++                       f"range {(t0 or 'start').replace('T', ' ')} → {(t1 or 'end').replace('T', ' ')}")
++                fig.text(0.06, 0.945, sub, fontsize=8.5, color="0.25")
++                rows = textwrap.wrap(mode_txt, 110)
++                for i, row in enumerate(rows):
++                    fig.text(0.06, 0.93 - 0.0135 * i, row, fontsize=8.5,
++                             color="#c0304a" if s["warn"] else "0.25")
++                y = 0.93 - 0.0135 * len(rows)
++                fig.text(0.06, y, f"generated {time.strftime('%Y-%m-%d %H:%M:%S')} (Pi clock)",
++                         fontsize=8, color="0.45")
++                top = y - 0.015
++                if png:
++                    img = mpimg.imread(png)
++                    h = 0.88 * 8.5 * img.shape[0] / img.shape[1] / 11   # keep aspect, 88% width
++                    ax = fig.add_axes([0.06, top - h, 0.88, h]); ax.imshow(img); ax.axis("off")
++                    top -= h + 0.02
++                n = max(1, int((top - 0.04) / 0.0125))
++            else:
++                top, n = 0.935, per_page
++            chunk, lines = lines[:n], lines[n:]
++            fig.text(0.06, top, "\n".join(chunk), fontsize=7.5, family="monospace", va="top",
++                     linespacing=1.25)
++            pdf.savefig(fig)
++            first, page_no = False, page_no + 1
++    return buf.getvalue()
++
++
++class H(BaseHTTPRequestHandler):
++    server_version = "gatbox-web"
++
++    def send(self, code, body, ctype="text/html; charset=utf-8", extra=(), cache="no-store"):
++        data = body if isinstance(body, bytes) else body.encode()
++        self.send_response(code)
++        self.send_header("Content-Type", ctype)
++        self.send_header("Content-Length", str(len(data)))
++        self.send_header("Cache-Control", cache)
++        for k, v in extra:
++            self.send_header(k, v)
++        self.end_headers()
++        self.wfile.write(data)
++
++    def log_message(self, fmt, *a):
++        sys.stderr.write("%s %s\n" % (self.address_string(), fmt % a))
++
++    def do_GET(self):
++        u = urlsplit(self.path)
++        q = parse_qs(u.query)
++        parts = u.path.strip("/").split("/")
++        try:
++            if u.path in ("/", ""):
++                return self.index(q)
++            if len(parts) == 2 and parts[0] == "font" and parts[1] in FONT_FILES:
++                try:
++                    with open(os.path.join(FONTS, parts[1]), "rb") as f:
++                        return self.send(200, f.read(), "font/ttf", cache="public, max-age=31536000, immutable")
++                except OSError:
++                    pass                               # not installed: 404, and the page uses system fonts
++            if len(parts) == 2 and NAME.match(parts[1]) and os.path.exists(os.path.join(LOGDIR, parts[1])):
++                kind, name = parts
++                if kind == "s":
++                    return self.detail(name, q)
++                if kind == "png":
++                    _, png = report(name, *window(q), *span(q))
++                    if png:
++                        with open(png, "rb") as f:
++                            return self.send(200, f.read(), "image/png")
++                if kind == "pdf":
++                    t0, t1 = span(q)
++                    fn = f"gatbox_{name[:-4]}" + (f"_{(t0 or 'start')}_{(t1 or 'end')}".replace(":", "")
++                                                  if (t0 or t1) else "") + ".pdf"
++                    return self.send(200, make_pdf(name, *window(q), t0, t1), "application/pdf",
++                                     [("Content-Disposition", f'inline; filename="{fn}"')])
++                if kind == "csv":
++                    with open(os.path.join(LOGDIR, name), "rb") as f:
++                        return self.send(200, f.read(), "text/csv",
++                                         [("Content-Disposition", f'attachment; filename="{name}"')])
++            self.send(404, page("Not found", "<h1>Not found</h1><a href='/'>Back</a>"))
++        except Exception as e:  # keep serving; show the error instead of a dropped connection
++            self.send(500, page("Error", f"<h1>Error</h1><pre>{html.escape(repr(e))}</pre>"))
++
++    def do_POST(self):
++        u = urlsplit(self.path)
++        n = int(self.headers.get("Content-Length") or 0)
++        form = parse_qs(self.rfile.read(min(n, 1024)).decode(errors="replace"))
++        action = form.get("action", [""])[0]
++        if u.path != "/control" or action not in ("start", "stop"):
++            return self.send(400, page("Bad request", "<h1>Bad request</h1><a href='/'>Back</a>"))
++        os.makedirs(CTRL, exist_ok=True)
++        stopped = os.path.join(CTRL, "stopped")
++        if action == "stop":
++            open(stopped, "w").close()
++        else:
++            with open(os.path.join(CTRL, "start-request"), "w") as f:
++                f.write(time.strftime("%Y-%m-%dT%H:%M:%S\n"))
++            try: os.remove(stopped)
++            except FileNotFoundError: pass
++        sys.stderr.write(f"{self.address_string()} control: {action}\n")
++        # POST-redirect-GET, so a refresh doesn't press the button again
++        self.send(303, b"", extra=[("Location", "/?" + u.query if u.query else "/")])
++
++    def controls(self, is_live):
++        stopped = os.path.exists(os.path.join(CTRL, "stopped"))
++        if stopped:
++            state = '<span class="bad">Stopped</span> from this page. Nothing is being recorded.'
++        elif is_live:
++            state = '<span class="ok">Running</span>'
++        else:
++            state = '<span class="ok">Running</span>, waiting for readings from the meter'
++        start_lbl = "Start new session" if (is_live and not stopped) else "Start"
++        return (f'<div class="card"><div>Logger: {state}</div>'
++                f'<form method="post" action="/control" style="margin-top:8px">'
++                f'<button name="action" value="start">{start_lbl}</button>'
++                + ('' if stopped else
++                   '<button name="action" value="stop" class="stop" '
++                   'onclick="return confirm(\'Stop logging? Nothing will be recorded until you press Start.\')">Stop</button>')
++                + '</form></div>')
++
++    def index(self, q):
++        lo, hi = window(q)
++        qs = f"?lo={lo:g}&hi={hi:g}"
++        now = time.time()
++        cards = []
++        live = ""
++        for name in sessions():
++            s = summary(name)
++            if not s["first"]:
++                continue
++            last_iso, last_e, m, raw = s["last"]
++            dur = last_e - s["first"][1]
++            is_live = now - last_e < LIVE_S
++            if is_live:
++                live = (f'<div class="card"><div class="mut">Logging now · {html.escape(name)}</div>'
++                        f'<div class="big">{html.escape(reading(raw, m))} '
++                        f'<span class="mode">{html.escape(m.label)}</span></div>'
++                        f'{warnings(m.warn, "is on")}'
++                        f'<div class="mut">{s["n"]} samples · {dur/3600:.2f} h so far</div></div>')
++            cards.append(
++                f'<div class="card"><a href="/s/{name}{qs}">'
++                f'<b>{html.escape(s["first"][0].replace("T", " "))}</b>'
++                f'{" · <span class=ok>live</span>" if is_live else ""}<br>'
++                f'<span class="mut">{dur/3600:.2f} h · {s["n"]} samples</span>'
++                f'{mode_lines(s, lo, hi)}</a></div>')
++        is_live = bool(live)
++        if not live and not os.path.exists(os.path.join(CTRL, "stopped")):
++            live = ('<div class="card"><div class="mut">Not logging right now</div>'
++                    '<div class="mut">Meter off, D02 head out of the top slot, or adapter unplugged.</div></div>')
++        live = self.controls(is_live) + live
++        body = (f'<h1>GATBOX rail log</h1><div class="mut">Pi time {time.strftime("%Y-%m-%d %H:%M:%S")}'
++                f' · refreshes every 30 s</div>{live}'
++                f'<form method="get" action="/"><span class="mut">Window (V)</span>'
++                f'<input name="lo" value="{lo:g}" inputmode="decimal"><input name="hi" value="{hi:g}" inputmode="decimal">'
++                f'<button>Apply</button></form>'
++                + ("".join(cards) or '<div class="card mut">No sessions yet.</div>'))
++        self.send(200, page("GATBOX", body, refresh=30))
++
++    def detail(self, name, q):
++        lo, hi = window(q)
++        t0, t1 = span(q)
++        qs = f"?lo={lo:g}&hi={hi:g}"
++        s = summary(name)
++        start = s["first"][0] if s["first"] else ""
++        end = s["last"][0] if s["last"] else ""
++        text, png = report(name, lo, hi, t0, t1)
++        view = summary(name, t0, t1) if (t0 or t1) else s
++        full = qs + span_qs(t0, t1)
++        src = f"/png/{name}{full}&t={int(time.time())}"
++        img = f'<a href="{src}"><img src="{src}" alt="plot (tap for full size)"></a>' if png else \
++              '<div class="mut">No plot (python3-matplotlib missing?)</div>'
++        body = (f'<a href="/{qs}">← all sessions</a><h1>{html.escape(name)}</h1>'
++                f'<div class="card"><span class="mut">Meter mode{" in this range" if (t0 or t1) else ""}</span>'
++                f'{mode_lines(view, lo, hi) if view["n"] else "<div class=mut>no samples</div>"}</div>'
++                f'<form method="get"><span class="mut">Window (V)</span>'
++                f'<input name="lo" value="{lo:g}" inputmode="decimal"><input name="hi" value="{hi:g}" inputmode="decimal">'
++                f'<div class="rng"><label>From <input type="datetime-local" step="1" name="from" '
++                f'value="{t0 or start}" min="{start}" max="{end}"></label>'
++                f'<label>To <input type="datetime-local" step="1" name="to" '
++                f'value="{t1 or end}" min="{start}" max="{end}"></label></div>'
++                f'<button>Apply</button>'
++                f'{f"<a href=/s/{name}{qs}>whole session</a>" if (t0 or t1) else ""}</form>'
++                f'<p><a class="btn" href="/pdf/{name}{full}">PDF of this view</a></p>'
++                f'<div class="card">{img}</div><div class="card"><pre>{html.escape(text)}</pre></div>'
++                f'<a href="/csv/{name}">Download CSV</a>')
++        self.send(200, page(name, body))
++
++
++if __name__ == "__main__":
++    ThreadingHTTPServer.allow_reuse_address = True
++    srv = ThreadingHTTPServer(("", PORT), H)
++    print(f"gatbox-web on :{PORT}, logs {LOGDIR}", flush=True)
++    srv.serve_forever()
++GATBOX_EOF
++    put "$R/etc/systemd/system/gatbox-web.service" 644 <<'GATBOX_EOF'
++[Unit]
++Description=GATBOX rail log web view (http://10.42.0.1 on the GATBOX hotspot)
++After=network.target
++
++[Service]
++ExecStart=/usr/local/bin/gatbox-web
++Restart=always
++RestartSec=5
++# unprivileged throwaway user; only needs to read /var/log/gatbox and bind port 80
++DynamicUser=yes
++AmbientCapabilities=CAP_NET_BIND_SERVICE
++CapabilityBoundingSet=CAP_NET_BIND_SERVICE
++CacheDirectory=gatbox-web
++# Start/Stop flag files, read by gatbox-raillog (root) at /var/lib/gatbox-web
++StateDirectory=gatbox-web
++# matplotlib wants a writable config/font-cache dir; without one it rebuilds the font cache every run
++Environment=MPLCONFIGDIR=/var/cache/gatbox-web/mpl
++ProtectSystem=strict
++ProtectHome=yes
++PrivateTmp=yes
++NoNewPrivileges=yes
++Nice=10
++
++[Install]
++WantedBy=multi-user.target
++GATBOX_EOF
+ }
+ 
+ # ---------------------------------------------------------------------------
+@@ -748,7 +1257,7 @@
+ # 1 ---------------------------------------------------------------------------
+ step "1/7 packages"
+ apt-get update -q
+-apt-get install -y -q sigrok-cli python3-matplotlib rsync git
++apt-get install -y -q sigrok-cli python3-matplotlib rsync git curl
+ log "sigrok-cli $(sigrok-cli --version 2>/dev/null | head -n 1 | awk '{print $2}')"
+ drivers=$(sigrok-cli -L 2>/dev/null || true)
+ if grep -q 'uni-t-ut61e-ser' <<<"$drivers"; then log "driver uni-t-ut61e-ser present"
+@@ -821,11 +1330,11 @@
+ fi
+ 
+ # 5 + 6 -------------------------------------------------------------------------
+-step "5/7 udev symlink + 6/7 logger, tools, launcher"
++step "5/7 udev symlink + 6/7 logger, tools, web view, launcher"
+ payload /
+ udevadm control --reload-rules
+ udevadm trigger --subsystem-match=tty
+-log "installed: gatbox-raillog  gatbox-status  gatbox-rail-report  (in /usr/local/bin)"
++log "installed: gatbox-raillog  gatbox-status  gatbox-rail-report  gatbox-web  (in /usr/local/bin)"
+ log "menu: Accessories > GATBOX Rail Monitor"
+ [ -e /dev/gatbox-dmm ] && log "adapter already visible: /dev/gatbox-dmm -> $(readlink -f /dev/gatbox-dmm)" \
+                        || log "adapter not plugged in yet (fine)"
+@@ -836,6 +1345,32 @@
+ systemctl restart gatbox-raillog.service
+ log "gatbox-raillog enabled + started"
+ 
++# gatbox-web's fonts: Chakra Petch + Share Tech Mono (SIL OFL), the project's design-token fonts. Downloaded rather
++# than embedded, pinned to one google/fonts commit and checked by sha256. The Pi serves them itself, since the
++# hotspot has no internet. Without them the page falls back to system fonts.
++FONTS_REV=23e54b51ddffbc7713c583748e3bd86f62b1fa4a
++FONTDIR=/usr/local/share/gatbox-web/fonts
++fetch_font() {   # <path in google/fonts> <local name> <sha256>
++    local f="$FONTDIR/$2"
++    echo "$3  $f" | sha256sum -c --status 2>/dev/null && return 0
++    curl -fsSL --retry 2 -o "$f.part" "https://raw.githubusercontent.com/google/fonts/$FONTS_REV/$1" \
++        && echo "$3  $f.part" | sha256sum -c --status && mv "$f.part" "$f" && chmod 644 "$f" && return 0
++    rm -f "$f.part"
++    return 1
++}
++install -d -m 755 "$FONTDIR"
++if fetch_font ofl/chakrapetch/ChakraPetch-SemiBold.ttf ChakraPetch-SemiBold.ttf 45264de3204ddbd5fb3e14a2402acd5c630d16650ae5fc221d2c52da46a6734b \
++    && fetch_font ofl/chakrapetch/OFL.txt ChakraPetch-OFL.txt 13831d02389d917d22fcfa6c79f98f8acbf61d230add0e73a4d4dc5f3bfb9e56 \
++    && fetch_font ofl/sharetechmono/ShareTechMono-Regular.ttf ShareTechMono-Regular.ttf 9ceab1f87414829af259c0f537573ae03ef7dd3147c0b27a36a1a0beb6732677 \
++    && fetch_font ofl/sharetechmono/OFL.txt ShareTechMono-OFL.txt 9d96f445b6e9c701428811d0177f894874f8d6f07ecc30d568c506542368f3ff; then
++    log "web fonts in $FONTDIR"
++else
++    warn "couldn't fetch the web fonts (no internet?). The page falls back to system fonts; re-run later to add them."
++fi
++systemctl enable gatbox-web.service >/dev/null
++systemctl restart gatbox-web.service
++log "gatbox-web enabled + started: http://gatbox.local/ (http://10.42.0.1/ on the GATBOX hotspot)"
++
+ # 7 ---------------------------------------------------------------------------
+ step "7/7 optional: fallback hotspot"
+ if [ "$AP" = off ]; then

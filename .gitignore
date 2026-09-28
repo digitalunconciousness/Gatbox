@@ -1,0 +1,17 @@
+# Input, not source: PROMPT.md + ref/ from the claude.ai project. M2 copies what belongs into data/ and docs/.
+handoff/
+
+# Local binaries and caches
+*.AppImage
+__pycache__/
+*.pyc
+
+# Secrets never go in git: AP PSK, Wi-Fi credentials, SSH keys, API tokens
+.env
+*.env
+*.psk
+*.key
+*.pem
+*.token
+id_*
+secrets/

@@ -1,0 +1,550 @@
+# 2026-09-24: mode-aware gatbox-rail-report + gatbox-web follow-up. Same report diff is spliced into gatbox-bootstrap.sh.
+--- (previous)	2026-09-24 01:33:39.535432724 -0500
++++ gatbox-rail-report	2026-09-24 11:08:00.265632336 -0500
+@@ -9,32 +9,77 @@
+ (iso_time,epoch,value,unit,flags[,uptime_s], plus "# ..." note lines) and reports:
+ 
+   * session duration and sample count
+-  * steady stats: mean / min / max / p-p
++  * the meter MODE (DC voltage, AC voltage, resistance, ...) from the unit + flags
++    columns, MODE CHANGES mid-session, and a WARNING if HOLD / REL / MAX/MIN was on
++  * steady stats per mode: mean / min / max / p-p
+   * EXCURSIONS: contiguous runs outside [lo, hi], with start time, duration,
+-    and worst value. This is the "what was the rail doing when it crashed" list
++    and worst value. This is the "what was the rail doing when it crashed" list.
++    Only DC voltage readings are checked against the window
+   * OPEN-INPUT events (inf/OL): a lead fell off, or the rail died entirely
+   * GAPS in the timeline (>10 s between samples): optical link dropped
+   * CLOCK STEPS: the wall clock jumped mid-session (NTP arrived late, or date -s).
+     Durations use the monotonic uptime_s column when present, so they stay right.
+ 
+-A plot is written if matplotlib is available (python3-matplotlib); the text
+-report works without it. If the CSV's folder isn't writable, the plot goes to
+-the current directory.
++A plot is written if matplotlib is available (python3-matplotlib), one panel per
++meter mode; the text report works without it. If the CSV's folder isn't writable,
++the plot goes to the current directory.
+ """
+ 
+ import argparse
+ import csv
++import functools
+ import glob
+ import math
+ import os
+ import statistics as st
+ import sys
+-from collections import namedtuple
++from collections import Counter, namedtuple
+ from datetime import datetime, timezone
+ 
+-Row = namedtuple("Row", "epoch iso v unit flags up")
++Row = namedtuple("Row", "epoch iso v unit flags up mode")
++Mode = namedtuple("Mode", "label base scale unit warn")
+ DEFAULT_DIR = "/var/log/gatbox"
+ 
++# Meter mode from the unit + flags columns. gatbox-raillog splits sigrok's "P1: 119.68 V AC AUTO" into
++# value, unit (SI prefix + unit) and flags; continuity has no unit, so its first flag can land in the
++# unit column ("1,AUTO,"). Same rules as mode() in gatbox-web: keep the two in step.
++FLAGS = {"AC", "DC", "RMS", "DIODE", "HOLD", "MAX", "MIN", "AUTO", "REL", "AVG", "REF", "UNSTABLE"}
++PREFIX = {"f": 1e-15, "p": 1e-12, "n": 1e-9, "µ": 1e-6, "μ": 1e-6, "u": 1e-6, "m": 1e-3, "": 1.0,
++          "k": 1e3, "M": 1e6, "G": 1e9, "T": 1e12}   # sigrok can tag OL as e.g. "inf TV"
++KIND = {"V": "voltage", "A": "current", "Ω": "resistance", "F": "capacitance", "Hz": "frequency",
++        "%": "duty cycle", "": "continuity"}
++WARN = {"HOLD": ("HOLD", "the meter repeats one frozen reading"),     # these make the log misleading
++        "REL": ("REL (Δ)", "readings are offsets, not the real value"),
++        "MAX": ("MAX/MIN", "the meter sends its max or min, not the live value"),
++        "MIN": ("MAX/MIN", "the meter sends its max or min, not the live value")}
++RAIL = "DC voltage"   # the only mode the V window applies to
++
++
++@functools.lru_cache(maxsize=64)
++def mode(unit, flags):
++    """CSV unit + flags -> Mode, e.g. ('kΩ', 'AUTO') -> label 'Resistance', base 'Ω', scale 1e3."""
++    fl = flags.split()
++    unit = unit.replace("\u2126", "\u03a9")          # sigrok writes OHM SIGN; "Ω" here is Greek omega
++    if unit in FLAGS:
++        fl, unit = [unit] + fl, ""
++    base, scale = unit, 1.0
++    for b in ("V", "A", "Ω", "F", "Hz", "%"):
++        if unit.endswith(b) and unit[:-len(b)] in PREFIX:
++            base, scale = b, PREFIX[unit[:-len(b)]]
++            break
++    if "DIODE" in fl:
++        label = "diode"
++    elif base in ("V", "A"):
++        ac, dc = "AC" in fl, "DC" in fl
++        label = ("AC+DC " if ac and dc else "AC " if ac else "DC " if dc else "") + KIND[base]
++    elif base in KIND:
++        label = KIND[base]
++    else:
++        label = unit                                   # not a UT61E unit: show it as sigrok wrote it
++    if base in KIND:
++        label = label[:1].upper() + label[1:]
++    return Mode(label, base, scale, unit, frozenset(f for f in fl if f in WARN))
++
+ 
+ def load(path):
+     notes, body = [], []
+@@ -55,19 +100,20 @@
+             e = float(epoch)
+         except ValueError:
+             continue
++        m = mode(unit, flags)
+         try:
+             v = float(val)  # 'inf' / '-inf' parse as infinities
+         except ValueError:
+             v = math.nan
+-        # the meter autoranges: near 0 V it switches to the 220 mV range and logs in mV
+-        v *= {"mV": 1e-3, "µV": 1e-6}.get(unit, 1.0)
++        # to base units: the meter autoranges (near 0 V it logs in mV, 1.2 kΩ, ...)
++        v *= m.scale
+         up = None
+         if len(line) >= 6:
+             try:
+                 up = float(line[5])
+             except ValueError:
+                 up = None
+-        rows.append(Row(e, iso, v, unit, flags, up))
++        rows.append(Row(e, iso, v, unit, flags, up, m))
+     return rows, notes
+ 
+ 
+@@ -93,6 +139,32 @@
+     return f"{h}h{m:02d}m{s:02d}s" if h else f"{m}m{s:02d}s"
+ 
+ 
++def si(vals, base):
++    """(prefix, factor) that suits the largest |value|. Volts stay in V, like the window."""
++    if base in ("V", "%", "") or base not in KIND:
++        return "", 1.0
++    big = max((abs(v) for v in vals if math.isfinite(v)), default=0.0)
++    for p, k in (("M", 1e6), ("k", 1e3), ("", 1.0), ("m", 1e-3), ("µ", 1e-6), ("n", 1e-9), ("p", 1e-12)):
++        if big >= k:
++            return p, k
++    return "", 1.0
++
++
++def stats(label, vals, base):
++    if label == "Continuity":
++        closed = sum(1 for v in vals if v > 0)
++        return f"closed {closed} of {len(vals)} samples ({100 * closed / len(vals):.0f}%)"
++    fin = [v for v in vals if math.isfinite(v)]
++    if not fin:
++        return "no readings, all OL"
++    if base == "V":
++        return (f"mean {st.mean(fin):+.4f} V   min {min(fin):+.4f}   max {max(fin):+.4f}   "
++                f"p-p {(max(fin) - min(fin)) * 1000:.1f} mV")
++    p, k = si(fin, base)
++    return (f"mean {st.mean(fin) / k:.4g} {p}{base}   min {min(fin) / k:.4g}   max {max(fin) / k:.4g}   "
++            f"p-p {(max(fin) - min(fin)) / k:.4g} {p}{base}")
++
++
+ def main():
+     ap = argparse.ArgumentParser(description=__doc__,
+                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+@@ -130,7 +202,10 @@
+         return t(rows[b]) - t(rows[a]) + period
+ 
+     dur = t(rows[-1]) - t(rows[0])
+-    finite = [r.v for r in rows if math.isfinite(r.v)]
++    count = Counter(r.mode.label for r in rows)
++    labels = list(count)                    # meter modes, in order of first appearance
++    base = {r.mode.label: r.mode.base for r in rows}
++    n_rail = count[RAIL]
+ 
+     print(f"file:      {args.csvfile}")
+     for n in notes:
+@@ -138,13 +213,35 @@
+     print(f"session:   {rows[0].iso}  ->  {rows[-1].iso}   ({fmt_dur(dur)})")
+     print(f"samples:   {len(rows)}   ({len(rows) / max(dur, 1):.2f} S/s)"
+           f"   timebase: {'monotonic uptime' if mono else 'wall clock'}")
+-    if finite:
+-        print(f"stats:     mean {st.mean(finite):+.4f} V   "
+-              f"min {min(finite):+.4f}   max {max(finite):+.4f}   "
+-              f"p-p {(max(finite) - min(finite)) * 1000:.1f} mV")
+-    print(f"window:    [{args.lo}, {args.hi}] V")
++    for i, l in enumerate(labels):
++        print("mode:      " if i == 0 else " " * 11, end="")
++        print(l if len(labels) == 1 else f"{l} ({count[l]} sample{'s' * (count[l] != 1)})")
++    for l in labels:
++        s = stats(l, [r.v for r in rows if r.mode.label == l], base[l])
++        print(f"stats:     {s}" if len(labels) == 1 else f"stats:     {l}: {s}")
++    print(f"window:    [{args.lo}, {args.hi}] V" + (
++        "" if n_rail == len(rows) else
++        ", DC voltage readings only" if n_rail else ", not applied (no DC voltage readings)"))
++    held = {}
++    for r in rows:
++        for name, what in {WARN[f] for f in r.mode.warn}:
++            held.setdefault(name, [0, r.iso, what])[0] += 1
++    for name, (n, first, what) in held.items():
++        print(f"WARNING:   {name} on for {n} of {len(rows)} samples, first at {first}:")
++        print(f"           {what}")
+     print()
+ 
++    # --- mode changes -----------------------------------------------------------
++    changes = [(b.iso, a.mode.label, b.mode.label)
++               for a, b in zip(rows, rows[1:]) if a.mode.label != b.mode.label]
++    if changes:
++        print(f"MODE CHANGES ({len(changes)}): the meter was switched mid-session:")
++        for iso, a, b in changes[:20]:
++            print(f"  {iso}  {a} -> {b}")
++        if len(changes) > 20:
++            print(f"  ... and {len(changes) - 20} more")
++        print()
++
+     # --- clock steps (only detectable with the monotonic column) -----------
+     steps = []
+     if mono:
+@@ -170,14 +267,18 @@
+     # --- open-input / dead-rail events ---------------------------------------
+     ol = list(group_runs(rows, lambda r: not math.isfinite(r.v)))
+     if ol:
+-        print(f"OPEN-INPUT events ({len(ol)}): lead detached or rail fully dead:")
++        if n_rail == len(rows):
++            print(f"OPEN-INPUT events ({len(ol)}): lead detached or rail fully dead:")
++        else:
++            print(f"OL events ({len(ol)}): the meter read OL (open input or over range):")
+         for a, b in ol:
+-            print(f"  {rows[a].iso}  for {fmt_dur(span(a, b))}")
++            print(f"  {rows[a].iso}  for {fmt_dur(span(a, b))}"
++                  + (f"   ({rows[a].mode.label})" if len(labels) > 1 else ""))
+         print()
+ 
+-    # --- excursions -----------------------------------------------------------
++    # --- excursions (DC voltage only) -------------------------------------------
+     def outside(r):
+-        return math.isfinite(r.v) and not (args.lo <= r.v <= args.hi)
++        return r.mode.label == RAIL and math.isfinite(r.v) and not (args.lo <= r.v <= args.hi)
+ 
+     exc = list(group_runs(rows, outside))
+     if exc:
+@@ -189,13 +290,20 @@
+             print(f"  {rows[a].iso}  {fmt_dur(span(a, b)):>8}"
+                   f"   worst {worst:+.3f} V   ({b - a + 1} samples)")
+         print()
++    elif not n_rail:
++        print("EXCURSIONS: not checked. The meter was never on DC voltage.")
++        print()
++    elif n_rail < len(rows):
++        print(f"EXCURSIONS: none in the {n_rail} DC voltage readings. The rest of the")
++        print("session was in other modes, so this only covers part of it.")
++        print()
+     else:
+         print("EXCURSIONS: none. The rail held the window all session.")
+         print("If the game still crashed, this log exonerates this rail;")
+         print("next suspects: the other rails, on-board regulation, thermals.")
+         print()
+ 
+-    # --- plot -----------------------------------------------------------------
++    # --- plot: one panel per meter mode -------------------------------------------
+     out = args.plot or (args.csvfile.rsplit(".", 1)[0] + ".png")
+     if not args.plot and not os.access(os.path.dirname(os.path.abspath(out)), os.W_OK):
+         out = os.path.join(os.getcwd(), os.path.basename(out))
+@@ -218,27 +326,47 @@
+         xs = [(r.up - rows[0].up) / 60 for r in rows]
+         xlabel = "elapsed (min, monotonic; wall clock stepped mid-session)"
+     else:
+-        xs = [datetime.fromtimestamp(r.epoch, tz=timezone.utc).astimezone() for r in rows]
++        import matplotlib.dates as mdates
++        stamps = [datetime.fromtimestamp(r.epoch, tz=timezone.utc).astimezone() for r in rows]
++        xs = mdates.date2num(stamps)   # convert once, not per panel (slow on a long night)
+         xlabel = None
+-    vs = [r.v if math.isfinite(r.v) else math.nan for r in rows]
+ 
+-    fig, ax = plt.subplots(figsize=(11, 4.5), dpi=150)
++    height = 4.5 if len(labels) == 1 else min(2 + 2.2 * len(labels), 11)
++    fig, axes = plt.subplots(len(labels), 1, sharex=True, squeeze=False, figsize=(11, height), dpi=150)
+     fig.patch.set_facecolor(BG)
+-    ax.set_facecolor(PANEL)
+-    ax.plot(xs, vs, color=CYAN, lw=0.9)
+-    ax.axhline(args.lo, color=DIM, ls="--", lw=0.8)
+-    ax.axhline(args.hi, color=DIM, ls="--", lw=0.8)
+-    for a, b in exc:
+-        ax.axvspan(xs[a], xs[b], color=BAD, alpha=0.35 if not args.light else 0.2)
+-    ax.set_ylabel("V DC", family="monospace", color=TXT)
++    for ax, l in zip(axes[:, 0], labels):
++        p, k = si([r.v for r in rows if r.mode.label == l], base[l])
++        vs = [r.v / k if r.mode.label == l and math.isfinite(r.v) else math.nan for r in rows]
++        ax.set_facecolor(PANEL)
++        # dots too for a brief mode in a mixed session: one sample on its own is otherwise invisible
++        ax.plot(xs, vs, color=CYAN, lw=0.9, drawstyle="steps-post" if l == "Continuity" else "default",
++                **({"marker": ".", "ms": 2} if len(labels) > 1 and count[l] < 2000 else {}))
++        if l == RAIL:
++            ax.axhline(args.lo, color=DIM, ls="--", lw=0.8)
++            ax.axhline(args.hi, color=DIM, ls="--", lw=0.8)
++            for a, b in exc:
++                ax.axvspan(xs[a], xs[b], color=BAD, alpha=0.35 if not args.light else 0.2)
++        if l == "Continuity":
++            ax.set_ylim(-0.15, 1.15)
++            ax.set_yticks([0, 1])
++            ax.set_yticklabels(["open", "closed"])
++            ylabel = "continuity"
++        else:
++            kind = l.split()[0] if l.split()[0] in ("DC", "AC", "AC+DC") else "diode" if l == "Diode" else ""
++            ylabel = f"{p}{base[l]} {kind}".strip()
++        ax.set_ylabel(ylabel, family="monospace", color=TXT)
++        if not steps:
++            ax.xaxis_date(stamps[0].tzinfo)   # ticks in local time, as with datetime xs
++        for s in ax.spines.values():
++            s.set_color(GRID)
++        ax.tick_params(colors=TXT, labelsize=8)
++        ax.grid(color=GRID, lw=0.4, alpha=0.6)
+     if xlabel:
+-        ax.set_xlabel(xlabel, family="monospace", color=TXT, fontsize=8)
+-    ax.set_title(f"GDD-GAT/01 rail log · {rows[0].iso[:10]}",
+-                 family="monospace", color=TXT, fontsize=10)
+-    for s in ax.spines.values():
+-        s.set_color(GRID)
+-    ax.tick_params(colors=TXT, labelsize=8)
+-    ax.grid(color=GRID, lw=0.4, alpha=0.6)
++        axes[-1, 0].set_xlabel(xlabel, family="monospace", color=TXT, fontsize=8)
++    title = f"GDD-GAT/01 rail log · {rows[0].iso[:10]}"
++    if len(labels) == 1 and labels[0] != RAIL:
++        title += f" · {labels[0]}"
++    axes[0, 0].set_title(title, family="monospace", color=TXT, fontsize=10)
+     if not steps:
+         fig.autofmt_xdate()
+     plt.tight_layout()
+--- (previous)	2026-09-24 00:42:18.818280646 -0500
++++ gatbox-web	2026-09-24 11:06:20.165601207 -0500
+@@ -12,8 +12,10 @@
+ 
+ Stdlib only. Runs gatbox-rail-report for the analysis so the numbers match the CLI.
+ Plots are cached in $CACHE_DIRECTORY, keyed by file size+mtime and window.
++The meter mode (DC voltage, resistance, ...) comes from the CSV's unit + flags columns.
+ """
+-import html, io, os, re, subprocess, sys, threading, time
++import functools, html, io, math, os, re, subprocess, sys, textwrap, threading, time
++from collections import namedtuple
+ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+ from urllib.parse import urlsplit, parse_qs
+ 
+@@ -27,6 +29,75 @@
+ PDF_LOCK = threading.Lock()  # matplotlib isn't thread-safe
+ LIVE_S = 10  # a session whose last sample is newer than this is "logging now"
+ 
++# gatbox-raillog splits sigrok's "P1: 119.68 V AC AUTO" into value, unit (SI prefix + unit) and flags.
++# Continuity has no unit, so its first flag (if any) lands in the unit column: "1,AUTO,".
++FLAGS = {"AC", "DC", "RMS", "DIODE", "HOLD", "MAX", "MIN", "AUTO", "REL", "AVG", "REF", "UNSTABLE"}
++PREFIX = {"f": 1e-15, "p": 1e-12, "n": 1e-9, "µ": 1e-6, "μ": 1e-6, "u": 1e-6, "m": 1e-3, "": 1.0,
++          "k": 1e3, "M": 1e6, "G": 1e9, "T": 1e12}   # sigrok can tag OL as e.g. "inf TV"
++KIND = {"V": "voltage", "A": "current", "Ω": "resistance", "F": "capacitance", "Hz": "frequency",
++        "%": "duty cycle", "": "continuity"}
++WARN = {"HOLD": ("HOLD", "the meter repeats one frozen reading"),     # these make the log misleading
++        "REL": ("REL (Δ)", "readings are offsets, not the real value"),
++        "MAX": ("MAX/MIN", "the meter sends its max or min, not the live value"),
++        "MIN": ("MAX/MIN", "the meter sends its max or min, not the live value")}
++RAIL = "DC voltage"   # the only mode the V window and gatbox-rail-report are meant for
++Mode = namedtuple("Mode", "label base scale unit warn")
++
++
++@functools.lru_cache(maxsize=64)
++def mode(unit, flags):
++    """CSV unit + flags -> Mode, e.g. ('kΩ', 'AUTO') -> label 'Resistance', base 'Ω', scale 1e3."""
++    fl = flags.split()
++    unit = unit.replace("\u2126", "\u03a9")          # sigrok writes OHM SIGN; "Ω" here is Greek omega
++    if unit in FLAGS:
++        fl, unit = [unit] + fl, ""
++    base, scale = unit, 1.0
++    for b in ("V", "A", "Ω", "F", "Hz", "%"):
++        if unit.endswith(b) and unit[:-len(b)] in PREFIX:
++            base, scale = b, PREFIX[unit[:-len(b)]]
++            break
++    if "DIODE" in fl:
++        label = "diode"
++    elif base in ("V", "A"):
++        ac, dc = "AC" in fl, "DC" in fl
++        label = ("AC+DC " if ac and dc else "AC " if ac else "DC " if dc else "") + KIND[base]
++    elif base in KIND:
++        label = KIND[base]
++    else:
++        label = unit                                   # not a UT61E unit: show it as sigrok wrote it
++    if base in KIND:
++        label = label[:1].upper() + label[1:]
++    return Mode(label, base, scale, unit, frozenset(f for f in fl if f in WARN))
++
++
++def fmt(v, base):
++    """Value in base units -> text: volts as before (3 decimals), other units with an SI prefix."""
++    if base == "V":
++        return f"{v:.3f} V"
++    if base not in KIND or base in ("%", ""):
++        return f"{v:g} {base}".rstrip()
++    for p, k in (("M", 1e6), ("k", 1e3), ("", 1.0), ("m", 1e-3), ("µ", 1e-6), ("n", 1e-9), ("p", 1e-12)):
++        if abs(v) >= k:
++            return f"{v / k:.4g} {p}{base}"
++    return f"{v:g} {base}"
++
++
++def reading(raw, m):
++    """The live value the way the meter's display would put it."""
++    if raw.lstrip("+-") == "inf":
++        return "OL"
++    if m.label == "Continuity":
++        try:
++            return "closed" if float(raw) > 0 else "open"
++        except ValueError:
++            pass
++    return f"{raw} {m.unit}".rstrip()
++
++
++def warnings(flags, when):
++    w = dict(WARN[f] for f in sorted(flags))
++    return "".join(f'<div class="bad">{html.escape(k)} {when}: {v}</div>' for k, v in w.items())
++
+ CSS = """
+ :root{--bg:#15101f;--fg:#e8e4f0;--mut:#9a92ad;--card:#221a33;--ok:#5fd38d;--bad:#ff6b8a;--acc:#7fd8e8}
+ *{box-sizing:border-box}body{margin:0;padding:16px;background:var(--bg);color:var(--fg);
+@@ -41,6 +112,8 @@
+ text-decoration:none;display:inline-block}.rng{display:flex;gap:8px;flex-wrap:wrap;width:100%}
+ .rng label{color:var(--mut);font-size:14px}.rng input{width:auto}
+ button.stop{background:var(--bad);margin-left:8px}
++.mode{display:inline-block;padding:1px 8px;border-radius:999px;background:#33284d;color:var(--acc);
++font-size:13px;font-weight:600;vertical-align:middle}.modes div{margin-top:4px}.modes .bad{font-size:14px}
+ """
+ 
+ 
+@@ -59,27 +132,48 @@
+     return sorted(names, reverse=True)
+ 
+ 
+-def summary(name):
+-    """First/last sample and cheap min/max, without running the full report."""
++def summary(name, t0=None, t1=None):
++    """First/last sample, and per meter mode the sample count and cheap min/max in base units
++    (V, Ω, ...), without running the full report. Optionally only the samples from t0 to t1."""
+     first = last = None
+-    vmin, vmax, n = float("inf"), float("-inf"), 0
+-    scale = {"mV": 1e-3, "µV": 1e-6}
++    modes, warn, n = {}, set(), 0
+     with open(os.path.join(LOGDIR, name), errors="replace") as f:
+         for line in f:
+             p = line.rstrip("\n").split(",")
+             if len(p) < 4 or p[0].startswith("#") or p[0] == "iso_time":
+                 continue
++            if (t0 and p[0] < t0) or (t1 and p[0] > t1):
++                continue
++            m = mode(p[3], p[4] if len(p) > 4 else "")
+             try:
+-                e, v = float(p[1]), float(p[2]) * scale.get(p[3], 1.0)
++                e, v = float(p[1]), float(p[2]) * m.scale
+             except ValueError:
+                 continue
+             n += 1
+             if first is None:
+                 first = (p[0], e)
+-            last = (p[0], e, v, p[3], p[2])
+-            if v == v and abs(v) != float("inf"):
+-                vmin, vmax = min(vmin, v), max(vmax, v)
+-    return dict(first=first, last=last, n=n, vmin=vmin, vmax=vmax)
++            last = (p[0], e, m, p[2])
++            s = modes.setdefault(m.label, [0, float("inf"), float("-inf"), m.base])
++            s[0] += 1
++            if math.isfinite(v):
++                s[1], s[2] = min(s[1], v), max(s[2], v)
++            warn |= m.warn
++    return dict(first=first, last=last, n=n, modes=modes, warn=warn)
++
++
++def mode_lines(s, lo, hi, when="was on"):
++    """One line per meter mode seen: chip, min/max, and for DC voltage the rail-window tag.
++    Then a warning for HOLD/REL/MAX/MIN."""
++    out = []
++    for label, (n, vmin, vmax, base) in s["modes"].items():
++        line = f'<span class="mode">{html.escape(label)}</span>'
++        if vmin <= vmax and label != "Continuity":   # all-OL has no finite values
++            line += f' <span class="mut">min {html.escape(fmt(vmin, base))} · max {html.escape(fmt(vmax, base))}</span>'
++        if label == RAIL:
++            line += (' · <span class="ok">in window</span>' if lo <= vmin and vmax <= hi
++                     else ' · <span class="bad">left the window</span>')
++        out.append(f"<div>{line}</div>")
++    return f'<div class="modes">{"".join(out)}{warnings(s["warn"], when)}</div>'
+ 
+ 
+ def window(q):
+@@ -110,11 +204,12 @@
+     st = os.stat(src)
+     os.makedirs(CACHE, exist_ok=True)
+     rng = f"_{t0 or ''}_{t1 or ''}".replace(":", "") if (t0 or t1) else ""
+-    key = f"{name[:-4]}_{st.st_size}_{int(st.st_mtime)}_{lo:g}_{hi:g}{rng}{'_light' if light else ''}"
++    ver = f"{st.st_size}_{int(st.st_mtime)}_{int(os.stat(REPORT).st_mtime)}"   # new report -> new cache
++    key = f"{name[:-4]}_{ver}_{lo:g}_{hi:g}{rng}{'_light' if light else ''}"
+     png, txt = os.path.join(CACHE, key + ".png"), os.path.join(CACHE, key + ".txt")
+     if not os.path.exists(txt):
+         for old in os.listdir(CACHE):          # drop stale versions of this session (file grew)
+-            if old.startswith(name[:-4] + "_") and f"_{st.st_size}_{int(st.st_mtime)}_" not in old:
++            if old.startswith(name[:-4] + "_") and f"_{ver}_" not in old:
+                 try: os.remove(os.path.join(CACHE, old))
+                 except OSError: pass
+         run_on = src
+@@ -159,6 +254,9 @@
+ def make_pdf(name, lo, hi, t0, t1):
+     """Letter-size PDF: header, plot, then the report text (continued on more pages if long)."""
+     text, png = report(name, lo, hi, t0, t1, light=True)
++    s = summary(name, t0, t1)
++    mode_txt = ("meter mode: " + (", ".join(s["modes"]) or "no samples")
++                + "".join(f"   ·   {k} was on" for k in dict(WARN[f] for f in sorted(s["warn"]))))
+     from matplotlib.figure import Figure
+     from matplotlib.backends.backend_pdf import PdfPages
+     import matplotlib.image as mpimg
+@@ -174,9 +272,14 @@
+                 sub = (f"{name}   ·   window {lo:g}–{hi:g} V   ·   "
+                        f"range {(t0 or 'start').replace('T', ' ')} → {(t1 or 'end').replace('T', ' ')}")
+                 fig.text(0.06, 0.945, sub, fontsize=8.5, color="0.25")
+-                fig.text(0.06, 0.93, f"generated {time.strftime('%Y-%m-%d %H:%M:%S')} (Pi clock)",
++                rows = textwrap.wrap(mode_txt, 110)
++                for i, row in enumerate(rows):
++                    fig.text(0.06, 0.93 - 0.0135 * i, row, fontsize=8.5,
++                             color="#c0304a" if s["warn"] else "0.25")
++                y = 0.93 - 0.0135 * len(rows)
++                fig.text(0.06, y, f"generated {time.strftime('%Y-%m-%d %H:%M:%S')} (Pi clock)",
+                          fontsize=8, color="0.45")
+-                top = 0.915
++                top = y - 0.015
+                 if png:
+                     img = mpimg.imread(png)
+                     h = 0.88 * 8.5 * img.shape[0] / img.shape[1] / 11   # keep aspect, 88% width
+@@ -287,21 +390,21 @@
+             s = summary(name)
+             if not s["first"]:
+                 continue
+-            last_iso, last_e, v, unit, raw = s["last"]
++            last_iso, last_e, m, raw = s["last"]
+             dur = last_e - s["first"][1]
+             is_live = now - last_e < LIVE_S
+-            ok = lo <= s["vmin"] and s["vmax"] <= hi
+-            flag = '<span class="ok">in window</span>' if ok else '<span class="bad">left the window</span>'
+             if is_live:
+                 live = (f'<div class="card"><div class="mut">Logging now · {html.escape(name)}</div>'
+-                        f'<div class="big">{html.escape(raw)} {html.escape(unit)}</div>'
++                        f'<div class="big">{html.escape(reading(raw, m))} '
++                        f'<span class="mode">{html.escape(m.label)}</span></div>'
++                        f'{warnings(m.warn, "is on")}'
+                         f'<div class="mut">{s["n"]} samples · {dur/3600:.2f} h so far</div></div>')
+             cards.append(
+                 f'<div class="card"><a href="/s/{name}{qs}">'
+                 f'<b>{html.escape(s["first"][0].replace("T", " "))}</b>'
+                 f'{" · <span class=ok>live</span>" if is_live else ""}<br>'
+-                f'<span class="mut">{dur/3600:.2f} h · {s["n"]} samples · '
+-                f'min {s["vmin"]:.3f} V · max {s["vmax"]:.3f} V · </span>{flag}</a></div>')
++                f'<span class="mut">{dur/3600:.2f} h · {s["n"]} samples</span>'
++                f'{mode_lines(s, lo, hi)}</a></div>')
+         is_live = bool(live)
+         if not live and not os.path.exists(os.path.join(CTRL, "stopped")):
+             live = ('<div class="card"><div class="mut">Not logging right now</div>'
+@@ -323,11 +426,14 @@
+         start = s["first"][0] if s["first"] else ""
+         end = s["last"][0] if s["last"] else ""
+         text, png = report(name, lo, hi, t0, t1)
++        view = summary(name, t0, t1) if (t0 or t1) else s
+         full = qs + span_qs(t0, t1)
+         src = f"/png/{name}{full}&t={int(time.time())}"
+         img = f'<a href="{src}"><img src="{src}" alt="plot (tap for full size)"></a>' if png else \
+               '<div class="mut">No plot (python3-matplotlib missing?)</div>'
+         body = (f'<a href="/{qs}">← all sessions</a><h1>{html.escape(name)}</h1>'
++                f'<div class="card"><span class="mut">Meter mode{" in this range" if (t0 or t1) else ""}</span>'
++                f'{mode_lines(view, lo, hi) if view["n"] else "<div class=mut>no samples</div>"}</div>'
+                 f'<form method="get"><span class="mut">Window (V)</span>'
+                 f'<input name="lo" value="{lo:g}" inputmode="decimal"><input name="hi" value="{hi:g}" inputmode="decimal">'
+                 f'<div class="rng"><label>From <input type="datetime-local" step="1" name="from" '

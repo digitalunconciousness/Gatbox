@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# gatbox-status — one-screen health check for the GATBOX rail logger.
+#
+#   gatbox-status        snapshot: service, adapter, session, clock, power, disk, network
+#   gatbox-status -f     snapshot, then follow the live readings (Ctrl-C to stop)
+#
+# Re-runs itself under sudo (vcgencmd PMIC reads and the journal need it).
+
+[ "$(id -u)" -eq 0 ] || exec sudo "$0" "$@"
+
+LOGDIR="${GATBOX_LOGDIR:-/var/log/gatbox}"
+RUNDIR=/run/gatbox
+M=$'\e[38;5;199m'; C=$'\e[36m'; G=$'\e[32m'; Y=$'\e[33m'; R=$'\e[31m'; D=$'\e[2m'; N=$'\e[0m'
+ok()   { printf '  %s●%s %-8s %s\n' "$G" "$N" "$1" "$2"; }
+warn() { printf '  %s●%s %-8s %s\n' "$Y" "$N" "$1" "$2"; }
+bad()  { printf '  %s●%s %-8s %s\n' "$R" "$N" "$1" "$2"; }
+latest() { ls -1t "$LOGDIR"/rail_*.csv 2>/dev/null | head -n 1; }
+
+printf '\n%sGDD-GAT/01%s  rail logger  %s%s  %s%s\n\n' "$M" "$N" "$C" "$(hostname)" "$(date '+%F %T %Z')" "$N"
+
+# service
+svc=$(systemctl is-active gatbox-raillog 2>/dev/null)
+if [ "$svc" = active ]; then ok service "gatbox-raillog running"
+else bad service "gatbox-raillog is '$svc'  ->  sudo systemctl status gatbox-raillog"; fi
+
+# adapter
+if [ -e /dev/gatbox-dmm ]; then ok adapter "/dev/gatbox-dmm -> $(readlink -f /dev/gatbox-dmm)"
+else bad adapter "no /dev/gatbox-dmm: PL-2303 unplugged?  (lsusb | grep -i prolific)"; fi
+
+# session
+cur=$(cat "$RUNDIR/current" 2>/dev/null)
+if [ -n "$cur" ] && [ -f "$cur" ]; then
+    n=$(grep -vc '^#' "$cur"); n=$((n - 1))
+    age=$(( $(date +%s) - $(stat -c %Y "$cur") ))
+    last=$(tail -n 1 "$cur" | cut -d, -f3,4 | tr ',' ' ')
+    if (( age <= 5 )); then ok logging "$(basename "$cur")  $n samples"
+    else warn logging "$(basename "$cur")  $n samples, but last write ${age}s ago"; fi
+    ok reading "$last"
+else
+    warn logging "no active session: meter off, not on V DC, or D02 head off the IR window"
+    [ -s "$RUNDIR/last-error" ] && warn sigrok "$(tr '\n' ' ' < "$RUNDIR/last-error")"
+fi
+
+# clock
+if [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = yes ]; then
+    ok clock "NTP synced"
+else
+    warn clock "not NTP synced: wall times may be off (RTC battery, or from the laptop: ssh gatbox.local \"sudo date -s @\$(date +%s)\")"
+fi
+
+# power
+thr=$(vcgencmd get_throttled 2>/dev/null | cut -d= -f2)
+ext=$(vcgencmd pmic_read_adc EXT5V_V 2>/dev/null | sed -n 's/.*=\([0-9.]*\)V.*/\1/p')
+[ -n "$ext" ] && ext=$(printf '  EXT5V %.2f V' "$ext")
+case "$thr" in
+    0x0) ok power "no undervoltage or throttling since boot${ext}" ;;
+    "")  warn power "vcgencmd unavailable" ;;
+    *)   bad power "get_throttled=$thr${ext}  (bit 0/16 = undervoltage): check the Pi's supply" ;;
+esac
+temp=$(vcgencmd measure_temp 2>/dev/null | cut -d= -f2)
+[ -n "$temp" ] && ok temp "$temp"
+
+# storage
+nlogs=$(ls -1 "$LOGDIR"/rail_*.csv 2>/dev/null | wc -l)
+ok disk "$(df -h / | awk 'NR==2 {print $4 " free"}'),  $nlogs session file(s), $(du -sh "$LOGDIR" 2>/dev/null | cut -f1) in $LOGDIR"
+
+# network
+ips=$(hostname -I 2>/dev/null | xargs)
+con=$(nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null | grep -v ':lo$' | cut -d: -f1 | paste -sd, -)
+if [ -n "$ips" ]; then ok network "${con:-?}  $ips"
+else warn network "offline (no IP)"; fi
+
+printf '\n%srecent log:%s\n' "$D" "$N"
+journalctl -u gatbox-raillog -n 5 --no-pager -o cat 2>/dev/null | sed 's/^/    /'
+echo
+
+if [ "${1:-}" = "-f" ]; then
+    f=${cur:-$(latest)}
+    [ -n "$f" ] || { echo "no session files yet"; exit 1; }
+    printf '%sfollowing %s  (Ctrl-C to stop; re-run after a new session starts)%s\n' "$C" "$f" "$N"
+    exec tail -n 15 -F "$f"
+fi

@@ -186,7 +186,7 @@ cells: the Pi 5's backup draw gives them a short life. Treat the cell as a consu
    - Whether the kernel's 11-minute RTC sync is built in (`CONFIG_RTC_SYSTOHC`).
 
    **If `charging_voltage` isn't 0, or an `rtc_bbat_vchg` line is present: STOP and tell
-   The owner at once.** That's the one urgent outcome.
+   the owner at once.** That's the one urgent outcome.
 2. **Bootstrap charging guard.**
    - Remove `GATBOX_RTC_BATTERY`.
    - By default, comment out any active `rtc_bbat_vchg` line, with a dated note and a loud

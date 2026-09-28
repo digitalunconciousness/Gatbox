@@ -58,7 +58,7 @@ uhubctl, INA226, relays, MAK Strike, GBS-Control, RP2350B bus driver, InfiRay P2
 4. **One install path.** Every system change goes into the repo/bootstrap and is applied by re-running it. Nothing is
    hand-configured. The bootstrap stays idempotent, and an offline re-run succeeds when everything is installed.
 5. **Show before you change system config** (`/boot/firmware/*`, udev, systemd units, labwc config, `/etc`): show
-   The owner the diff and why, and wait for her OK. Repo-only changes don't need approval.
+   the owner the diff and why, and wait for her OK. Repo-only changes don't need approval.
 6. **No hardware writes from the dashboard.** Phase 2 does Pi-side state and T48 **reads** only. No part auto-detect.
 7. **GPIO is 3.3 V only, Pi 5 included.** gpiozero (+lgpio), never RPi.GPIO. GPIO3 and GPIO26 reserved; keep I²C
    (2/3), UART (14/15) and SPI free. Anything at 5 V goes through a divider / opto / level shifter.

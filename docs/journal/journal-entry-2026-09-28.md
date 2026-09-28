@@ -55,3 +55,8 @@
   "Hold to exit kiosk". Never blanks while the kiosk runs. 27 kiosk tests pass.
 - DECIDED: touch stays unmapped with real touch events (no mouse emulation). The M5 graph needs multi-finger gestures.
 - FOUND: the first reading after a dial change can be junk (726.4 V AC for one sample). M4b drops/flags it.
+- M3 installed and ⏸ TESTED: reboot → kiosk on the 7"; EXIT KIOSK (long-press) closed it; `gatbox-kiosk off` →
+  desktop after reboot; `on` → kiosk again. Touch stayed unmapped (autotouch off). Power under full CPU load with
+  the kiosk and panel on the Pi's USB: 5.11 V minimum, no throttling, 61.5 °C. **M3 done.**
+- NEXT: M4 (backend: replay harness, profiles/machine data model, logger header + marks + per-mode files, report
+  powered/OV/marks, JSON API + SSE). The first reading after a dial change gets dropped/flagged there.

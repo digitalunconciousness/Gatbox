@@ -16,10 +16,8 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       line, web badge, tests (36 pass), installed 09:16, ⏸ offline warehouse test **passed** (notes below)
 - [x] **M2 2A foundation** (2026-09-28): repo layout, bootstrap installs from the checkout, logger SD sync,
       minipro 0.7.4 + mame 0.276 installed, GitHub (public, scrubbed), MAME smoke test, ⏸ T48 re-verify **passed**
-- [ ] **M3 2B face**: [x] ⏸ panel connected (HDMI0 now; either port supported) [x] mode (EDID 1024×600, both
-      ports, no cmdline.txt) [x] touch (unmapped + real touch; autotouch off) [x] kiosk + gatbox-kiosk + EXIT KIOSK
-      [x] blanking (never in kiosk) [x] tests (27) [ ] install (waiting on the owner's OK) [ ] power under load
-      [ ] ⏸ reboot tests (kiosk / off / on / other HDMI port)
+- [x] **M3 2B face** (2026-09-28): either HDMI port (EDID + unmapped touch), autotouch off, boot-to-kiosk +
+      gatbox-kiosk + EXIT KIOSK, never blanks in kiosk, power OK under load, ⏸ reboot tests **passed**
 - [ ] **M4 2C backend**: 4a replay harness; 4b data model + logger header/marks/splits; 4c report; 4d JSON API
 - [ ] **M5 2D dashboard** at `/dash/`; screenshot tests; ⏸ on the real panel
 - [ ] **M6 2E scanner**: gatbox-scand; labels; ⏸ scan slug / MARK / NEW
@@ -148,6 +146,16 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
 - **Blanking: never while the kiosk runs.** Today nothing blanks (no swayidle; raspi-config get_blanking = 1).
   raspi-config's blanking is a swayidle line in `~/.config/labwc/autostart`, so the launcher stops the user's
   swayidle for its login only, and the plain desktop keeps whatever is set. The (C) has a backlight switch.
+- **Installed 2026-09-28 ~16:50**; `--check` afterwards: nothing to change.
+- **⏸ Reboot tests (owner, 16:53–17:00): PASSED.** Reboot → kiosk on the 7"; long-press EXIT KIOSK closed it
+  (logged 16:54:54 from 127.0.0.1); `gatbox-kiosk off` + reboot → plain desktop; `gatbox-kiosk on` + start → kiosk;
+  reboot → kiosk. autotouch stayed off across three reboots (no touch line came back).
+- **Ports:** EDID 1024×600 was seen on HDMI-A-2 (morning, with the unmapped-touch tap test: 6–19 px) and on HDMI-A-1
+  (kiosk now). A kiosk boot on the other port wasn't tried, but nothing in it names a port.
+- **Power under load:** kiosk Chromium up, panel powered from the Pi's USB, 60 s of 4-core busy loops: EXT5V min
+  5.11 V (5.16 idle), `get_throttled` 0x0 before and after, peak 61.5 °C, arm at 2.4 GHz. No need for the 27 W PSU.
+- **Next install:** the launcher's messages go nowhere (XDG autostart discards stdout). Send them to the journal
+  (`logger -t gatbox-kiosk`) with M4's first install.
 - **Found in the warehouse log:** the first sample after a dial change can be junk (11:16:27: `726.4 V AC` right
   after mV DC, then 2.77 V, then 7.4 V). M4b's per-mode files should drop or flag the first sample after a change.
 - **Site config, not in the bootstrap:** the home Wi-Fi's static address (09-24, `nmcli connection modify … ipv4.method

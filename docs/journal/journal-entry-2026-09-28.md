@@ -16,3 +16,11 @@
 - DECIDED: `gatbox-status` only asks a logger that knows `--clock-label`: an older logger would ignore the flag
   and start a second logger on the port.
 - NEXT: install via the bootstrap, then the unplug + offline boot test (`clock=rtc`).
+- M1 installed (09:16) and TESTED at the warehouse with no network: the RTC set the clock at boot, the logger
+  skipped the NTP wait, and the session header says `clock=rtc (RTC-held time; last set from NTP 09:16:43)`.
+  Back home NTP corrected the clock by only +0.65 s. Cell 3.12 V, charging OFF. **M1 done.**
+- Touch on the Waveshare 7" checked before the trip: taps within 6–19 px of target (no skew, no mirroring), real
+  touch events, 3 fingers tracked. Panel is on HDMI-A-2 (the Pi's HDMI1 port); M3 expects HDMI0.
+- NOTE: pressing Stop, then pulling power within ~30 s, can lose the last few samples to a NUL tail (ext4 delayed
+  writes). The warehouse file lost one sample; 09-25 lost ~7–15 s. Fix candidate: sync at session end.
+- NEXT: M2 (repo layout, bootstrap shape, minipro, MAME, T48 re-verify). Needs the Forgejo URL.

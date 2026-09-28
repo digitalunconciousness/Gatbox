@@ -12,9 +12,8 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
 
 - [x] **M0 orient** (2026-09-28): git repo + baseline `83ba066`; installed files == bootstrap payload (nothing to
       reconcile); CLAUDE.md merged with the project CLAUDE.md + the handoff's hard rules.
-- [ ] **M1 RTC**: [x] read-only checks (2026-09-28: charging OFF, BATT_V 3.13 V) [x] bootstrap guard
-      [x] gatbox-rtc-sync timer [x] logger `clock=rtc` [x] status line [x] web badge [x] tests (36 pass)
-      [ ] install (waiting on the owner's OK: new units) [ ] ⏸ unplug + offline boot test
+- [x] **M1 RTC** (2026-09-28): read-only checks, bootstrap guard, gatbox-rtc-sync timer, logger `clock=rtc`, status
+      line, web badge, tests (36 pass), installed 09:16, ⏸ offline warehouse test **passed** (notes below)
 - [ ] **M2 2A foundation**: repo layout; bootstrap shape; Forgejo remote; minipro; MAME CLI; ⏸ T48 re-verify
 - [ ] **M3 2B face**: ⏸ panel connected; mode; touch; power; kiosk; blanking; ⏸ kiosk on/off reboots
 - [ ] **M4 2C backend**: 4a replay harness; 4b data model + logger header/marks/splits; 4c report; 4d JSON API
@@ -59,6 +58,13 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   `test-raillog-clock.sh` (10, fake sigrok-cli end-to-end), `test-rtc-guard.sh` (13).
 - **Physical test (⏸):** shut down, pull power ≥10 min, boot with no internet, `date` + `gatbox-status`, start a
   session: its line 2 must be `# clock=rtc (…)`.
+- **Result (2026-09-28):** unplugged 09:26 → warehouse boot 11:00 with no network: kernel set the clock from the
+  RTC (11:00:34), logger said "clock from the RTC … not waiting for NTP", and `rail_20260928_110134.csv` line 2 is
+  `# clock=rtc (RTC-held time; last set from NTP 2026-09-28T09:16:43)`. gatbox-rtc-sync at 11:02 correctly left the
+  RTC alone (not NTP-synced). Unplugged again 12:03 → home boot 14:06: NTP corrected the clock by **+0.65 s** (RTC
+  has 1 s resolution). Cell 3.12 V afterwards, charging_voltage 0.
+- The warehouse file lost only its last sample to a NUL tail (Stop at 12:02:56, power pulled ~14 s later). The
+  09-25 files lost ~7–15 s the same way. Possible fix: `sync` the file at session end (one fork per session).
 
 ## Bring-up 1: bootstrap run — 2026-09-23
 

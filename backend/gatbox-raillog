@@ -42,6 +42,10 @@ ctl_stopped() { [ -e "$CTRL/stopped" ]; }
 ctl_restart() { [ "$CTRL/start-request" -nt "$RUNDIR/session-ref" ]; }
 LED="${GATBOX_LED:-/sys/class/leds/ACT}"
 CLOCK_WAIT="${GATBOX_CLOCK_WAIT:-90}"   # seconds to wait for NTP before logging starts
+# Flush the session file to the SD card every N samples (~10 s at 2/s) and when a session ends. Without it,
+# pulling power can leave the last ~5-30 s of samples as a run of NUL bytes (ext4 delayed writes; 09-25 lost
+# 7-15 s). One `sync` fork per N samples, never per sample.
+SYNC_EVERY="${GATBOX_SYNC_EVERY:-20}"
 # Clock inputs. The GATBOX_RTC_* / GATBOX_NTP_* overrides are for the tests only.
 RTC_SYSFS="${GATBOX_RTC_SYSFS:-/sys/class/rtc/rtc0}"
 RTC_DEV="${GATBOX_RTC_DEV:-/dev/rtc0}"
@@ -113,7 +117,7 @@ fi
 
 # --- one session: reads sigrok stdout, returns 0 if any reading was logged ---
 session() {
-    local F="" state=0 tag val unit rest up _ rc=0 synced=0
+    local F="" state=0 tag val unit rest up _ rc=0 synced=0 nsamp=0
     # -t 5: the meter sends ~2 readings/s. When the D02 head comes off, sigrok keeps the port open
     # and just goes quiet, so 5 s of silence ends the session instead of hiding a gap in the file.
     while :; do
@@ -149,8 +153,10 @@ session() {
         if (( ! synced )) && [ -e "$NTP_FLAG" ]; then
             printf '# clock-sync=ntp at %(%FT%T)T\n' -1 >> "$F"; synced=1
         fi
+        (( ++nsamp % SYNC_EVERY )) || sync -d "$F"          # to the card every SYNC_EVERY samples
         state=$((1 - state)); led "$state"
     done
+    [ -n "$F" ] && sync -d "$F"                             # and at session end (Stop, head off, meter off)
     if (( rc == -1 )); then
         say "ending session: $(ctl_stopped && echo Stop || echo Start) pressed on the web page"
         pkill -f -- "--driver $DRIVER:conn=$PORT"

@@ -6,7 +6,7 @@ Pi 5 Model B Rev 1.1, 4 GB · Raspberry Pi OS Trixie 64-bit Desktop · hostname 
 flight recorder (done) and Phase 2 is the software on owned hardware (minipro, display, gpiozero, dashboard;
 not started). These headings were called "Phase 1/2" until 2026-09-24.
 
-## Phase 2 — progress (spec: `handoff/PROMPT.md`, later `docs/phase2-handoff.md`)
+## Phase 2 — progress (spec: `docs/phase2-handoff.md`)
 
 Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardware).
 
@@ -14,7 +14,9 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       reconcile); CLAUDE.md merged with the project CLAUDE.md + the handoff's hard rules.
 - [x] **M1 RTC** (2026-09-28): read-only checks, bootstrap guard, gatbox-rtc-sync timer, logger `clock=rtc`, status
       line, web badge, tests (36 pass), installed 09:16, ⏸ offline warehouse test **passed** (notes below)
-- [ ] **M2 2A foundation**: repo layout; bootstrap shape; Forgejo remote; minipro; MAME CLI; ⏸ T48 re-verify
+- [ ] **M2 2A foundation**: [x] repo layout [x] bootstrap shape (install from checkout) [x] logger SD sync fix
+      [x] minipro module (0.7.4, test-built) [x] MAME module [ ] install (waiting on the owner's OK) [ ] GitHub push
+      (waiting on the owner: public repo) [ ] MAME smoke test [ ] ⏸ T48 re-verify
 - [ ] **M3 2B face**: ⏸ panel connected; mode; touch; power; kiosk; blanking; ⏸ kiosk on/off reboots
 - [ ] **M4 2C backend**: 4a replay harness; 4b data model + logger header/marks/splits; 4c report; 4d JSON API
 - [ ] **M5 2D dashboard** at `/dash/`; screenshot tests; ⏸ on the real panel
@@ -65,6 +67,35 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   has 1 s resolution). Cell 3.12 V afterwards, charging_voltage 0.
 - The warehouse file lost only its last sample to a NUL tail (Stop at 12:02:56, power pulled ~14 s later). The
   09-25 files lost ~7–15 s the same way. Possible fix: `sync` the file at session end (one fork per session).
+
+### M2 notes (2026-09-28)
+- **Layout:** `backend/` (raillog, web, rtc-sync, ap-fallback + units), `tools/` (status, rail-report), `bootstrap/`
+  (installer + `files/`), `data/` (roster, machine specs: ref copies), `docs/` (spec, plan, `ref/` mockup + project
+  CLAUDE.md, `journal/`, `history/` = the original Phase 1 script, its payload, the 09-23 log, the 09-24 diffs),
+  `tests/`. Moved with `git mv`, so each file keeps its history.
+- **Bootstrap shape: install straight from the checkout** (not the single-file heredoc build). Why:
+  - one copy of each file: no generated file, and no hand-splicing into heredocs (which went wrong once on 09-24);
+  - `git log` of a script is that script's real history;
+  - "re-run changes nothing" is simple: `put_file` writes only when content or mode differs, and services restart
+    only when their own files changed (a logger restart ends the live session);
+  - offline re-runs are trivially safe: apt is skipped when every package is present, minipro when the pinned
+    version is installed, fonts when their sha256 matches;
+  - the spec's install line is `git clone` + `sudo bash bootstrap/gatbox-bootstrap.sh` anyway.
+  The cost: the bootstrap is no longer one self-contained file for the claude.ai project. The project gets the
+  GitHub repo, or the handful of files, instead. `--extract DIR` still writes everything under a scratch root for
+  review, and `--check` (no root) lists what a run would change.
+- **Re-run hygiene:** groups are added only if missing, I2C/SPI are toggled only if off, journald restarts only
+  when its drop-in changed, `daemon-reload` runs only when a unit changed, udev reloads only when a rule changed.
+- **Logger SD fix:** `sync -d` on the session file every 20 samples (~10 s) and at session end. Bounds a power-cut
+  loss to ~10 s (09-25 lost 7–15 s; a Stop then a quick pull loses nothing). One fork per 20 samples.
+- **minipro:** not packaged in Trixie, so the bootstrap builds the pinned upstream tag **0.7.4** (2025-08-02, commit
+  3808aec) into `/usr/local` from `/usr/local/src/minipro`. It was test-built here (scratch, local libusb headers):
+  it compiles clean and lists T48 among its supported programmers. Its `make install` skips the udev rules on Pi OS (no
+  `udev.pc`), so `bootstrap/files/minipro-0.7.4/` carries upstream's three rules byte for byte: T48 = `a466:0a53`,
+  group `plugdev` (the owner is in it) + `uaccess`. Bump the tag and the rules together.
+- **MAME:** `mame` 0.276 from apt (+ mame-data, libportaudio2, libutf8proc3; ~515 MB), for `mame -romident` only.
+- **Site config, not in the bootstrap:** the home Wi-Fi's static address (09-24, `nmcli connection modify … ipv4.method
+  manual …`). It belongs to the network the Pi is on, not to the Pi, and the repo is public.
 
 ## Bring-up 1: bootstrap run — 2026-09-23
 

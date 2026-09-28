@@ -24,3 +24,12 @@
 - NOTE: pressing Stop, then pulling power within ~30 s, can lose the last few samples to a NUL tail (ext4 delayed
   writes). The warehouse file lost one sample; 09-25 lost ~7–15 s. Fix candidate: sync at session end.
 - NEXT: M2 (repo layout, bootstrap shape, minipro, MAME, T48 re-verify). Needs the Forgejo URL.
+- M2 started: repo moved into `backend/ tools/ bootstrap/ data/ docs/ tests/` (git mv, history kept). The bootstrap now
+  installs straight from the checkout: a file table, writes only what differs, restarts only services whose files
+  changed, skips apt when everything's present (offline re-runs are safe), `--check` shows what a run would change.
+- DECIDED: bootstrap installs from the git checkout instead of inlining sources into heredocs (one copy of each file;
+  no hand-splicing). The claude.ai project gets the GitHub repo instead of one self-contained script.
+- DECIDED: repo on GitHub, `digitalunconciousness/Gatbox` (public), not Forgejo.
+- Logger SD fix: session file synced to the card every ~10 s and at session end (09-25 lost 7–15 s to NUL tails).
+- minipro isn't packaged in Trixie: bootstrap builds pinned tag 0.7.4 (test-built here; T48 supported) and installs
+  its udev rules (T48 → plugdev). mame 0.276 from apt for `-romident`.

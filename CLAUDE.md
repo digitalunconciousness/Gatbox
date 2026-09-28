@@ -5,8 +5,8 @@ Raspberry Pi OS Trixie 64-bit **Desktop**, labwc, hostname `gatbox`, user `<user
 logger** that gets left inside an arcade cabinet overnight, and is becoming the bench brain: 7" touch dashboard,
 T48 EPROM dumps, scanner → roster. No enclosure yet, so the Pi sits bare in the cabinet.
 
-**Phase 2 is in progress.** The spec is `handoff/PROMPT.md` (moves to `docs/phase2-handoff.md` in M2), with the
-plan in `handoff/ref/gatbox-phase2-plan.md`. Where they differ, PROMPT.md wins. **Resuming? Re-read the spec and
+**Phase 2 is in progress.** The spec is `docs/phase2-handoff.md` (the handoff's PROMPT.md), with the plan in
+`docs/gatbox-phase2-plan.md`. Where they differ, the spec wins. **Resuming? Re-read the spec and
 the progress checklist in BRINGUP.md, then carry on from the first unchecked milestone.**
 
 ## Signal chain
@@ -19,7 +19,9 @@ If readings come back as garbage, suspect the adapter chip or parity before the 
   continuity rows have no unit (a flag can land in the unit column).
 - A power cut mid-session can leave a run of NUL bytes at the end of a CSV (ext4). Both readers skip it; keep it that way.
 
-## Installed by gatbox-bootstrap.sh (patched copy: ~/gatbox/gatbox-bootstrap.sh; see BRINGUP.md)
+## Installed by `bootstrap/gatbox-bootstrap.sh`, straight from this checkout (see BRINGUP.md)
+Layout: `backend/` services + units, `tools/` CLIs, `bootstrap/` installer + `files/`, `data/`, `docs/`, `tests/`.
+The bootstrap's MANIFEST maps repo files to installed paths. `--check` (no root) shows what a run would change.
 - `gatbox-raillog.service` (root) → `/usr/local/bin/gatbox-raillog`. It writes one CSV per contiguous session:
   `/var/log/gatbox/rail_YYYYmmdd_HHMMSS.csv` (`iso_time,epoch,value,unit,flags,uptime_s` + `# clock=` line;
   `uptime_s` is monotonic, use it for durations), and `/run/gatbox/current`. The ACT LED blinks while it's logging.
@@ -34,7 +36,9 @@ If readings come back as garbage, suspect the adapter chip or parity before the 
 - Fallback hotspot NM profile `gatbox-ap`, **SSID GATBOX**, up only if no known network appears ~60 s after boot.
   Pi = 10.42.0.1. No barcade client Wi-Fi profile yet. Home Wi-Fi (<home-wifi>) is static <home-lan-ip>
   (set by hand 09-24; M2 folds it into the bootstrap or documents it as site config); eth0 is DHCP.
-- Pristine script copy: `gatbox-bootstrap.orig.sh`; its extracted payload: `payload/`.
+- minipro 0.7.4 (built from the pinned upstream tag into /usr/local; T48 via udev → plugdev) and mame 0.276 (apt,
+  for `mame -romident` only).
+- The original Phase 1 script and its payload are in `docs/history/`.
 - Installs need `sudo`, which asks for a password: the owner runs the install command herself.
 
 ## Hardware
@@ -87,7 +91,8 @@ Body `linear-gradient(180deg, bg2, bg)`. Fonts: Chakra Petch (display), Share Te
   wall appears, and ask the owner first.
 - Pi shell tooling: bash, `set -u`, no per-sample forks in hot loops, shellcheck-clean. Python: 4-space indent;
   JS/HTML: 2-space. Comment the hardware-facing code.
-- Git: repo in `~/gatbox`, branch `main`; `handoff/` is input and ignored. Forgejo remote: ask the owner (M2).
+- Git: repo in `~/gatbox`, branch `main`, remote GitHub `digitalunconciousness/Gatbox` (**public**: no secrets, no
+  personal details); `handoff/` is input and ignored.
 - Per milestone: plan → code → install via bootstrap → tests → BRINGUP.md → journal
   (`docs/journal/journal-entry-YYYY-MM-DD.md`, the owner's format) → commit → short summary.
 

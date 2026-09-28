@@ -12,8 +12,9 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
 
 - [x] **M0 orient** (2026-09-28): git repo + baseline `83ba066`; installed files == bootstrap payload (nothing to
       reconcile); CLAUDE.md merged with the project CLAUDE.md + the handoff's hard rules.
-- [ ] **M1 RTC**: read-only checks done 2026-09-28 (charging OFF, BATT_V 3.13 V); bootstrap guard; gatbox-rtc-sync
-      timer; logger `clock=rtc`; status line; report/web badge; tests; install; ⏸ unplug + offline boot test
+- [ ] **M1 RTC**: [x] read-only checks (2026-09-28: charging OFF, BATT_V 3.13 V) [x] bootstrap guard
+      [x] gatbox-rtc-sync timer [x] logger `clock=rtc` [x] status line [x] web badge [x] tests (36 pass)
+      [ ] install (waiting on the owner's OK: new units) [ ] ⏸ unplug + offline boot test
 - [ ] **M2 2A foundation**: repo layout; bootstrap shape; Forgejo remote; minipro; MAME CLI; ⏸ T48 re-verify
 - [ ] **M3 2B face**: ⏸ panel connected; mode; touch; power; kiosk; blanking; ⏸ kiosk on/off reboots
 - [ ] **M4 2C backend**: 4a replay harness; 4b data model + logger header/marks/splits; 4c report; 4d JSON API
@@ -34,6 +35,30 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
 - `/dev/rtc0` is root-only (0600); sysfs `since_epoch` is world-readable.
 - Two 09-25 files end in a run of NUL bytes (power pulled while logging); report and web both skip it.
 - A 137 MB `Warp-ARM64.AppImage` sits in `~/gatbox`: not source, git-ignored, left alone.
+
+### M1 notes (2026-09-28)
+- **Charging guard (bootstrap):** `GATBOX_RTC_BATTERY` is gone and is refused if set. `GATBOX_RTC_CHARGE` accepts only
+  `ML2020`, exactly, and is checked before the root check. Otherwise any active `rtc_bbat_vchg` in config.txt is
+  commented out with a dated note (a combined `dtparam=` line keeps its other params). The backup goes to
+  `config.txt.pre-rtc-guard`, and the bootstrap then asks for a reboot. On this Pi it's a no-op (no such line).
+- **gatbox-rtc-sync** (`/usr/local/sbin`, root oneshot + timer: 2 min after boot, then hourly): only when
+  `NTPSynchronized=yes`, runs `hwclock --systohc --utc` and writes `/var/lib/gatbox/rtc-synced` = `<epoch> <iso>`.
+  `hwclock` comes from `util-linux-extra` (added to the packages) and keeps `/etc/adjtime` (UTC).
+- **Logger clock label** (once per session start): `ntp` if NTP-synced; else `rtc (RTC-held time; last set from NTP
+  <iso>)` if the stamp exists, RTC ≥ stamp, and |system − RTC| ≤ 5 s; else `unverified (…)` (wording unchanged).
+  A trusted RTC skips the 90 s NTP wait. When timesyncd's `/run/systemd/timesync/synchronized` appears mid-session,
+  one `# clock-sync=ntp at <iso>` line is added. That's a builtin file test, so the sample loop still doesn't fork.
+  `gatbox-raillog --clock-label` prints what a session started now would get.
+- **gatbox-status:** a `clock` line (what new sessions will say) and an `rtc` line (charging OFF/CHARGING,
+  RTC−system, last NTP→RTC write, cell voltage). It only calls a logger that supports `--clock-label`.
+- **gatbox-web:** NTP / RTC / UNVERIFIED badge per session (+ "NTP from hh:mm:ss" after a mid-session sync) on the
+  list and the session page, and in the PDF header. The report needed no change: `# clock=` and `# clock-sync=`
+  lines show up as `note:` lines.
+- **bootstrap:** an offline `apt-get update` failure is now a warning, not a stop (rule 4).
+- **Tests** (`tests/`, no root, never touch the real service/port/logs): `test-clock-label.sh` (13),
+  `test-raillog-clock.sh` (10, fake sigrok-cli end-to-end), `test-rtc-guard.sh` (13).
+- **Physical test (⏸):** shut down, pull power ≥10 min, boot with no internet, `date` + `gatbox-status`, start a
+  session: its line 2 must be `# clock=rtc (…)`.
 
 ## Bring-up 1: bootstrap run — 2026-09-23
 

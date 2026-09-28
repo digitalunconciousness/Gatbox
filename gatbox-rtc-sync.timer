@@ -1,0 +1,10 @@
+[Unit]
+Description=GATBOX: RTC sync from NTP, 2 min after boot and then hourly
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1h
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

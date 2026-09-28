@@ -13,10 +13,20 @@
 #
 #   /var/log/gatbox/rail_YYYYmmdd_HHMMSS.csv
 #   iso_time,epoch,value,unit,flags,uptime_s
-#   # clock=ntp | clock=unverified ...        (line 2: was NTP synced at session start?)
+#   # clock=ntp | clock=rtc (...) | clock=unverified (...)     (line 2, decided at session start)
+#   # clock-sync=ntp at <iso>                                   (once, if NTP arrives mid-session)
 #
 # uptime_s is monotonic: durations stay right even if the wall clock steps.
 # Runs as root under systemd (the LED sysfs needs it).
+#
+#   gatbox-raillog --clock-label    print the clock label a session started now would get, and exit
+#
+# Clock label, first match wins:
+#   ntp         the system clock is NTP-synced
+#   rtc         the RTC can be trusted: gatbox-rtc-sync set it from NTP at least once (stamp file), it hasn't
+#               gone backwards since (a cell that lost power reads 1970), and the system clock agrees with it
+#               to 5 s, which shows the system clock came from the RTC and not from timesyncd's saved guess
+#   unverified  anything else
 
 set -u
 
@@ -32,6 +42,42 @@ ctl_stopped() { [ -e "$CTRL/stopped" ]; }
 ctl_restart() { [ "$CTRL/start-request" -nt "$RUNDIR/session-ref" ]; }
 LED="${GATBOX_LED:-/sys/class/leds/ACT}"
 CLOCK_WAIT="${GATBOX_CLOCK_WAIT:-90}"   # seconds to wait for NTP before logging starts
+# Clock inputs. The GATBOX_RTC_* / GATBOX_NTP_* overrides are for the tests only.
+RTC_SYSFS="${GATBOX_RTC_SYSFS:-/sys/class/rtc/rtc0}"
+RTC_DEV="${GATBOX_RTC_DEV:-/dev/rtc0}"
+RTC_STAMP="${GATBOX_RTC_STAMP:-/var/lib/gatbox/rtc-synced}"        # "<epoch> <iso>", from gatbox-rtc-sync
+NTP_FLAG="${GATBOX_NTP_FLAG:-/run/systemd/timesync/synchronized}"  # timesyncd creates it once synced
+
+# --- clock ------------------------------------------------------------------
+clock_synced() {
+    if [ -n "${GATBOX_NTP_SYNCED:-}" ]; then [ "$GATBOX_NTP_SYNCED" = yes ]; return; fi
+    [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = yes ]
+}
+# 0 if the RTC can be trusted (see the header); sets RTC_SET_ISO to the last NTP->RTC write
+rtc_trusted() {
+    local rtc="" stamp_epoch="" d
+    RTC_SET_ISO=""
+    [ -r "$RTC_DEV" ] && [ -r "$RTC_STAMP" ] && [ -r "$RTC_SYSFS/since_epoch" ] || return 1
+    read -r stamp_epoch RTC_SET_ISO < "$RTC_STAMP"
+    read -r rtc < "$RTC_SYSFS/since_epoch"
+    [[ $rtc =~ ^[0-9]+$ && $stamp_epoch =~ ^[0-9]+$ ]] || return 1
+    (( rtc >= stamp_epoch )) || return 1                 # gone backwards: the cell lost power
+    d=$(( EPOCHSECONDS - rtc ))
+    (( d >= -5 && d <= 5 ))                              # the system clock came from the RTC
+}
+# Sets CLOCK_SRC (ntp | rtc | unverified) and CLOCK_LINE (what follows "# clock=")
+clock_label() {
+    if clock_synced; then
+        CLOCK_SRC=ntp; CLOCK_LINE="ntp"
+    elif rtc_trusted; then
+        CLOCK_SRC=rtc; CLOCK_LINE="rtc (RTC-held time; last set from NTP ${RTC_SET_ISO:-?})"
+    else
+        CLOCK_SRC=unverified
+        CLOCK_LINE="unverified (no NTP at session start - absolute times may be off; uptime_s durations are good)"
+    fi
+}
+
+if [ "${1:-}" = "--clock-label" ]; then clock_label; echo "$CLOCK_LINE"; exit 0; fi
 
 mkdir -p "$LOGDIR" "$RUNDIR"
 chmod 755 "$LOGDIR"
@@ -53,25 +99,21 @@ trap cleanup TERM INT
 led_trigger none
 led 0
 
-# --- clock ------------------------------------------------------------------
-clock_synced() { [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = yes ]; }
-clock_label() {
-    if clock_synced; then echo "ntp"
-    else echo "unverified (no NTP at session start - absolute times may be off; uptime_s durations are good)"
-    fi
-}
-
-if ! clock_synced; then
+if clock_synced; then
+    :
+elif rtc_trusted; then
+    say "clock from the RTC (last set from NTP $RTC_SET_ISO); not waiting for NTP"
+else
     say "waiting up to ${CLOCK_WAIT}s for NTP so timestamps are real"
     for ((i = 0; i < CLOCK_WAIT; i += 3)); do clock_synced && break; sleep 3; done
     if clock_synced; then say "clock synced"
-    else say "no NTP; logging anyway. Fit the RTC battery or push time from the laptop."
+    else say "no NTP and the RTC isn't trusted yet (never set from NTP, reset, or off by >5 s); logging anyway"
     fi
 fi
 
 # --- one session: reads sigrok stdout, returns 0 if any reading was logged ---
 session() {
-    local F="" state=0 tag val unit rest up _ rc=0
+    local F="" state=0 tag val unit rest up _ rc=0 synced=0
     # -t 5: the meter sends ~2 readings/s. When the D02 head comes off, sigrok keeps the port open
     # and just goes quiet, so 5 s of silence ends the session instead of hiding a gap in the file.
     while :; do
@@ -88,9 +130,12 @@ session() {
         fi
         if [ -z "$F" ]; then
             F="$LOGDIR/rail_$(date +%Y%m%d_%H%M%S).csv"
+            clock_label                                        # once per session; forks are fine here
+            # already NTP, or timesyncd's flag was already there: no mid-session sync to report
+            if [ "$CLOCK_SRC" = ntp ] || [ -e "$NTP_FLAG" ]; then synced=1; fi
             {
                 echo "iso_time,epoch,value,unit,flags,uptime_s"
-                echo "# clock=$(clock_label)"
+                echo "# clock=$CLOCK_LINE"
             } > "$F"
             chmod 644 "$F"
             echo "$F" > "$RUNDIR/current"
@@ -100,6 +145,10 @@ session() {
         read -r up _ < /proc/uptime
         # bash-builtin time formatting + EPOCHREALTIME: no forks per sample
         printf '%(%FT%T)T,%s,%s,%s,%s,%s\n' -1 "$EPOCHREALTIME" "$val" "$unit" "$rest" "$up" >> "$F"
+        # NTP arrived mid-session: say so once (a builtin file test, still no fork per sample)
+        if (( ! synced )) && [ -e "$NTP_FLAG" ]; then
+            printf '# clock-sync=ntp at %(%FT%T)T\n' -1 >> "$F"; synced=1
+        fi
         state=$((1 - state)); led "$state"
     done
     if (( rc == -1 )); then

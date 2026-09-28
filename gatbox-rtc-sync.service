@@ -1,0 +1,9 @@
+[Unit]
+Description=GATBOX: set the RTC from NTP time and stamp it (never while unsynced)
+After=time-sync.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/gatbox-rtc-sync
+# /var/lib/gatbox (root, 0755): the stamp gatbox-raillog reads
+StateDirectory=gatbox

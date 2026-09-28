@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# gatbox-rtc-sync — set the Pi 5's RTC from the system clock, but only while that clock is NTP-synced,
+# and stamp each write in /var/lib/gatbox/rtc-synced as "<epoch> <iso>".
+#
+# gatbox-raillog trusts the RTC (and labels offline sessions clock=rtc) only if this stamp exists and the RTC
+# hasn't gone backwards since. The kernel's own 11-minute sync (CONFIG_RTC_SYSTOHC) may also write the RTC;
+# the stamp is the proof that it was set from real time. Run by gatbox-rtc-sync.timer: ~2 min after boot,
+# then hourly. Never writes the RTC while unsynced. Never touches the backup cell's charging.
+set -u
+
+STAMP="${GATBOX_RTC_STAMP:-/var/lib/gatbox/rtc-synced}"
+say() { echo "gatbox-rtc-sync: $*"; }
+
+if [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" != yes ]; then
+    say "system clock not NTP-synced; RTC left alone"
+    exit 0
+fi
+[ -e /dev/rtc0 ] || { say "no /dev/rtc0; nothing to set"; exit 0; }
+if ! hwclock --systohc --utc; then
+    say "hwclock --systohc failed"
+    exit 1
+fi
+now=$EPOCHSECONDS
+mkdir -p "${STAMP%/*}"
+printf '%s %(%FT%T)T\n' "$now" "$now" > "$STAMP.tmp" && mv -f "$STAMP.tmp" "$STAMP"
+say "RTC set from NTP time (stamp: $(< "$STAMP"))"

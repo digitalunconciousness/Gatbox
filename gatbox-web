@@ -131,6 +131,8 @@ button.stop{background:transparent;color:var(--bad);border-color:var(--bad);marg
 .mode{display:inline-block;padding:0 8px;border:1px solid var(--cyan);border-radius:999px;color:var(--cyan);
 background:rgba(125,250,255,.08);box-shadow:0 0 6px rgba(125,250,255,.25);font:13px/1.5 var(--mono);
 vertical-align:middle;text-shadow:none}.modes div{margin-top:5px}.modes .warn{font-size:14px}
+.cyan{color:var(--cyan)}.clk{display:inline-block;padding:0 6px;border:1px solid currentColor;border-radius:4px;
+font:12px/1.5 var(--mono);vertical-align:middle;font-weight:normal}
 """
 
 
@@ -155,10 +157,18 @@ def summary(name, t0=None, t1=None):
     (V, Ω, ...), without running the full report. Optionally only the samples from t0 to t1."""
     first = last = None
     modes, warn, n = {}, set(), 0
+    clock = clock_note = clock_sync = None
     with open(os.path.join(LOGDIR, name), errors="replace") as f:
         for line in f:
+            if line.startswith("#"):
+                if line.startswith("# clock="):            # ntp | rtc (...) | unverified (...)
+                    clock_note = line[2:].strip()
+                    clock = line[8:].split("(")[0].strip()
+                elif line.startswith("# clock-sync="):     # NTP arrived mid-session
+                    clock_sync = line.strip().rsplit(" at ", 1)[-1]
+                continue
             p = line.rstrip("\n").split(",")
-            if len(p) < 4 or p[0].startswith("#") or p[0] == "iso_time":
+            if len(p) < 4 or p[0] == "iso_time":
                 continue
             if (t0 and p[0] < t0) or (t1 and p[0] > t1):
                 continue
@@ -176,7 +186,22 @@ def summary(name, t0=None, t1=None):
             if math.isfinite(v):
                 s[1], s[2] = min(s[1], v), max(s[2], v)
             warn |= m.warn
-    return dict(first=first, last=last, n=n, modes=modes, warn=warn)
+    return dict(first=first, last=last, n=n, modes=modes, warn=warn,
+                clock=clock, clock_note=clock_note, clock_sync=clock_sync)
+
+
+CLOCK_BADGE = {"ntp": ("NTP", "ok"), "rtc": ("RTC", "cyan"), "unverified": ("UNVERIFIED", "warn")}
+
+
+def clock_badge(s):
+    """NTP / RTC / UNVERIFIED from the session's # clock= line, plus NTP-from-<time> if it synced later."""
+    if not s.get("clock"):
+        return ""
+    txt, cls = CLOCK_BADGE.get(s["clock"], (s["clock"].upper(), "mut"))
+    b = f'<span class="clk {cls}" title="{html.escape(s["clock_note"] or "")}">{html.escape(txt)}</span>'
+    if s.get("clock_sync"):
+        b += f' <span class="clk ok" title="NTP synced mid-session">NTP from {html.escape(s["clock_sync"][11:19])}</span>'
+    return b
 
 
 def mode_lines(s, lo, hi, when="was on"):
@@ -273,7 +298,8 @@ def make_pdf(name, lo, hi, t0, t1):
     """Letter-size PDF: header, plot, then the report text (continued on more pages if long)."""
     text, png = report(name, lo, hi, t0, t1, light=True)
     s = summary(name, t0, t1)
-    mode_txt = ("meter mode: " + (", ".join(s["modes"]) or "no samples")
+    clk = (s["clock"] or "?").upper() + (f" (NTP from {s['clock_sync'][11:19]})" if s["clock_sync"] else "")
+    mode_txt = ("clock: " + clk + "   ·   meter mode: " + (", ".join(s["modes"]) or "no samples")
                 + "".join(f"   ·   {k} was on" for k in dict(WARN[f] for f in sorted(s["warn"]))))
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_pdf import PdfPages
@@ -425,7 +451,7 @@ class H(BaseHTTPRequestHandler):
                         f'<div class="mut">{s["n"]} samples · {dur/3600:.2f} h so far</div></div>')
             cards.append(
                 f'<div class="card"><a href="/s/{name}{qs}">'
-                f'<b>{html.escape(s["first"][0].replace("T", " "))}</b>'
+                f'<b>{html.escape(s["first"][0].replace("T", " "))}</b> {clock_badge(s)}'
                 f'{" · <span class=ok>live</span>" if is_live else ""}<br>'
                 f'<span class="mut">{dur/3600:.2f} h · {s["n"]} samples</span>'
                 f'{mode_lines(s, lo, hi)}</a></div>')
@@ -456,7 +482,8 @@ class H(BaseHTTPRequestHandler):
         img = f'<a href="{src}"><img src="{src}" alt="plot (tap for full size)"></a>' if png else \
               '<div class="mut">No plot (python3-matplotlib missing?)</div>'
         body = (f'<a href="/{qs}">← all sessions</a><h1>{html.escape(name)}</h1>'
-                f'<div class="card"><span class="mut">Meter mode{" in this range" if (t0 or t1) else ""}</span>'
+                f'<div class="card"><div>{clock_badge(s)} <span class="mut">{html.escape(s["clock_note"] or "no clock line")}</span></div>'
+                f'<span class="mut">Meter mode{" in this range" if (t0 or t1) else ""}</span>'
                 f'{mode_lines(view, lo, hi) if view["n"] else "<div class=mut>no samples</div>"}</div>'
                 f'<form method="get"><span class="mut">Window (V)</span>'
                 f'<input name="lo" value="{lo:g}" inputmode="decimal"><input name="hi" value="{hi:g}" inputmode="decimal">'

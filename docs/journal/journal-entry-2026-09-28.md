@@ -37,3 +37,8 @@
   the first push: noreply identity, UTC timestamps, no names, home network or workplace roster.
 - DECIDED: no personal info on GitHub, ever. Site values stay in a git-ignored `SITE.local.md`, the roster stays
   git-ignored on the Pi, and a local pre-push hook enforces it.
+- M2 installed: new logger (SD sync) + minipro 0.7.4 (built, T48 supported, udev → plugdev) + mame 0.276. Only the
+  logger restarted; a re-check says the Pi matches the checkout.
+- MAME `-romident`: ~8 s and ~485 MB RAM per lookup. FOUND: an all-FF blank "matches" real sets (ColecoVision blank
+  halves), so the dump tool must flag blank/all-FF reads before trusting a MATCH.
+- NEXT: ⏸ T48 re-verify (known EPROM, dump twice, SHA1s match), which closes M2.

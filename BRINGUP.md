@@ -15,8 +15,8 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
 - [x] **M1 RTC** (2026-09-28): read-only checks, bootstrap guard, gatbox-rtc-sync timer, logger `clock=rtc`, status
       line, web badge, tests (36 pass), installed 09:16, ⏸ offline warehouse test **passed** (notes below)
 - [ ] **M2 2A foundation**: [x] repo layout [x] bootstrap shape (install from checkout) [x] logger SD sync fix
-      [x] minipro module (0.7.4, test-built) [x] MAME module [ ] install (waiting on the owner's OK) [x] GitHub push
-      (2026-09-28, history scrubbed first: see below) [ ] MAME smoke test [ ] ⏸ T48 re-verify
+      [x] minipro module (0.7.4, test-built) [x] MAME module [x] install (2026-09-28 16:17: only the logger restarted; `--check` = nothing to change) [x] GitHub push
+      (2026-09-28, history scrubbed first: see below) [x] MAME smoke test [ ] ⏸ T48 re-verify
 - [ ] **M3 2B face**: ⏸ panel connected; mode; touch; power; kiosk; blanking; ⏸ kiosk on/off reboots
 - [ ] **M4 2C backend**: 4a replay harness; 4b data model + logger header/marks/splits; 4c report; 4d JSON API
 - [ ] **M5 2D dashboard** at `/dash/`; screenshot tests; ⏸ on the real panel
@@ -100,6 +100,17 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   timestamps, names/username/home network/timezone replaced by placeholders, the workplace roster dropped (now
   git-ignored in `data/`). Real values: `SITE.local.md` (git-ignored). A local `.git/hooks/pre-push` refuses
   personal details, the roster, `*.local.md` and non-UTC timestamps. Commit with `TZ=UTC git commit`.
+- **Installed 2026-09-28 16:17** by the owner. It wrote the new logger + 3 minipro udev rules, installed
+  libusb-1.0-0-dev + mame (+ mame-data, libportaudio2, libutf8proc3), and built minipro 0.7.4
+  (`/usr/local/bin/minipro`, `/usr/local/share/minipro/{infoic,logicic}.xml`). Only gatbox-raillog restarted; the
+  web view was untouched. Disk +0.6 GB. Afterwards `--check` said "nothing to change". Offline re-runs need no
+  network: apt, minipro and fonts are all skipped when present.
+- **MAME smoke test:** `mame -romident` with HOME in scratch writes no files. It takes ~8 s and peaks at **485 MB RSS**
+  (don't run it in parallel with other heavy jobs). Exit 0 = match, 9 = no match. **All-FF data "matches"**:
+  an 8 KB all-FF file matched a run of ColecoVision sets' blank ROM halves. M7 must flag all-FF (and all-00) *before*
+  reporting a MATCH.
+- **minipro part names** include the package: `minipro -q t48 -L 27C1024` → `AM27C1024@DIP40`, `AT27C1024@DIP40`, …
+  (works without the T48 plugged in).
 - **Site config, not in the bootstrap:** the home Wi-Fi's static address (09-24, `nmcli connection modify … ipv4.method
   manual …`). It belongs to the network the Pi is on, not to the Pi, and the repo is public.
 

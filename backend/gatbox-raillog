@@ -8,13 +8,20 @@
 #   ACT LED blinking ~1 Hz  = logging
 #   ACT LED dark            = waiting (adapter unplugged, meter off, head off the IR window)
 #
-# One CSV per contiguous session. A file is only created when the first reading
-# arrives and ends when the stream stops, so gaps between files are diagnostic.
+# One CSV per contiguous session *and dial mode*: a file is only created when the first reading arrives, and ends
+# when the stream stops, the dial is turned, or NEW / a profile or machine change comes from gatbox-web. So gaps
+# between files are diagnostic, and every file holds one kind of measurement.
 #
 #   /var/log/gatbox/rail_YYYYmmdd_HHMMSS.csv
 #   iso_time,epoch,value,unit,flags,uptime_s
 #   # clock=ntp | clock=rtc (...) | clock=unverified (...)     (line 2, decided at session start)
 #   # clock-sync=ntp at <iso>                                   (once, if NTP arrives mid-session)
+#   # mode=<key>        the dial mode (VDC, VAC, OHM, …: data/profiles.json), also in /run/gatbox/mode
+#   # profile= / window= / alarm_hi= / machine=   from gatbox-meta (the state gatbox-web keeps), once per file
+#   # settling=<iso>,<epoch>,<value>,<unit>,<flags>   the first reading after a dial turn, kept out of the samples
+#   # mark=<iso>,<epoch>,<uptime_s>,<source>,<label>  from gatbox-web's spool (mark-before-start= if made earlier)
+#   # mode-change=<iso>,<new mode>                    last line of a file the dial ended
+#   # settling-unused=…   a turn's first reading, when the stream stopped before its own file could start
 #
 # uptime_s is monotonic: durations stay right even if the wall clock steps.
 # Runs as root under systemd (the LED sysfs needs it).
@@ -47,6 +54,8 @@ CLOCK_WAIT="${GATBOX_CLOCK_WAIT:-90}"   # seconds to wait for NTP before logging
 # pulling power can leave the last ~5-30 s of samples as a run of NUL bytes (ext4 delayed writes; 09-25 lost
 # 7-15 s). One `sync` fork per N samples, never per sample.
 SYNC_EVERY="${GATBOX_SYNC_EVERY:-20}"
+META="${GATBOX_META:-/usr/local/bin/gatbox-meta}"   # profile/window/alarm/machine header lines (tests: backend/)
+SPOOL="$CTRL/marks.spool"                           # gatbox-web appends marks: epoch<TAB>uptime<TAB>source<TAB>label
 # Clock inputs. The GATBOX_RTC_* / GATBOX_NTP_* overrides are for the tests only.
 RTC_SYSFS="${GATBOX_RTC_SYSFS:-/sys/class/rtc/rtc0}"
 RTC_DEV="${GATBOX_RTC_DEV:-/dev/rtc0}"
@@ -116,9 +125,52 @@ else
     fi
 fi
 
+# --- dial mode -------------------------------------------------------------------
+# sigrok's unit + flags -> the mode key (data/profiles.json "modes"). Same rules as gatboxlib/modes.py
+# (tests/test-modes.sh checks they agree). Builtins only; only called when unit/flags change.
+mode_key() {   # <unit> <flags>: sets MODE
+    local u=$1 f=" $2 "
+    case "$u" in AC|DC|RMS|DIODE|HOLD|MAX|MIN|AUTO|REL|AVG|REF|UNSTABLE) f=" $u$f"; u="" ;; esac
+    case "$f" in *" DIODE "*) MODE=DIODE; return ;; esac
+    case "$u" in
+        V|[fpnumkMGT]V|µV|μV)
+            case "$f" in                                  # " AC DC ": the space between them serves both
+                *" AC "*) case "$f" in *" DC "*) MODE=VACDC ;; *) MODE=VAC ;; esac ;;
+                *) MODE=VDC ;;
+            esac ;;
+        A|[fpnumkMGT]A|µA|μA)
+            case "$f" in *" AC "*) MODE=AAC ;; *) MODE=ADC ;; esac ;;
+        Ω|[fpnumkMGT]Ω|µΩ|μΩ|Ω|[fpnumkMGT]Ω|µΩ|μΩ) MODE=OHM ;;      # U+2126 OHM SIGN (sigrok) and U+03A9 GREEK OMEGA
+        F|[fpnumkMGT]F|µF|μF) MODE=CAP ;;
+        Hz|[fpnumkMGT]Hz|µHz|μHz) MODE=HZ ;;
+        %) MODE=DUTY ;;
+        "") MODE=CONT ;;
+        *) MODE=UNKNOWN ;;
+    esac
+}
+
+# --- marks ------------------------------------------------------------------------
+# gatbox-web appends marks to $SPOOL; this moves the ones not taken yet into the live file. marks-seen = how many
+# lines were taken; marks-checked's mtime = when the spool was last looked at (touched *before* reading, so a mark
+# appended meanwhile is caught at the next sample). Builtins only: it runs from the sample loop.
+take_marks() {
+    local seen=0 n=0 e up src label kind
+    : > "$RUNDIR/marks-checked"
+    [ -r "$RUNDIR/marks-seen" ] && read -r seen < "$RUNDIR/marks-seen"
+    while IFS=$'\t' read -r e up src label; do
+        n=$((n + 1))
+        (( n <= seen )) && continue
+        [[ $e =~ ^[0-9]+(\.[0-9]+)?$ ]] || continue
+        kind=mark
+        (( ${e%.*} < fstart )) && kind=mark-before-start        # made while no file was open
+        printf '# %s=%(%FT%T)T,%s,%s,%s,%s\n' "$kind" "${e%.*}" "$e" "$up" "$src" "$label" >> "$F"
+    done < "$SPOOL"
+    printf '%s\n' "$n" > "$RUNDIR/marks-seen"
+}
+
 # --- one session: reads sigrok stdout, returns 0 if any reading was logged ---
 session() {
-    local F="" state=0 tag val unit rest up _ rc=0 synced=0 nsamp=0
+    local F="" state=0 tag val unit rest up _ rc=0 synced=0 nsamp=0 fmode="" rawkey="" settle="" fstart=0 n base lastF=""
     # -t 5: the meter sends ~2 readings/s. When the D02 head comes off, sigrok keeps the port open
     # and just goes quiet, so 5 s of silence ends the session instead of hiding a gap in the file.
     while :; do
@@ -133,15 +185,38 @@ session() {
             fi
             continue
         fi
+        if [ "$unit|$rest" != "$rawkey" ]; then            # unit/flags changed: which dial mode is this?
+            rawkey="$unit|$rest"
+            mode_key "$unit" "$rest"
+            printf '%s\n' "$MODE" > "$RUNDIR/mode"
+            if [ -n "$F" ] && [ "$MODE" != "$fmode" ]; then
+                # The dial was turned. One file = one dial mode, so this file ends and the next reading starts a
+                # new one. This reading can be junk while the meter settles (09-28: one 726.4 V AC right after
+                # mV DC), so it goes into the new file as a '# settling=' note, not as a sample.
+                printf '# mode-change=%(%FT%T)T,%s\n' -1 "$MODE" >> "$F"
+                sync -d "$F"
+                say "dial turned to $MODE: new file"
+                printf -v settle '%(%FT%T)T,%s,%s,%s,%s' -1 "$EPOCHREALTIME" "$val" "$unit" "$rest"
+                lastF=$F; F=""
+                continue
+            fi
+        fi
         if [ -z "$F" ]; then
             F="$LOGDIR/rail_$(date +%Y%m%d_%H%M%S).csv"
-            clock_label                                        # once per session; forks are fine here
+            base=${F%.csv}; n=2
+            while [ -e "$F" ]; do F="${base}_$n.csv"; n=$((n + 1)); done   # two files in one second (fast dial)
+            fmode=$MODE; fstart=${EPOCHREALTIME%.*}
+            clock_label                                        # once per file; forks are fine here
             # already NTP, or timesyncd's flag was already there: no mid-session sync to report
-            if [ "$CLOCK_SRC" = ntp ] || [ -e "$NTP_FLAG" ]; then synced=1; fi
+            if [ "$CLOCK_SRC" = ntp ] || [ -e "$NTP_FLAG" ]; then synced=1; else synced=0; fi
             {
                 echo "iso_time,epoch,value,unit,flags,uptime_s"
                 echo "# clock=$CLOCK_LINE"
+                echo "# mode=$MODE"
+                GATBOX_STATE="$CTRL" "$META" header 2>/dev/null   # profile, window, alarm_hi, machine
+                [ -n "$settle" ] && echo "# settling=$settle"
             } > "$F"
+            settle=""
             chmod 644 "$F"
             echo "$F" > "$RUNDIR/current"
             rm -f "$RUNDIR/last-error"
@@ -154,9 +229,12 @@ session() {
         if (( ! synced )) && [ -e "$NTP_FLAG" ]; then
             printf '# clock-sync=ntp at %(%FT%T)T\n' -1 >> "$F"; synced=1
         fi
+        [ "$SPOOL" -nt "$RUNDIR/marks-checked" ] && take_marks   # a new mark in gatbox-web's spool
         (( ++nsamp % SYNC_EVERY )) || sync -d "$F"          # to the card every SYNC_EVERY samples
         state=$((1 - state)); led "$state"
     done
+    # the stream ended right after a dial turn: no file to put that reading in, so keep it at the end of the last one
+    if [ -z "$F" ] && [ -n "$settle" ] && [ -n "$lastF" ]; then echo "# settling-unused=$settle" >> "$lastF"; F=$lastF; fi
     [ -n "$F" ] && sync -d "$F"                             # and at session end (Stop, head off, meter off)
     if (( rc == -1 )); then
         say "ending session: $(ctl_stopped && echo Stop || echo Start) pressed on the web page"
@@ -165,9 +243,17 @@ session() {
         say "no reading for 5 s (D02 head off the IR window, or meter off); ending session"
         pkill -f -- "--driver $DRIVER:conn=$PORT"
     fi
-    rm -f "$RUNDIR/current"
-    [ -n "$F" ]
+    rm -f "$RUNDIR/current" "$RUNDIR/mode"
+    [ -n "$F" ] || [ -n "$fmode" ]
 }
+
+# marks made before this logger started are old news: begin from the spool's current length
+if [ ! -e "$RUNDIR/marks-seen" ]; then
+    n=0
+    if [ -r "$SPOOL" ]; then while IFS= read -r _; do n=$((n + 1)); done < "$SPOOL"; fi
+    printf '%s\n' "$n" > "$RUNDIR/marks-seen"
+    : > "$RUNDIR/marks-checked"
+fi
 
 # --- main loop ----------------------------------------------------------------
 misses=0

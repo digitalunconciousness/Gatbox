@@ -12,10 +12,11 @@ lines, the header and the NUL tail a power cut leaves are skipped.
     --speed X    the original timing (from uptime_s, or epoch) sped up X times; gaps over 10 s are capped
     --fast       as fast as possible
     --from/--to  only rows whose iso_time is in [from, to] (YYYY-MM-DDTHH:MM[:SS], compared as text)
+    --delay S    wait S seconds before the first line (a meter switched on a moment later)
 
 Test hook: gatbox-raillog runs $GATBOX_SIGROK instead of sigrok-cli when it's set. Called that way (with
 sigrok-cli's own arguments, which are ignored), this reads its options from the environment instead:
-GATBOX_REPLAY_FILE (colon-separated), GATBOX_REPLAY_RATE / _SPEED / _FAST=1, and GATBOX_REPLAY_HOLD=1 to stay
+GATBOX_REPLAY_FILE (colon-separated), GATBOX_REPLAY_RATE / _SPEED / _FAST=1 / _DELAY, and GATBOX_REPLAY_HOLD=1 to stay
 silent afterwards with the "port" open (like a D02 head coming off) instead of exiting (like the meter
 switching off). It never opens a serial port.
 """
@@ -60,6 +61,7 @@ def main():
             sys.exit("gatbox-replay: GATBOX_REPLAY_FILE not set")
         rate, speed = float(env.get("GATBOX_REPLAY_RATE", "2")), float(env.get("GATBOX_REPLAY_SPEED", "0"))
         fast, hold, t0, t1 = env.get("GATBOX_REPLAY_FAST") == "1", env.get("GATBOX_REPLAY_HOLD") == "1", None, None
+        delay = float(env.get("GATBOX_REPLAY_DELAY", "0"))
     else:
         ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
         ap.add_argument("files", nargs="+")
@@ -69,10 +71,12 @@ def main():
         g.add_argument("--fast", action="store_true")
         ap.add_argument("--from", dest="t0")
         ap.add_argument("--to", dest="t1")
+        ap.add_argument("--delay", type=float, default=0.0)
         a = ap.parse_args()
-        paths, rate, speed, fast, hold, t0, t1 = a.files, a.rate, a.speed, a.fast, False, a.t0, a.t1
+        paths, rate, speed, fast, hold, t0, t1, delay = a.files, a.rate, a.speed, a.fast, False, a.t0, a.t1, a.delay
     prev = None
     try:
+        time.sleep(max(delay, 0.0))
         for _, sec, line in rows(paths, t0, t1):
             if not fast:
                 if speed > 0 and prev is not None and sec is not None:

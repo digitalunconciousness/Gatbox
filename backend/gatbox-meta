@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+"""gatbox-meta — what a rail session starting now is about: profile, window, alarm_hi, machine.
+
+    gatbox-meta header     the header lines gatbox-raillog writes after '# clock=' and '# mode=' (once per file)
+    gatbox-meta resolve    the same, as JSON
+
+Reads the state gatbox-web writes ($GATBOX_STATE, default /var/lib/gatbox-web: profile.json, machine) and the data
+files (profiles.json, gatbox-machine-specs.json). With no state it's the default profile (+5V rail), today's
+behaviour. Never fails loudly: gatbox-raillog must keep logging even if this breaks.
+"""
+import json, os, sys
+
+
+def lib_path():
+    env = os.environ.get("GATBOX_LIB")
+    if env:
+        return env
+    here = os.path.dirname(os.path.realpath(__file__))
+    return here if os.path.isdir(os.path.join(here, "gatboxlib")) else "/usr/local/lib/gatbox"
+
+
+sys.path.insert(0, lib_path())
+from gatboxlib import profiles  # noqa: E402
+
+
+def main():
+    pid, win, machine = profiles.read_state()
+    res = profiles.resolve(pid, win, machine)
+    if sys.argv[1:] == ["resolve"]:
+        print(json.dumps(res, ensure_ascii=False, indent=1))
+    else:
+        print("\n".join(profiles.header_lines(res)))
+
+
+if __name__ == "__main__":
+    main()

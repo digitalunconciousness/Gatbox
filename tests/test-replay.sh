@@ -21,6 +21,9 @@ OHM=$'Ω'
   printf '\0\0\0\0'; } > "$T/synthetic.csv"
 
 cols() { tr -d '\000' < "$1" | grep -v '^#\|^iso_time' | cut -d, -f3-5; }
+# a logger file back to what was sent, in order: '# settling(-unused)=' notes and samples -> value,unit,flags
+rebuild() { awk -F, '/^# settling(-unused)?=/ {sub(/^# settling(-unused)?=[^,]*,[^,]*,/, ""); print; next}
+                    /^#|^iso_time/ {next} {print $3 "," $4 "," $5}' "$1"; }
 
 echo "replay lines parse back to the same columns:"
 "$REPLAY" --fast "$T/synthetic.csv" > "$T/lines"
@@ -35,12 +38,14 @@ roundtrip() {   # <name> <csv>: replay it through the real logger into $T/out-<n
     rm -rf "$out"; mkdir -p "$out/log" "$out/run"
     GATBOX_SIGROK="$REPLAY" GATBOX_REPLAY_FILE="$src" GATBOX_REPLAY_FAST=1 GATBOX_DMM_PORT="$T/port" \
         GATBOX_LOGDIR="$out/log" RUNTIME_DIRECTORY="$out/run" GATBOX_CTRL="$out/ctrl" GATBOX_LED="$T/led" \
-        GATBOX_CLOCK_WAIT=0 GATBOX_NTP_SYNCED=yes setsid bash "$LOGGER" > "$out/journal" 2>&1 &
+        GATBOX_CLOCK_WAIT=0 GATBOX_NTP_SYNCED=yes GATBOX_META="$REPO/backend/gatbox-meta" setsid bash "$LOGGER" > "$out/journal" 2>&1 &
     pid=$!
     for _ in $(seq 600); do grep -q "stream ended" "$out/journal" && break; sleep 0.1; done
     kill -TERM -- -"$pid" 2>/dev/null; wait "$pid" 2>/dev/null
-    cat "$out"/log/rail_*.csv | grep -v '^#\|^iso_time' | cut -d, -f3-5 > "$out/samples"
-    check "$name: every sample round-trips ($(wc -l < "$out/samples") rows)" 'diff <(cols "$src") "$out/samples" >/dev/null'
+    # files in the order the logger opened them; a dial turn moves that turn's first reading to '# settling='
+    while read -r f; do rebuild "$f"; done < <(grep -o 'logging to .*' "$out/journal" | cut -d' ' -f3) > "$out/samples"
+    local nf; nf=$(grep -c 'logging to' "$out/journal")
+    check "$name: every reading round-trips ($(wc -l < "$out/samples") rows, $nf file(s))" 'diff <(cols "$src") "$out/samples" >/dev/null'
 }
 echo "round trip through gatbox-raillog:"
 roundtrip synthetic "$T/synthetic.csv"

@@ -36,7 +36,8 @@ set -euo pipefail
 
 REPO=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 
-# repo path -> installed path, mode. Everything the bootstrap installs from the checkout.
+# repo path -> installed path, mode [optional]. Everything the bootstrap installs from the checkout. "optional" = skip
+# it if the checkout doesn't have it (the roster: workplace data, git-ignored, so a fresh clone lacks it).
 MANIFEST="
 backend/gatbox-raillog                          /usr/local/bin/gatbox-raillog                         755
 backend/gatbox-raillog.service                  /etc/systemd/system/gatbox-raillog.service            644
@@ -51,6 +52,15 @@ tools/gatbox-status                             /usr/local/bin/gatbox-status    
 tools/gatbox-rail-report                        /usr/local/bin/gatbox-rail-report                     755
 tools/gatbox-kiosk                              /usr/local/bin/gatbox-kiosk                           755
 backend/gatbox-kiosk-launch                     /usr/local/bin/gatbox-kiosk-launch                    755
+backend/gatbox-meta                             /usr/local/bin/gatbox-meta                            755
+tools/gatbox-replay                             /usr/local/bin/gatbox-replay                          755
+backend/gatboxlib/__init__.py                   /usr/local/lib/gatbox/gatboxlib/__init__.py           644
+backend/gatboxlib/modes.py                      /usr/local/lib/gatbox/gatboxlib/modes.py              644
+backend/gatboxlib/profiles.py                   /usr/local/lib/gatbox/gatboxlib/profiles.py           644
+backend/gatboxlib/csvlog.py                     /usr/local/lib/gatbox/gatboxlib/csvlog.py             644
+data/profiles.json                              /usr/local/share/gatbox/profiles.json                 644
+data/gatbox-machine-specs.json                  /usr/local/share/gatbox/gatbox-machine-specs.json     644
+data/gatbox-barcade-roster.json                 /usr/local/share/gatbox/gatbox-barcade-roster.json    644  optional
 bootstrap/files/99-gatbox-dmm.rules             /etc/udev/rules.d/99-gatbox-dmm.rules                 644
 bootstrap/files/minipro-0.7.4/60-minipro.rules  /etc/udev/rules.d/60-minipro.rules                    644
 bootstrap/files/minipro-0.7.4/61-minipro-plugdev.rules /etc/udev/rules.d/61-minipro-plugdev.rules    644
@@ -122,14 +132,15 @@ ROOT=""          # --extract DIR: install under DIR instead of /
 CHANGED=()       # installed paths this run created or changed
 DIFFS=()         # --check: what a run would change
 manifest() { grep -v '^[[:space:]]*$' <<<"$MANIFEST"; }
-put_file() {     # <repo path> <installed path> <mode>
+put_file() {     # <repo path> <installed path> <mode> [optional]
     local src="$REPO/$1" dst="$ROOT$2"
-    [ -f "$src" ] || die "missing in the checkout: $1"
+    [ -f "$src" ] || { [ "${4:-}" = optional ] && return 0; die "missing in the checkout: $1"; }
     if [ -f "$dst" ] && cmp -s "$src" "$dst" && [ "$(stat -c %a "$dst")" = "$3" ]; then return 0; fi
     install -D -m "$3" "$src" "$dst"
     CHANGED+=("$2")
 }
-check_file() {   # <repo path> <installed path> <mode>
+check_file() {   # <repo path> <installed path> <mode> [optional]
+    [ -f "$REPO/$1" ] || { [ "${4:-}" = optional ] && return 0; DIFFS+=("MISSING    $1 (not in the checkout)"); return 0; }
     if [ ! -f "$2" ]; then DIFFS+=("new file   $2")
     elif ! cmp -s "$REPO/$1" "$2"; then DIFFS+=("update     $2")
     elif [ "$(stat -c %a "$2")" != "$3" ]; then DIFFS+=("mode $3   $2"); fi
@@ -163,14 +174,14 @@ font_ok() { echo "$2  $FONTDIR/$1" | sha256sum -c --status 2>/dev/null; }
 if [ "${1:-}" = "--extract" ]; then
     [ -n "${2:-}" ] || { echo "usage: $0 --extract DIR" >&2; exit 2; }
     ROOT=${2%/}; U=$(id -un); HOME_U=/home/$U
-    while read -r src dst mode; do put_file "$src" "$dst" "$mode"; done < <(manifest)
+    while read -r src dst mode opt; do put_file "$src" "$dst" "$mode" "$opt"; done < <(manifest)
     while read -r src rel mode; do put_user_file "$src" "$rel" "$mode"; done < <(user_manifest)
     echo "${#CHANGED[@]} file(s) written under $ROOT"
     exit 0
 fi
 
 if [ "${1:-}" = "--check" ]; then
-    while read -r src dst mode; do check_file "$src" "$dst" "$mode"; done < <(manifest)
+    while read -r src dst mode opt; do check_file "$src" "$dst" "$mode" "$opt"; done < <(manifest)
     while read -r src rel mode; do check_file "$src" "$HOME/$rel" "$mode"; done < <(user_manifest)
     grep -qE "$TOUCH_LINE" "$HOME/.config/labwc/rc.xml" 2>/dev/null \
         && DIFFS+=("edit       ~/.config/labwc/rc.xml: remove autotouch's port-pinned Waveshare touch line")
@@ -308,7 +319,7 @@ fi
 
 # 5 ---------------------------------------------------------------------------
 step "5/9 files from the checkout"
-while read -r src dst mode; do put_file "$src" "$dst" "$mode"; done < <(manifest)
+while read -r src dst mode opt; do put_file "$src" "$dst" "$mode" "$opt"; done < <(manifest)
 if ((${#CHANGED[@]})); then printf '   written: %s\n' "${CHANGED[@]}"; else log "all $(manifest | wc -l) files already match the checkout"; fi
 if changed '/etc/udev/rules.d/*'; then
     udevadm control --reload-rules

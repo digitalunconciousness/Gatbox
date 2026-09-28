@@ -18,7 +18,9 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       minipro 0.7.4 + mame 0.276 installed, GitHub (public, scrubbed), MAME smoke test, ⏸ T48 re-verify **passed**
 - [x] **M3 2B face** (2026-09-28): either HDMI port (EDID + unmapped touch), autotouch off, boot-to-kiosk +
       gatbox-kiosk + EXIT KIOSK, never blanks in kiosk, power OK under load, ⏸ reboot tests **passed**
-- [ ] **M4 2C backend**: 4a replay harness; 4b data model + logger header/marks/splits; 4c report; 4d JSON API
+- [ ] **M4 2C backend**: [x] 4a replay harness [x] 4b data model + logger (mode/profile/window/alarm/machine
+      header, one file per dial mode + settling, marks spool, /run/gatbox/mode) [ ] 4c report [ ] 4d JSON API + SSE
+      [ ] install (needs OK: gatbox-web unit gets SupplementaryGroups=video) — code only so far, nothing installed
 - [ ] **M5 2D dashboard** at `/dash/`; screenshot tests; ⏸ on the real panel
 - [ ] **M6 2E scanner**: gatbox-scand; labels; ⏸ scan slug / MARK / NEW
 - [ ] **M7 2F T48 dump**: gatbox-dump; dashboard flow; ⏸ real board dump

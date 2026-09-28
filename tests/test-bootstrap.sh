@@ -12,10 +12,12 @@ check() { if eval "$2"; then pass=$((pass + 1)); echo "  ok    $1"; else fail=$(
 
 check "bash -n"                                'bash -n "$BOOT"'
 out1=$(bash "$BOOT" --extract "$T/root" 2>&1)
-n=$(sed -n '/^MANIFEST="/,/^"/p;/^USER_MANIFEST="/,/^"/p' "$BOOT" | grep -c '^[a-z]')
+n=$(sed -n '/^MANIFEST="/,/^"/p;/^USER_MANIFEST="/,/^"/p' "$BOOT" | grep '^[a-z]' | while read -r s _ _ o; do
+      [ "$o" = optional ] && [ ! -f "$REPO/$s" ] || echo; done | wc -l)
 check "--extract writes all $n manifest files"  '[[ $out1 == "$n file(s) written under $T/root" ]]'
 bad=0
-while read -r src dst mode; do
+while read -r src dst mode opt; do
+    [ "$opt" = optional ] && [ ! -f "$REPO/$src" ] && continue
     cmp -s "$REPO/$src" "$T/root$dst" && [ "$(stat -c %a "$T/root$dst")" = "$mode" ] || { bad=1; echo "        mismatch: $dst"; }
 done < <(sed -n '/^MANIFEST="/,/^"/p' "$BOOT" | grep '^[a-z]')
 while read -r src rel mode; do

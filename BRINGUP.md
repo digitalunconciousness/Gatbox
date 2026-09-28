@@ -14,9 +14,8 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       reconcile); CLAUDE.md merged with the project CLAUDE.md + the handoff's hard rules.
 - [x] **M1 RTC** (2026-09-28): read-only checks, bootstrap guard, gatbox-rtc-sync timer, logger `clock=rtc`, status
       line, web badge, tests (36 pass), installed 09:16, ⏸ offline warehouse test **passed** (notes below)
-- [ ] **M2 2A foundation**: [x] repo layout [x] bootstrap shape (install from checkout) [x] logger SD sync fix
-      [x] minipro module (0.7.4, test-built) [x] MAME module [x] install (2026-09-28 16:17: only the logger restarted; `--check` = nothing to change) [x] GitHub push
-      (2026-09-28, history scrubbed first: see below) [x] MAME smoke test [ ] ⏸ T48 re-verify
+- [x] **M2 2A foundation** (2026-09-28): repo layout, bootstrap installs from the checkout, logger SD sync,
+      minipro 0.7.4 + mame 0.276 installed, GitHub (public, scrubbed), MAME smoke test, ⏸ T48 re-verify **passed**
 - [ ] **M3 2B face**: ⏸ panel connected; mode; touch; power; kiosk; blanking; ⏸ kiosk on/off reboots
 - [ ] **M4 2C backend**: 4a replay harness; 4b data model + logger header/marks/splits; 4c report; 4d JSON API
 - [ ] **M5 2D dashboard** at `/dash/`; screenshot tests; ⏸ on the real panel
@@ -111,6 +110,15 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   reporting a MATCH.
 - **minipro part names** include the package: `minipro -q t48 -L 27C1024` → `AM27C1024@DIP40`, `AT27C1024@DIP40`, …
   (works without the T48 plugged in).
+- **⏸ T48 re-verify (2026-09-28): PASSED.** Chip: SegaSonic The Hedgehog EPR-15781C, marked 27C020-15. T48 direct on a
+  Pi port (not the hub), 5.0 V supply, owner has plugdev access. Generic `27C020@DIP32` refused: **Invalid Chip ID:
+  expected 0x8934, got 0x9732 (TMS27C020@DIP32)**. 0x97 = Texas Instruments. Read as `TMS27C020@DIP32` (ID OK, never
+  `-y`), twice, 1.3 s each: both reads identical, 262144 bytes, SHA1 `9f524012a7adbc71737f90fc556f0ce9adc2bcf8`
+  CRC32 `65b06c25` = MAME 0.276 `sonic` `epr-15781c.ic18`, and `mame -romident` names it. Copy kept outside the
+  repo (`~/t48-dumps/`); `*.bin` is git-ignored and the pre-push hook refuses `.bin` files.
+  - For M7: minipro's chip-ID check caught a real mismatch and named the right part, so surface that message and
+    re-select explicitly (never `-y`). `-z` pin check → "Pin test is not supported." for this part: handle it. Read
+    progress uses `\r`/`ESC[K`: strip it from logs.
 - **Site config, not in the bootstrap:** the home Wi-Fi's static address (09-24, `nmcli connection modify … ipv4.method
   manual …`). It belongs to the network the Pi is on, not to the Pi, and the repo is public.
 

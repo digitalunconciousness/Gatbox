@@ -42,3 +42,10 @@
 - MAME `-romident`: ~8 s and ~485 MB RAM per lookup. FOUND: an all-FF blank "matches" real sets (ColecoVision blank
   halves), so the dump tool must flag blank/all-FF reads before trusting a MATCH.
 - NEXT: ⏸ T48 re-verify (known EPROM, dump twice, SHA1s match), which closes M2.
+- ⏸ T48 re-verify PASSED on the fresh card: SegaSonic EPR-15781C (marked 27C020-15). minipro's chip-ID check said
+  it's a TI TMS27C020 (ID 0x9732), not the generic 27C020, so it was read as `TMS27C020@DIP32`: two identical reads,
+  SHA1 9f524012… = MAME `sonic` epr-15781c.ic18, and `mame -romident` names it. **M2 done.**
+- DECIDED: ROM dumps never go in the public repo (`*.bin` ignored, pre-push refuses them). Dumps live outside it
+  (`~/t48-dumps/` now, `/srv/gatbox/roms/` from M7).
+- NEXT: M3, the 7" panel as a boot-to-kiosk dashboard. Panel is on HDMI-A-2 (the Pi's HDMI1): move it to HDMI0 or
+  target HDMI-A-2.

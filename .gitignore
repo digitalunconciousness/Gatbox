@@ -19,3 +19,7 @@ secrets/
 # Local only, never public: site-specific values (owner, username, home network) and workplace data
 *.local.md
 data/gatbox-barcade-roster.json
+
+# ROM dumps are copyrighted: never in the public repo
+*.bin
+roms/

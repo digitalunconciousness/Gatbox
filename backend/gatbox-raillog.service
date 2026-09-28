@@ -1,0 +1,13 @@
+[Unit]
+Description=GATBOX rail flight recorder (UT61E -> UT-D02 -> PL-2303)
+After=local-fs.target time-sync.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gatbox-raillog
+Restart=always
+RestartSec=5
+RuntimeDirectory=gatbox
+
+[Install]
+WantedBy=multi-user.target

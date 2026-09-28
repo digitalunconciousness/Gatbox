@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# gatbox-ap-fallback — if no known network shows up after boot, raise the GATBOX
+# hotspot so a phone or laptop can still reach the Pi inside a cabinet.
+# Pi is then 10.42.0.1 (also gatbox.local). Reboot near known Wi-Fi to go back.
+set -u
+WAIT="${GATBOX_AP_WAIT:-60}"
+online() { nmcli -t -f DEVICE,STATE device 2>/dev/null | grep -Eq '^(wlan0|eth0):connected$'; }
+for ((i = 0; i < WAIT; i += 5)); do
+    online && { echo "gatbox-ap: network up, hotspot not needed"; exit 0; }
+    sleep 5
+done
+echo "gatbox-ap: no known network after ${WAIT}s, raising hotspot"
+exec nmcli connection up gatbox-ap

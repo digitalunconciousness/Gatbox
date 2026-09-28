@@ -1,0 +1,4 @@
+# GATBOX: stable name for the DMM's Prolific PL-2303 USB-RS232 adapter (UT61E via UT-D02).
+# Any Prolific adapter (VID 067b) gets /dev/gatbox-dmm. If you ever plug in a second
+# Prolific adapter, pin this one with ATTRS{serial}=="..." (udevadm info -a /dev/ttyUSB0).
+SUBSYSTEM=="tty", ATTRS{idVendor}=="067b", SYMLINK+="gatbox-dmm", GROUP="dialout", MODE="0660"

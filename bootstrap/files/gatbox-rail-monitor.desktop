@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=GATBOX Rail Monitor
+Comment=Logger health + live UT61E readings
+Exec=x-terminal-emulator -e gatbox-status -f
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;

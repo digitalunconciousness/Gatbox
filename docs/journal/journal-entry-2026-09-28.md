@@ -71,3 +71,9 @@
 - Gameplay (02:16 → 03:22:47, 8015 samples): **5.020–5.024 V, mean 5.022 V**. That's 100% inside the GL spec (4.90–5.10) and
   mid-window, not "at the bottom". The 4.936 V session mean came from the 62 s at 0 V before the cab was switched on.
   So the +5V rail doesn't need a trim, and slow sag is ruled out for this crash (a 2 S/s DMM still can't see ms dropouts).
+- DECIDED: over-voltage handling. The report tags a lone reading beside a range change as "suspect" (likely an
+  autorange glitch). The live alarm needs 2+ consecutive readings over the limit; a lone reading is an amber SPIKE.
+  An ALARM ON/OFF switch covers probing around on games with odd voltages.
+- M4c report: header window/limit/profile/machine, powered vs off with POWER CYCLES (the slopes of a power-off are
+  part of the cycle, not excursions), OVER-VOLTAGE with suspect tagging, MARKS, `--json`. The 09-25 file now reads:
+  4 power cycles, rail 5.009–5.024 V (100% in window, also at the GL spec), 3 suspect glitches, no excursions.

@@ -19,7 +19,8 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
 - [x] **M3 2B face** (2026-09-28): either HDMI port (EDID + unmapped touch), autotouch off, boot-to-kiosk +
       gatbox-kiosk + EXIT KIOSK, never blanks in kiosk, power OK under load, ⏸ reboot tests **passed**
 - [ ] **M4 2C backend**: [x] 4a replay harness [x] 4b data model + logger (mode/profile/window/alarm/machine
-      header, one file per dial mode + settling, marks spool, /run/gatbox/mode) [ ] 4c report [ ] 4d JSON API + SSE
+      header, one file per dial mode + settling, marks spool, /run/gatbox/mode) [x] 4c report (header window/limit, power cycles, suspect
+      glitches, marks, --json) [ ] 4d JSON API + SSE
       [ ] install (needs OK: gatbox-web unit gets SupplementaryGroups=video) — code only so far, nothing installed
 - [ ] **M5 2D dashboard** at `/dash/`; screenshot tests; ⏸ on the real panel
 - [ ] **M6 2E scanner**: gatbox-scand; labels; ⏸ scan slug / MARK / NEW
@@ -165,8 +166,15 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   The file has three single-sample readings over 5.775 V (18.667 / 20.277 / 20.284 V), each at a rail power-on edge
   between mV readings, and consistent with UT61E autorange glitches (see the 09-28 journal). Gameplay 02:16–03:22:47
   is 5.020–5.024 V (mean 5.022). Off: 62 s at the start, 5 s at 02:15:09, and the 03:22:48–03:23:17 switch
-  bounce. **Question for the owner (blocks the OV alarm design):** treat a lone over-voltage sample next to a range
-  change as "suspect", and have the alarm need 2+ consecutive samples?
+  bounce.
+- **DECIDED (owner, 2026-09-28):** a lone over-voltage reading next to a range change is "suspect" (listed,
+  left out of stats/excursions); the live alarm needs 2+ consecutive readings (a lone one = amber SPIKE), and
+  there's an **ALARM ON/OFF** switch (server-side state, default on for rail profiles) for probing around.
+- **Report (M4c):** a power cycle runs from the last in-window reading before the rail drops under 0.5 V to the
+  first one back in the window (≤3 s of slope each side; bounces merge). The fixture reads: 4 power cycles
+  (1m32s), powered 5.009–5.024 V mean 5.020 (100% in the window, also at the GL spec 4.90–5.10), 3 suspect
+  over-voltage readings, no excursions. The old report called the two switch-bounce power-downs "excursions of
+  11 and 39 samples, worst +20.28 V", which is where the journal's "25 s at 20 V" came from.
 - **Site config, not in the bootstrap:** the home Wi-Fi's static address (09-24, `nmcli connection modify … ipv4.method
   manual …`). It belongs to the network the Pi is on, not to the Pi, and the repo is public.
 

@@ -3,118 +3,73 @@
 
 Usage:
     gatbox-rail-report                        # newest session in /var/log/gatbox
-    gatbox-rail-report rail_20260924_021500.csv [--lo 4.75] [--hi 5.25] [--plot out.png]
+    gatbox-rail-report rail_20260924_021500.csv [--lo 4.75] [--hi 5.25] [--alarm-hi A] [--plot out.png] [--json]
 
-Reads the format written by gatbox-raillog
-(iso_time,epoch,value,unit,flags[,uptime_s], plus "# ..." note lines) and reports:
+Reads the format written by gatbox-raillog (iso_time,epoch,value,unit,flags[,uptime_s], plus '# ...' header, mark
+and note lines: see backend/gatboxlib/csvlog.py) and reports:
 
   * session duration and sample count
-  * the meter MODE (DC voltage, AC voltage, resistance, ...) from the unit + flags
-    columns, MODE CHANGES mid-session, and a WARNING if HOLD / REL / MAX/MIN was on
-  * steady stats per mode: mean / min / max / p-p
-  * EXCURSIONS: contiguous runs outside [lo, hi], with start time, duration,
-    and worst value. This is the "what was the rail doing when it crashed" list.
-    Only DC voltage readings are checked against the window
+  * the meter MODE (DC voltage, AC voltage, resistance, ...) from the unit + flags columns, MODE CHANGES
+    mid-session, and a WARNING if HOLD / REL / MAX/MIN was on
+  * the PROFILE (what was being measured), MACHINE, WINDOW and where it came from (profile, machine spec, user),
+    and the over-voltage LIMIT, all from the file's header. Older files have no profile: the +5V rail
+    (4.75-5.25 V, limit 5.775 V)
+  * steady stats per mode: mean / min / max / p-p. On rail profiles also POWERED stats: readings under 0.5 V
+    mean the board is off. A POWER CYCLE runs from the last reading in the window before the rail drops to
+    the first one back in it (at most 3 s of slope either side; bounces merge), so the slopes of a power-off
+    aren't reported as excursions. Stats, excursions and time-in-window use the powered stretches only
+  * OVER-VOLTAGE: readings above the limit (as a magnitude, so -5V works). A single reading next to a range
+    change (a neighbour in another SI unit, e.g. mV) is tagged "suspect": while autoranging on a fast edge the
+    UT61E can send one reading with the right digits and the wrong range (09-25: "20.28 V" for one sample as
+    the rail came back on, i.e. 2.028 V). Suspect readings stay listed but are left out of stats and excursions
+  * EXCURSIONS: contiguous runs outside the window, with start time, duration and the worst value. This is
+    the "what was the rail doing when it crashed" list
   * OPEN-INPUT events (inf/OL): a lead fell off, or the rail died entirely
   * GAPS in the timeline (>10 s between samples): optical link dropped
   * CLOCK STEPS: the wall clock jumped mid-session (NTP arrived late, or date -s).
     Durations use the monotonic uptime_s column when present, so they stay right.
+  * MARKS: moments marked from the dashboard or a scanned MARK code ("it just crashed")
 
-A plot is written if matplotlib is available (python3-matplotlib), one panel per
-meter mode; the text report works without it. If the CSV's folder isn't writable,
-the plot goes to the current directory.
+--lo/--hi override the header's window (on rail profiles the limit then follows it: max(|lo|, |hi|) x 1.10).
+--json prints the same as one JSON object instead of text (gatbox-web's API uses it).
+
+A plot is written if matplotlib is available (python3-matplotlib): one panel per meter mode, the window,
+off stretches shaded, excursions amber, over-voltage red, suspect readings as markers, marks as labelled
+lines. The text report works without it. If the CSV's folder isn't writable, the plot goes to the current
+directory.
 """
 
 import argparse
-import csv
-import functools
 import glob
+import json
 import math
 import os
 import statistics as st
 import sys
-from collections import Counter, namedtuple
+from collections import Counter
 from datetime import datetime, timezone
 
-Row = namedtuple("Row", "epoch iso v unit flags up mode")
-Mode = namedtuple("Mode", "label base scale unit warn")
+
+def lib_path():
+    env = os.environ.get("GATBOX_LIB")
+    if env:
+        return env
+    repo = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "backend")
+    return repo if os.path.isdir(os.path.join(repo, "gatboxlib")) else "/usr/local/lib/gatbox"
+
+
+sys.path.insert(0, lib_path())
+from gatboxlib import csvlog, profiles   # noqa: E402
+from gatboxlib.modes import KIND, WARN   # noqa: E402
+
 DEFAULT_DIR = "/var/log/gatbox"
-
-# Meter mode from the unit + flags columns. gatbox-raillog splits sigrok's "P1: 119.68 V AC AUTO" into
-# value, unit (SI prefix + unit) and flags; continuity has no unit, so its first flag can land in the
-# unit column ("1,AUTO,"). Same rules as mode() in gatbox-web: keep the two in step.
-FLAGS = {"AC", "DC", "RMS", "DIODE", "HOLD", "MAX", "MIN", "AUTO", "REL", "AVG", "REF", "UNSTABLE"}
-PREFIX = {"f": 1e-15, "p": 1e-12, "n": 1e-9, "µ": 1e-6, "μ": 1e-6, "u": 1e-6, "m": 1e-3, "": 1.0,
-          "k": 1e3, "M": 1e6, "G": 1e9, "T": 1e12}   # sigrok can tag OL as e.g. "inf TV"
-KIND = {"V": "voltage", "A": "current", "Ω": "resistance", "F": "capacitance", "Hz": "frequency",
-        "%": "duty cycle", "": "continuity"}
-WARN = {"HOLD": ("HOLD", "the meter repeats one frozen reading"),     # these make the log misleading
-        "REL": ("REL (Δ)", "readings are offsets, not the real value"),
-        "MAX": ("MAX/MIN", "the meter sends its max or min, not the live value"),
-        "MIN": ("MAX/MIN", "the meter sends its max or min, not the live value")}
-RAIL = "DC voltage"   # the only mode the V window applies to
-
-
-@functools.lru_cache(maxsize=64)
-def mode(unit, flags):
-    """CSV unit + flags -> Mode, e.g. ('kΩ', 'AUTO') -> label 'Resistance', base 'Ω', scale 1e3."""
-    fl = flags.split()
-    unit = unit.replace("\u2126", "\u03a9")          # sigrok writes OHM SIGN; "Ω" here is Greek omega
-    if unit in FLAGS:
-        fl, unit = [unit] + fl, ""
-    base, scale = unit, 1.0
-    for b in ("V", "A", "Ω", "F", "Hz", "%"):
-        if unit.endswith(b) and unit[:-len(b)] in PREFIX:
-            base, scale = b, PREFIX[unit[:-len(b)]]
-            break
-    if "DIODE" in fl:
-        label = "diode"
-    elif base in ("V", "A"):
-        ac, dc = "AC" in fl, "DC" in fl
-        label = ("AC+DC " if ac and dc else "AC " if ac else "DC " if dc else "") + KIND[base]
-    elif base in KIND:
-        label = KIND[base]
-    else:
-        label = unit                                   # not a UT61E unit: show it as sigrok wrote it
-    if base in KIND:
-        label = label[:1].upper() + label[1:]
-    return Mode(label, base, scale, unit, frozenset(f for f in fl if f in WARN))
-
-
-def load(path):
-    notes, body = [], []
-    with open(path, newline="") as f:
-        for line in f:
-            if line.startswith("#"):
-                notes.append(line[1:].strip())
-            else:
-                body.append(line)
-    r = csv.reader(body)
-    next(r, None)  # header
-    rows = []
-    for line in r:
-        if len(line) < 5:
-            continue
-        iso, epoch, val, unit, flags = line[:5]
-        try:
-            e = float(epoch)
-        except ValueError:
-            continue
-        m = mode(unit, flags)
-        try:
-            v = float(val)  # 'inf' / '-inf' parse as infinities
-        except ValueError:
-            v = math.nan
-        # to base units: the meter autoranges (near 0 V it logs in mV, 1.2 kΩ, ...)
-        v *= m.scale
-        up = None
-        if len(line) >= 6:
-            try:
-                up = float(line[5])
-            except ValueError:
-                up = None
-        rows.append(Row(e, iso, v, unit, flags, up, m))
-    return rows, notes
+OFF_V = 0.5            # rail profiles: under this the board is switched off
+EDGE_S = 3.0           # a power cycle also takes in up to this much of the slope down to / up from off
+# header / bookkeeping comments get their own lines and sections; anything else is printed as a note
+OWN_LINES = {"mode", "profile", "window", "alarm_hi", "machine", "mark", "mark-before-start", "settling",
+             "settling-unused", "mode-change"}
+KEY_BASE = {"VDC": "V", "VAC": "V", "VACDC": "V", "DIODE": "V", "ADC": "A", "AAC": "A", "OHM": "Ω",
+            "CAP": "F", "HZ": "Hz", "DUTY": "%", "CONT": ""}
 
 
 def group_runs(rows, predicate):
@@ -170,14 +125,18 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("csvfile", nargs="?",
                     help=f"session CSV (default: newest in {DEFAULT_DIR})")
-    ap.add_argument("--lo", type=float, default=4.75,
-                    help="low threshold, V (default 4.75 = 5V - 5%%)")
-    ap.add_argument("--hi", type=float, default=5.25,
-                    help="high threshold, V (default 5.25 = 5V + 5%%)")
+    ap.add_argument("--lo", type=float, default=None,
+                    help="low threshold (default: the file's window, else 4.75 V = 5V - 5%%)")
+    ap.add_argument("--hi", type=float, default=None,
+                    help="high threshold (default: the file's window, else 5.25 V = 5V + 5%%)")
+    ap.add_argument("--alarm-hi", type=float, default=None,
+                    help="over-voltage limit, as a magnitude (default: the file's, else derived)")
     ap.add_argument("--plot", default=None,
                     help="write PNG here (default: <csvfile>.png)")
     ap.add_argument("--light", action="store_true",
                     help="white background, dark ink (for printing / PDF)")
+    ap.add_argument("--json", action="store_true",
+                    help="print one JSON object instead of text")
     args = ap.parse_args()
 
     if not args.csvfile:
@@ -186,9 +145,14 @@ def main():
             sys.exit(f"no rail_*.csv in {DEFAULT_DIR}")
         args.csvfile = files[-1]
 
-    rows, notes = load(args.csvfile)
+    h, rows, marks = csvlog.read(args.csvfile)
     if len(rows) < 2:
         sys.exit("no usable samples in file")
+    out_lines = []
+    J = {"file": args.csvfile}
+
+    def say(line=""):
+        out_lines.append(line)
 
     mono = all(r.up is not None for r in rows)
 
@@ -205,42 +169,144 @@ def main():
     count = Counter(r.mode.label for r in rows)
     labels = list(count)                    # meter modes, in order of first appearance
     base = {r.mode.label: r.mode.base for r in rows}
-    n_rail = count[RAIL]
 
-    print(f"file:      {args.csvfile}")
-    for n in notes:
-        print(f"note:      {n}")
-    print(f"session:   {rows[0].iso}  ->  {rows[-1].iso}   ({fmt_dur(dur)})")
-    print(f"samples:   {len(rows)}   ({len(rows) / max(dur, 1):.2f} S/s)"
-          f"   timebase: {'monotonic uptime' if mono else 'wall clock'}")
-    for i, l in enumerate(labels):
-        print("mode:      " if i == 0 else " " * 11, end="")
-        print(l if len(labels) == 1 else f"{l} ({count[l]} sample{'s' * (count[l] != 1)})")
-    for l in labels:
-        s = stats(l, [r.v for r in rows if r.mode.label == l], base[l])
-        print(f"stats:     {s}" if len(labels) == 1 else f"stats:     {l}: {s}")
-    print(f"window:    [{args.lo}, {args.hi}] V" + (
-        "" if n_rail == len(rows) else
-        ", DC voltage readings only" if n_rail else ", not applied (no DC voltage readings)"))
+    # --- what was being measured: profile, window, limit (header first, then today's defaults) --------------
+    _, mode_tbl, P = profiles.profiles()
+    default = profiles.resolve()
+    pid = h.profile or default["id"]
+    prof = P.get(pid) or P.get(default["id"]) or {"label": pid, "kind": "rail", "modes": ["VDC"]}
+    kind = prof.get("kind", "rail")
+    wkeys = set(prof.get("modes") or [])    # dial modes the window applies to; empty = any
+    if h.profile is None:                   # an older file: the +5V rail, as the report always assumed
+        window, wsource, alarm = default["window"], "default (no profile in this file)", default["alarm_hi"]
+    else:
+        window, wsource = h.window, (h.window_source or "profile")
+        alarm = None if h.alarm_none else h.alarm_hi
+    if args.lo is not None or args.hi is not None:
+        lo = args.lo if args.lo is not None else (window[0] if window else 4.75)
+        hi = args.hi if args.hi is not None else (window[1] if window else 5.25)
+        window, wsource = [lo, hi], "command line"
+        if kind == "rail":
+            alarm = round(max(abs(lo), abs(hi)) * 1.10, 3)
+    if args.alarm_hi is not None:
+        alarm = abs(args.alarm_hi)
+    wlabels = [(mode_tbl.get(k) or {}).get("label", k) for k in (prof.get("modes") or [])]
+    wunit = KEY_BASE.get(next(iter(prof.get("modes") or ["VDC"])), "V")
+    rail = kind == "rail"
+
+    def in_w(r):
+        return not wkeys or r.mode.key in wkeys
+
+    n_w = sum(1 for r in rows if in_w(r))
+
+    def is_off(r):
+        return rail and in_w(r) and math.isfinite(r.v) and abs(r.v) < OFF_V
+
+    # suspect readings: a lone over-limit reading beside a range change (neighbour in another SI unit)
+    suspect = set()
+    if alarm is not None:
+        for i, r in enumerate(rows):
+            if not (in_w(r) and math.isfinite(r.v) and abs(r.v) > alarm):
+                continue
+            nb = [rows[j] for j in (i - 1, i + 1) if 0 <= j < len(rows)]
+            lone = all(not (math.isfinite(n.v) and abs(n.v) > alarm) for n in nb)
+            if lone and any(n.unit != r.unit for n in nb):
+                suspect.add(i)
+
+    # --- header block ------------------------------------------------------------------------------------
+    say(f"file:      {args.csvfile}")
+    for c in h.notes:
+        key = c.partition("=")[0]
+        if key not in OWN_LINES:
+            say(f"note:      {c}")
+    for s in h.settling:
+        p = s.split(",")
+        say(f"note:      first reading after a dial turn set aside (it can be junk while the meter settles): "
+            f"{' '.join(p[2:5]).strip()}")
+    if h.mode_change:
+        iso, _, new = h.mode_change.partition(",")
+        say(f"note:      the dial was turned to {(mode_tbl.get(new) or {}).get('label', new)} at {iso}; "
+            f"the log continues in the next file")
+    say(f"session:   {rows[0].iso}  ->  {rows[-1].iso}   ({fmt_dur(dur)})")
+    say(f"samples:   {len(rows)}   ({len(rows) / max(dur, 1):.2f} S/s)"
+        f"   timebase: {'monotonic uptime' if mono else 'wall clock'}")
+    for i, lab in enumerate(labels):
+        say(("mode:      " if i == 0 else " " * 11)
+            + (lab if len(labels) == 1 else f"{lab} ({count[lab]} sample{'s' * (count[lab] != 1)})"))
+    mode_stats = []
+    for lab in labels:
+        s = stats(lab, [r.v for r in rows if r.mode.label == lab], base[lab])
+        say(f"stats:     {s}" if len(labels) == 1 else f"stats:     {lab}: {s}")
+        mode_stats.append({"label": lab, "key": next(r.mode.key for r in rows if r.mode.label == lab),
+                           "samples": count[lab], "stats": s})
+    applies = "/".join(wlabels) or "any mode"
+    if window:
+        say(f"window:    [{window[0]}, {window[1]}] {wunit}".rstrip() + (
+            "" if n_w == len(rows) else
+            f", {applies} readings only" if n_w else f", not applied (no {applies} readings)"))
+    else:
+        say(f"window:    none ({prof.get('label', pid)})")
+    say(f"profile:   {prof.get('label', pid)} ({pid})"
+        + ((f"; window from {wsource}" if window else "") if h.profile
+           else ": the default, this file has no profile line"))
+    if h.machine:
+        say(f"machine:   {h.machine}")
+    say(f"limit:     over-voltage above {alarm:g} {wunit} (magnitude)" if alarm is not None else "limit:     none")
     held = {}
     for r in rows:
         for name, what in {WARN[f] for f in r.mode.warn}:
             held.setdefault(name, [0, r.iso, what])[0] += 1
     for name, (n, first, what) in held.items():
-        print(f"WARNING:   {name} on for {n} of {len(rows)} samples, first at {first}:")
-        print(f"           {what}")
-    print()
+        say(f"WARNING:   {name} on for {n} of {len(rows)} samples, first at {first}:")
+        say(f"           {what}")
+
+    # powered stats + time in window (rail profiles; suspect readings left out)
+    # power cycles: each off run, widened over the slope either side (until back in the window, at most EDGE_S)
+    def inwin(r):
+        return window is not None and in_w(r) and math.isfinite(r.v) and window[0] <= r.v <= window[1]
+    off_runs = []
+    for a, b in (group_runs(rows, is_off) if rail else []):
+        s_ = a
+        while s_ > 0 and not inwin(rows[s_ - 1]) and t(rows[a]) - t(rows[s_ - 1]) <= EDGE_S:
+            s_ -= 1
+        e_ = b
+        while e_ + 1 < len(rows) and not inwin(rows[e_ + 1]) and t(rows[e_ + 1]) - t(rows[b]) <= EDGE_S:
+            e_ += 1
+        if off_runs and s_ <= off_runs[-1][1] + 1:            # a bounce: overlaps the previous cycle
+            off_runs[-1] = (off_runs[-1][0], max(e_, off_runs[-1][1]), off_runs[-1][2])
+        else:
+            off_runs.append((s_, e_, a))
+    in_cycle = {i for s_, e_, _ in off_runs for i in range(s_, e_ + 1)}
+    powered = [r.v for i, r in enumerate(rows)
+               if in_w(r) and math.isfinite(r.v) and i not in in_cycle and i not in suspect]
+    J_powered = None
+    if rail and n_w:
+        if powered:
+            inw = sum(1 for v in powered if window and window[0] <= v <= window[1])
+            say(f"powered:   mean {st.mean(powered):+.4f} {wunit}   min {min(powered):+.4f}   "
+                f"max {max(powered):+.4f}   p-p {(max(powered) - min(powered)) * 1000:.1f} m{wunit}   "
+                f"({len(powered)} readings" + (f"; {len(off_runs)} power cycle{'s' * (len(off_runs) != 1)}"
+                                               f" ({fmt_dur(sum(span(a, b) for a, b, _ in off_runs))})"
+                                               if off_runs else "")
+                + (f"; {len(suspect)} suspect left out" if suspect else "") + ")")
+            if window:
+                say(f"in window: {100 * inw / len(powered):.2f}% of powered readings")
+            J_powered = {"mean": st.mean(powered), "min": min(powered), "max": max(powered),
+                         "readings": len(powered), "in_window_pct": (100 * inw / len(powered)) if window else None}
+        else:
+            say("powered:   never: every reading was under 0.5 V (board off, or leads not on the rail)")
+    say()
 
     # --- mode changes -----------------------------------------------------------
     changes = [(b.iso, a.mode.label, b.mode.label)
                for a, b in zip(rows, rows[1:]) if a.mode.label != b.mode.label]
     if changes:
-        print(f"MODE CHANGES ({len(changes)}): the meter was switched mid-session:")
+        say(f"MODE CHANGES ({len(changes)}): the meter was switched mid-session:")
         for iso, a, b in changes[:20]:
-            print(f"  {iso}  {a} -> {b}")
+            say(f"  {iso}  {a} -> {b}")
         if len(changes) > 20:
-            print(f"  ... and {len(changes) - 20} more")
-        print()
+            say(f"  ... and {len(changes) - 20} more")
+        say()
 
     # --- clock steps (only detectable with the monotonic column) -----------
     steps = []
@@ -250,102 +316,226 @@ def main():
             if abs(jump) > 5:
                 steps.append((b.iso, jump))
         if steps:
-            print(f"CLOCK STEPS ({len(steps)}): wall clock jumped mid-session; "
-                  f"durations below are still correct:")
+            say(f"CLOCK STEPS ({len(steps)}): wall clock jumped mid-session; "
+                f"durations below are still correct:")
             for iso, jump in steps:
-                print(f"  {jump:+.0f}s  at {iso}")
-            print()
+                say(f"  {jump:+.0f}s  at {iso}")
+            say()
 
     # --- timeline gaps -------------------------------------------------------
     gaps = [(t(b) - t(a), b.iso) for a, b in zip(rows, rows[1:]) if t(b) - t(a) > 10]
     if gaps:
-        print(f"GAPS ({len(gaps)}): optical link dropped or sigrok stalled:")
+        say(f"GAPS ({len(gaps)}): optical link dropped or sigrok stalled:")
         for d, iso in gaps:
-            print(f"  {fmt_dur(d):>9}  ending at {iso}")
-        print()
+            say(f"  {fmt_dur(d):>9}  ending at {iso}")
+        say()
+
+    # --- power cycles (rail profiles) ---------------------------------------------
+    if off_runs:
+        say(f"POWER CYCLES ({len(off_runs)}): the board was off (under {OFF_V} V), slopes included:")
+        for a, b, first_off in off_runs:
+            say(f"  {rows[a].iso}  down for {fmt_dur(span(a, b)):>8}   off from {rows[first_off].iso[11:]}"
+                + ("   (at the start of the log)" if a == 0 else "")
+                + (f"   back in the window at {rows[b + 1].iso[11:]}" if b + 1 < len(rows)
+                   else "   (to the end of the log)"))
+        say()
 
     # --- open-input / dead-rail events ---------------------------------------
     ol = list(group_runs(rows, lambda r: not math.isfinite(r.v)))
     if ol:
-        if n_rail == len(rows):
-            print(f"OPEN-INPUT events ({len(ol)}): lead detached or rail fully dead:")
+        if n_w == len(rows) and rail:
+            say(f"OPEN-INPUT events ({len(ol)}): lead detached or rail fully dead:")
         else:
-            print(f"OL events ({len(ol)}): the meter read OL (open input or over range):")
+            say(f"OL events ({len(ol)}): the meter read OL (open input or over range):")
         for a, b in ol:
-            print(f"  {rows[a].iso}  for {fmt_dur(span(a, b))}"
-                  + (f"   ({rows[a].mode.label})" if len(labels) > 1 else ""))
-        print()
+            say(f"  {rows[a].iso}  for {fmt_dur(span(a, b))}"
+                + (f"   ({rows[a].mode.label})" if len(labels) > 1 else ""))
+        say()
 
-    # --- excursions (DC voltage only) -------------------------------------------
-    def outside(r):
-        return r.mode.label == RAIL and math.isfinite(r.v) and not (args.lo <= r.v <= args.hi)
+    # --- over-voltage ------------------------------------------------------------
+    ovs = []
+    if alarm is not None and n_w:
+        runs = list(group_runs(rows, lambda r: in_w(r) and math.isfinite(r.v) and abs(r.v) > alarm))
+        if runs:
+            n_s = sum(1 for a, b in runs if a == b and a in suspect)
+            say(f"OVER-VOLTAGE ({len(runs)}): above {alarm:g} {wunit}"
+                + (f"; {n_s} suspect (one reading at a range change: likely autorange glitches)" if n_s else "")
+                + ":")
+            for a, b in runs:
+                peak = max((rows[i].v for i in range(a, b + 1)), key=abs)
+                sus = a == b and a in suspect
+                if sus:
+                    nb = " / ".join(f"{rows[j].v:+.4g} {wunit}" for j in (a - 1, a + 1) if 0 <= j < len(rows))
+                    why = f"   suspect: its neighbours read {nb}"
+                else:
+                    why = ""
+                say(f"  {rows[a].iso}  {fmt_dur(span(a, b)):>8}   peak {peak:+.3f} {wunit}"
+                    f"   ({b - a + 1} sample{'s' * (b != a)}){why}")
+                ovs.append({"start": rows[a].iso, "duration_s": span(a, b), "samples": b - a + 1, "peak": peak,
+                            "suspect": sus})
+        else:
+            say(f"OVER-VOLTAGE: none above {alarm:g} {wunit}.")
+        say()
 
-    exc = list(group_runs(rows, outside))
-    if exc:
-        mid = (args.lo + args.hi) / 2
-        print(f"EXCURSIONS ({len(exc)}): outside [{args.lo}, {args.hi}] V:")
-        for a, b in exc:
-            seg = [rows[i].v for i in range(a, b + 1)]
-            worst = max(seg, key=lambda v: abs(v - mid))
-            print(f"  {rows[a].iso}  {fmt_dur(span(a, b)):>8}"
-                  f"   worst {worst:+.3f} V   ({b - a + 1} samples)")
-        print()
-    elif not n_rail:
-        print("EXCURSIONS: not checked. The meter was never on DC voltage.")
-        print()
-    elif n_rail < len(rows):
-        print(f"EXCURSIONS: none in the {n_rail} DC voltage readings. The rest of the")
-        print("session was in other modes, so this only covers part of it.")
-        print()
-    else:
-        print("EXCURSIONS: none. The rail held the window all session.")
-        print("If the game still crashed, this log exonerates this rail;")
-        print("next suspects: the other rails, on-board regulation, thermals.")
-        print()
+    # --- excursions (powered, window modes, not suspect) -----------------------------
+    exc = []
+    if window:
+        def outside(r, i=None):
+            return (in_w(r) and math.isfinite(r.v) and not is_off(r)
+                    and not (window[0] <= r.v <= window[1]))
+        idx = {id(r): i for i, r in enumerate(rows)}
+        exc = list(group_runs(rows, lambda r: outside(r) and idx[id(r)] not in suspect
+                              and idx[id(r)] not in in_cycle))
+        wtxt = f"[{window[0]}, {window[1]}] {wunit}".replace(" ]", "]").rstrip()
+        if exc:
+            mid = (window[0] + window[1]) / 2
+            say(f"EXCURSIONS ({len(exc)}): outside {wtxt}:")
+            for a, b in exc:
+                seg = [rows[i].v for i in range(a, b + 1)]
+                worst = max(seg, key=lambda v: abs(v - mid))
+                say(f"  {rows[a].iso}  {fmt_dur(span(a, b)):>8}"
+                    f"   worst {worst:+.3f} {wunit}   ({b - a + 1} sample{'s' * (b != a)})")
+            say()
+        elif not n_w:
+            say(f"EXCURSIONS: not checked. The meter was never on {applies}.")
+            say()
+        elif n_w < len(rows):
+            say(f"EXCURSIONS: none in the {n_w} {applies} readings. The rest of the")
+            say("session was in other modes, so this only covers part of it.")
+            say()
+        elif off_runs:
+            say("EXCURSIONS: none. The rail held the window whenever the board was on.")
+            say("If the game still crashed, this log exonerates this rail;")
+            say("next suspects: the other rails, on-board regulation, thermals.")
+            say()
+        else:
+            say("EXCURSIONS: none. The rail held the window all session.")
+            say("If the game still crashed, this log exonerates this rail;")
+            say("next suspects: the other rails, on-board regulation, thermals.")
+            say()
+
+    # --- marks ----------------------------------------------------------------------
+    if marks:
+        say(f"MARKS ({len(marks)}):")
+        for m in marks:
+            say(f"  {m.iso}  {m.source:<10} {m.label}" + ("   (before this file started)" if m.before_start else ""))
+        say()
 
     # --- plot: one panel per meter mode -------------------------------------------
-    out = args.plot or (args.csvfile.rsplit(".", 1)[0] + ".png")
-    if not args.plot and not os.access(os.path.dirname(os.path.abspath(out)), os.W_OK):
-        out = os.path.join(os.getcwd(), os.path.basename(out))
+    plot_out = args.plot or (args.csvfile.rsplit(".", 1)[0] + ".png")
+    if not args.plot and not os.access(os.path.dirname(os.path.abspath(plot_out)), os.W_OK):
+        plot_out = os.path.join(os.getcwd(), os.path.basename(plot_out))
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
-        print("(no matplotlib; skipped plot. sudo apt install python3-matplotlib)")
-        return
+        say("(no matplotlib; skipped plot. sudo apt install python3-matplotlib)")
+        plot_out = None
+    if plot_out:
+        draw(plt, args, rows, labels, count, base, steps, window, alarm, in_w, is_off, suspect, exc, off_runs,
+             marks, plot_out)
+        say(f"plot:      {plot_out}")
 
-    CYAN, DIM = "#7dfaff", "#9080b0"
+    if args.json:
+        J.update({
+            "notes": [c for c in h.notes if c.partition("=")[0] not in OWN_LINES],
+            "clock": {"source": h.clock, "note": h.clock_note, "ntp_from": h.clock_sync},
+            "session": {"start": rows[0].iso, "end": rows[-1].iso, "duration_s": dur, "samples": len(rows),
+                        "rate": len(rows) / max(dur, 1), "timebase": "monotonic" if mono else "wall clock"},
+            "modes": mode_stats, "mode_key": h.mode,
+            "profile": {"id": pid, "label": prof.get("label", pid), "kind": kind, "from_header": bool(h.profile)},
+            "machine": h.machine,
+            "window": ({"lo": window[0], "hi": window[1], "unit": wunit, "source": wsource, "applies_to": applies}
+                       if window else None),
+            "alarm_hi": alarm, "powered": J_powered,
+            "warnings": [{"flag": k, "samples": v[0], "first": v[1], "effect": v[2]} for k, v in held.items()],
+            "mode_changes": [{"at": i, "from": a, "to": b} for i, a, b in changes],
+            "clock_steps": [{"at": i, "jump_s": j} for i, j in steps],
+            "gaps": [{"end": i, "duration_s": d} for d, i in gaps],
+            "power_cycles": [{"down_at": rows[a].iso, "off_at": rows[o].iso, "duration_s": span(a, b),
+                              "back_at": rows[b + 1].iso if b + 1 < len(rows) else None} for a, b, o in off_runs],
+            "ol_events": [{"at": rows[a].iso, "duration_s": span(a, b), "mode": rows[a].mode.label} for a, b in ol],
+            "over_voltage": ovs,
+            "excursions": [{"start": rows[a].iso, "duration_s": span(a, b), "samples": b - a + 1,
+                            "worst": max((rows[i].v for i in range(a, b + 1)),
+                                         key=lambda v: abs(v - (window[0] + window[1]) / 2))} for a, b in exc],
+            "marks": [m._asdict() for m in marks],
+            "settling": h.settling, "mode_change": h.mode_change, "plot": plot_out, "text": "\n".join(out_lines),
+        })
+        print(json.dumps(J, ensure_ascii=False, default=str))
+    else:
+        print("\n".join(out_lines))
+
+
+def draw(plt, args, rows, labels, count, base, steps, window, alarm, in_w, is_off, suspect, exc, off_runs,
+         marks, out):
+    CYAN, DIM, MAG = "#7dfaff", "#9080b0", "#ff2e9f"
     BG, PANEL, GRID, TXT = "#150a28", "#1f1240", "#3d1e6b", "#ece3ff"
-    BAD = "#ff4d6d"
+    BAD, WARN_C = "#ff4d6d", "#ffb74d"
     if args.light:  # print-friendly: same layout, paper-white with dark ink
-        CYAN, DIM = "#0b5fa5", "#555555"
+        CYAN, DIM, MAG = "#0b5fa5", "#555555", "#c2187a"
         BG, PANEL, GRID, TXT = "#ffffff", "#ffffff", "#c8c8c8", "#111111"
-        BAD = "#e0304f"
+        BAD, WARN_C = "#e0304f", "#d98200"
     if steps:  # wall clock is unreliable: plot elapsed monotonic minutes instead
         xs = [(r.up - rows[0].up) / 60 for r in rows]
         xlabel = "elapsed (min, monotonic; wall clock stepped mid-session)"
+        mark_x = [(m.up - rows[0].up) / 60 if m.up is not None else None for m in marks]
     else:
         import matplotlib.dates as mdates
         stamps = [datetime.fromtimestamp(r.epoch, tz=timezone.utc).astimezone() for r in rows]
         xs = mdates.date2num(stamps)   # convert once, not per panel (slow on a long night)
         xlabel = None
+        mark_x = [mdates.date2num(datetime.fromtimestamp(m.epoch, tz=timezone.utc).astimezone()) for m in marks]
 
     height = 4.5 if len(labels) == 1 else min(2 + 2.2 * len(labels), 11)
     fig, axes = plt.subplots(len(labels), 1, sharex=True, squeeze=False, figsize=(11, height), dpi=150)
     fig.patch.set_facecolor(BG)
-    for ax, l in zip(axes[:, 0], labels):
+    for pi, (ax, l) in enumerate(zip(axes[:, 0], labels)):
         p, k = si([r.v for r in rows if r.mode.label == l], base[l])
-        vs = [r.v / k if r.mode.label == l and math.isfinite(r.v) else math.nan for r in rows]
+        vs = [r.v / k if r.mode.label == l and math.isfinite(r.v) and i not in suspect else math.nan
+              for i, r in enumerate(rows)]
         ax.set_facecolor(PANEL)
         # dots too for a brief mode in a mixed session: one sample on its own is otherwise invisible
         ax.plot(xs, vs, color=CYAN, lw=0.9, drawstyle="steps-post" if l == "Continuity" else "default",
                 **({"marker": ".", "ms": 2} if len(labels) > 1 and count[l] < 2000 else {}))
-        if l == RAIL:
-            ax.axhline(args.lo, color=DIM, ls="--", lw=0.8)
-            ax.axhline(args.hi, color=DIM, ls="--", lw=0.8)
+        wpanel = any(r.mode.label == l and in_w(r) for r in rows)
+        if wpanel:
+            for a, b, _ in off_runs:
+                ax.axvspan(xs[a], xs[b], color=DIM, alpha=0.18 if not args.light else 0.15, lw=0)
             for a, b in exc:
-                ax.axvspan(xs[a], xs[b], color=BAD, alpha=0.35 if not args.light else 0.2)
+                ax.axvspan(xs[a], xs[b], color=WARN_C, alpha=0.30 if not args.light else 0.2, lw=0)
+            if alarm is not None:
+                for a, b in group_runs(rows, lambda r: in_w(r) and math.isfinite(r.v) and abs(r.v) > alarm):
+                    if not (a == b and a in suspect):
+                        ax.axvspan(xs[a], xs[b], color=BAD, alpha=0.45 if not args.light else 0.3, lw=0)
+            if window:
+                ax.axhline(window[0] / k, color=DIM, ls="--", lw=0.8)
+                ax.axhline(window[1] / k, color=DIM, ls="--", lw=0.8)
+            if suspect:     # keep the y axis on the real trace; suspect readings sit as markers at the top edge
+                lo_, hi_ = ax.get_ylim()
+                x0, x1 = ax.get_xlim()
+                group = []  # label readings that are close together once: "3x 18.7-20.3?"
+                for i in sorted(suspect) + [None]:
+                    if i is not None:
+                        ax.plot([xs[i]], [hi_], marker="v", color=WARN_C, ms=6, clip_on=False)
+                    if group and (i is None or xs[i] - xs[group[-1]] > 0.03 * (x1 - x0)):
+                        vals = [rows[j].v / k for j in group]
+                        txt = (f"{vals[0]:.3g}?" if len(vals) == 1
+                               else f"{len(vals)}x {min(vals):.3g}-{max(vals):.3g}?")
+                        ax.annotate(txt, (xs[group[0]], hi_), textcoords="offset points", xytext=(4, -9),
+                                    color=WARN_C, fontsize=6.5, family="monospace")
+                        group = []
+                    if i is not None:
+                        group.append(i)
+                ax.set_ylim(lo_, hi_)
+        for mx, m in zip(mark_x, marks):
+            if mx is None:
+                continue
+            ax.axvline(mx, color=MAG, lw=0.9, ls="-", alpha=0.9)
+            if pi == 0:
+                ax.annotate(m.label[:24], (mx, 1), xycoords=("data", "axes fraction"), textcoords="offset points",
+                            xytext=(3, -10), color=MAG, fontsize=6.5, family="monospace", rotation=0)
         if l == "Continuity":
             ax.set_ylim(-0.15, 1.15)
             ax.set_yticks([0, 1])
@@ -364,14 +554,14 @@ def main():
     if xlabel:
         axes[-1, 0].set_xlabel(xlabel, family="monospace", color=TXT, fontsize=8)
     title = f"GDD-GAT/01 rail log · {rows[0].iso[:10]}"
-    if len(labels) == 1 and labels[0] != RAIL:
+    if len(labels) == 1 and labels[0] != "DC voltage":
         title += f" · {labels[0]}"
     axes[0, 0].set_title(title, family="monospace", color=TXT, fontsize=10)
     if not steps:
         fig.autofmt_xdate()
     plt.tight_layout()
     plt.savefig(out, facecolor=BG)
-    print(f"plot:      {out}")
+    plt.close(fig)
 
 
 if __name__ == "__main__":

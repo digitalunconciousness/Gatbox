@@ -7,7 +7,12 @@
     FAKE_ID        ok | mismatch (read fails with minipro's 2026-09-28 message unless -y)
     FAKE_FLAKY     1 = the second read differs in one byte
     FAKE_COUNTER   a file counting reads (for FAKE_FLAKY)
-Progress is printed with \\r and ESC[K like the real one, so the parser's clean-up is tested too.
+    FAKE_CHIP      a file standing for the chip in the socket (burn tests): reads return it, -b passes only when it's
+                   all 0xFF, -w programs it (bits go 1 -> 0 only, like a UV EPROM) and verifies, as minipro 0.7.4 does
+    FAKE_WRITE_FAIL 1 = the write leaves one byte unprogrammed (so minipro's verify fails)
+    FAKE_SIZES     part=bytes pairs for -d (default: the 27C020s 262144, 27C010 131072)
+Progress is printed with \\r and ESC[K like the real one, so the parser's clean-up is tested too. Messages are
+minipro 0.7.4's own (src/main.c: "memory section is blank.", "Verification OK", "Verification failed at address").
 """
 import os
 import sys
@@ -31,6 +36,17 @@ if "-l" in a or "-L" in a:
         if q is None or q.lower() in p.lower():
             print(p)
     sys.exit(0)
+SIZES = dict(x.split("=") for x in os.environ.get(
+    "FAKE_SIZES", "27C020@DIP32=262144,TMS27C020@DIP32=262144,AM27C020@DIP32=262144,27C010@DIP32=131072,"
+                  "27C1000@DIP32=131072,TMS27C020@TSOP32=262144,TMS27C020@PLCC32=262144,OLD2716=2048").split(","))
+if "-d" in a:                                             # minipro -q T48 -d PART: the device's info
+    dev = opt("-d")
+    if dev not in parts:
+        print(f"Device {dev} not found!", file=sys.stderr)
+        sys.exit(1)
+    print(f"Name: {dev}\nMemory: {SIZES.get(dev, '262144')} Bytes\nPackage: DIP32\n"
+          "*******************************\nVPP programming voltage: 12.5V\nVDD write voltage: 6.5V")
+    sys.exit(0)
 part = opt("-p")
 if part not in parts:
     print(f"Device {part} not found!", file=sys.stderr)
@@ -45,6 +61,48 @@ if "-z" in a:
         sys.exit(1)
     print("Pin test passed.", file=sys.stderr)
     sys.exit(0)
+chip = os.environ.get("FAKE_CHIP")
+
+
+def id_check():
+    """The chip-ID check minipro does before a read, a blank check or a write (unless -y)."""
+    if os.environ.get("FAKE_ID") == "mismatch" and "-y" not in a:
+        print("Invalid Chip ID: expected 0x8934, got 0x9732 (TMS27C020@DIP32)", file=sys.stderr)
+        sys.exit(1)
+
+
+if "-b" in a and chip:                                    # blank check
+    id_check()
+    data = open(chip, "rb").read()
+    bad = next((i for i, x in enumerate(data) if x != 0xFF), None)
+    if bad is None:
+        print("Code memory section is blank.", file=sys.stderr)
+        sys.exit(0)
+    print(f"Verification failed at address 0x{bad:04X}: File=0xFF, Device=0x{data[bad]:02X}", file=sys.stderr)
+    sys.exit(1)
+if "-w" in a and chip:                                    # write, then verify (no -v), like minipro 0.7.4
+    id_check()
+    src = open(opt("-w"), "rb").read()
+    size = int(SIZES.get(part, "262144"))
+    if len(src) != size and "-s" not in a:
+        print(f"Incorrect file size: {len(src)} (needed {size}, use -s/S to ignore)", file=sys.stderr)
+        sys.exit(1)
+    old = open(chip, "rb").read()
+    new = bytearray(o & s for o, s in zip(old, src))      # a UV EPROM: programming only clears bits
+    if os.environ.get("FAKE_WRITE_FAIL") == "1":
+        new[200] = old[200]
+    for pct in (0, 50, 100):
+        sys.stderr.write(f"\rWriting Code...  {pct}%\x1b[K")
+    sys.stderr.write("\rWriting Code...  OK\x1b[K\n")
+    open(chip, "wb").write(bytes(new))
+    if "-v" not in a:
+        bad = next((i for i, (x, y) in enumerate(zip(src, new)) if x != y), None)
+        if bad is not None:
+            print(f"Verification failed at address 0x{bad:04X}: File=0x{src[bad]:02X}, Device=0x{new[bad]:02X}",
+                  file=sys.stderr)
+            sys.exit(1)
+        print("Verification OK", file=sys.stderr)
+    sys.exit(0)
 if "-r" in a:
     if os.environ.get("FAKE_ID") == "unknown":            # 2026-09-29: a DIP chip read as a TSOP32 part
         if "-y" not in a:
@@ -55,7 +113,7 @@ if "-r" in a:
             print("Invalid Chip ID: expected 0x8934, got 0x9732 (TMS27C020@DIP32)", file=sys.stderr)
             sys.exit(1)
         print("WARNING: Chip ID mismatch: expected 0x8934, got 0x9732 (TMS27C020@DIP32)", file=sys.stderr)
-    src = os.environ.get("FAKE_ROM")
+    src = chip or os.environ.get("FAKE_ROM")
     if not src or not os.path.exists(src):
         print("IO error: expected 64 bytes but 0 bytes transferred", file=sys.stderr)
         sys.exit(1)

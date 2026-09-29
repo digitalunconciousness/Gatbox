@@ -49,6 +49,12 @@ The bootstrap's MANIFEST maps repo files to installed paths. `--check` (no root)
   set by hand, deliberately not in the bootstrap (BRINGUP M2 notes); eth0 is DHCP.
 - minipro 0.7.4 (built from the pinned upstream tag into /usr/local; T48 via udev → plugdev) and mame 0.276 (apt,
   for `mame -romident` and `-listxml` only: no gameplay, no ROM sets on the Pi).
+- `gatbox-dump` + `gatbox-dump.path/.service` (M7, user gatbox-dump: the T48 and `/srv/gatbox/roms` only): gatbox-web
+  writes `/var/spool/gatbox-dump/request.json`, the job does the rest. Dump = read twice → `mame -romident` → archive.
+  Burn (`--burn IMAGE -p PART`, or the dashboard's DUMP → BURN): an image from the archive (or `_images/`), part size ==
+  image size, pin check, BLANK CHECK (`minipro -b`), the arm (CLI: the part name typed; dashboard: POST /api/burn from
+  the Pi's own screen only, after a passing blank check < 5 min old, armed 30 s, checked when the job starts), `-w`
+  with minipro's verify, 2 read-backs == the image, a line in `/srv/gatbox/roms/burns.jsonl`.
 - `gatbox-mame-roms`: each machine's ROM chips (names, sizes, CRC/SHA-1, every version MAME knows) built at install
   from `mame -listxml` + `data/gatbox-mame-sets.json` (git-ignored like the roster: slug → parent set, `sure`/`check`/
   none + why) into `/usr/local/share/gatbox/mame-roms.json`; rebuilt when MAME or the list changes. The dashboard's
@@ -81,7 +87,9 @@ uhubctl, INA226, relays, MAK Strike, GBS-Control, RP2350B bus driver, InfiRay P2
    hand-configured. The bootstrap stays idempotent, and an offline re-run succeeds when everything is installed.
 5. **Show before you change system config** (`/boot/firmware/*`, udev, systemd units, labwc config, `/etc`): show
    the owner the diff and why, and wait for her OK. Repo-only changes don't need approval.
-6. **No hardware writes from the dashboard.** Phase 2 does Pi-side state and T48 **reads** only. No part auto-detect.
+6. **The only hardware write from the dashboard is a T48 burn**, armed at the Pi (a hold on the 7″ for now, a physical
+   ARM button later), blank-checked and verified. Nothing else writes hardware. No part auto-detect. (The owner's
+   decision, 2026-09-29: it overrides the spec's "No burn anywhere in gatbox-web".)
 7. **GPIO is 3.3 V only, Pi 5 included.** gpiozero (+lgpio), never RPi.GPIO. GPIO3 and GPIO26 reserved; keep I²C
    (2/3), UART (14/15) and SPI free. Anything at 5 V goes through a divider / opto / level shifter.
 8. **The board under test is always external.** Nothing here energizes a board.

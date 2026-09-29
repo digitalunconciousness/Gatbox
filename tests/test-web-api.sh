@@ -163,7 +163,8 @@ check "PUT body over 4 KB -> 413"             '[ "$(api PUT /api/meter/profile "
 check "DELETE /api/meter -> 405"              '[ "$(api DELETE /api/meter)" = 405 ]'
 n0=$(nfiles)
 check "PUT ripple ceiling 0.15 -> new file"   '[ "$(api PUT /api/meter/profile "{\"id\":\"ripple\",\"ceiling\":0.15}")" = 200 ] && [ "$(js "d[\"new_file\"], d[\"profile\"][\"window\"], d[\"profile\"][\"source\"]")" = "True [0.0, 0.15] user" ]'
-waitfor '[ "$(nfiles)" -gt $n0 ]'; F=$T/log/$(newest)
+# the logger makes the file, then gatbox-meta's lines land a moment later: wait for them, not just the file
+waitfor '[ "$(nfiles)" -gt $n0 ] && grep -q "^# alarm_hi=" "$T/log/$(newest)"'; F=$T/log/$(newest)
 check "new file's header: ripple, user window, no alarm" 'grep -qx "# profile=ripple" "$F" && grep -qx "# window=0..0.15 source=user" "$F" && grep -qx "# alarm_hi=none" "$F"'
 waitfor 'api GET /api/meter >/dev/null && [ "$(js "d[\"file\"]")" = "$(basename "$F")" ]'
 check "meter: dial VDC vs ripple (VAC): dial_ok false" '[ "$(js "d[\"dial_ok\"], [e[\"key\"] for e in d[\"expected\"]]")" = "False ['"'"'VAC'"'"']" ]'
@@ -199,7 +200,7 @@ check "GET captures for the machine"          '[ "$(api GET /api/captures)" = 20
 check "captures: unknown machine -> 404"      '[ "$(api GET "/api/captures?machine=..%2Fprofile")" = 404 ]'
 n0=$(nfiles)
 check "DELETE machine -> new file"            '[ "$(api DELETE /api/machine)" = 200 ] && [ "$(js "d[\"changed\"], d[\"new_file\"]")" = "True True" ]'
-waitfor '[ "$(nfiles)" -gt $n0 ]'
+waitfor '[ "$(nfiles)" -gt $n0 ] && grep -q "^# alarm_hi=" "$T/log/$(newest)"'
 check "... without a machine line"            '! grep -q "^# machine=" "$T/log/$(newest)"'
 waitfor 'api GET /api/meter >/dev/null && [ "$(js "d[\"file\"]")" = "$(newest)" ]'
 n0=$(nfiles)

@@ -36,8 +36,16 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       chip: MATCH sonic/epr-15781c.ic18) [x] dashboard DUMP flow + gatbox-dump.path/.service + archive + part list
       (tests/test-dump.sh, test-dash) [x] install (owner OK'd the user, dirs, units, group) [x] ⏸ dump a known
       EPROM from the dashboard **passed** 2026-09-29 01:50 (owner: "It works"; SegaSonic EPR-15781C, MATCH
-      sonic/epr-15781c.ic18 in the archive's sidecar) [ ] burn (owner wants it: CLI per the spec; dashboard burn is
-      her call on hard rule 6)
+      sonic/epr-15781c.ic18 in the archive's sidecar) [x] burn (owner's decision 2026-09-29: the
+      dashboard too, armed by a 3 s hold on the Pi's own screen until a physical ARM button; hard rule 6 changed, over
+      the spec's "No burn anywhere in gatbox-web"): `gatbox-dump --burn IMAGE -p PART` and DUMP → BURN. Image from the
+      archive or `_images/` (realpath inside `/srv/gatbox/roms`), part size == image size (`minipro -q T48 -d`),
+      pin check, BLANK CHECK (`minipro -b`: "memory section is blank."), the arm (CLI: part name typed; web: POST
+      /api/burn from loopback only, after a passing blank check of that image + part < 5 min old, `armed.until` =
+      +30 s, checked when the job starts), `-w` (minipro erases only electrically-erasable chips, then "Verification
+      OK"), 2 read-backs == the image, `burns.jsonl` (plan docs/plans/2026-09-29-t48-burn.md; tests/test-dump.sh,
+      test-dash; fake-minipro FAKE_CHIP) [ ] install (same units and paths: no system config change) [ ] ⏸ a real
+      burn to a blank chip from the 7″
 - [ ] **M8 2G stretch**: ask first
 - [ ] **Owner requests (2026-09-29)**, off-spec, one at a time with her OK on each design:
       [x] + ADD MACHINE / EDIT / EXPORT ROSTER, and CAPTURE → SAVE READING (code + tests/test-roster.sh, test-dash)
@@ -46,7 +54,7 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       (the manual's limits with page + words, CONFIRM, actual values from the field) (code + tests/test-manuals.sh,
       test-dash) [x] install both (owner OK'd the group, the folder, the unit) [x] the manuals list for the floor +
       fetch (396 documents for 88 of 95 machines, 389 on the Pi, 1.2 GB) [x] spec sheets read off the manuals (18
-      rail limits on 10 machines, 52 facts on 42) [ ] the list installed [ ] project update + journal
+      rail limits on 10 machines, 52 facts on 42) [ ] the list installed [x] project update + journal
 
 ### M0 notes (2026-09-28)
 - **Spec vs reality:** the handoff and the project CLAUDE.md say the logger already writes `# mode=`, a

@@ -36,6 +36,8 @@ board power) also waits for Phase 3's arming discipline.
   open `/dev/gatbox-dmm`.
 - **No hardware writes from the dashboard.** Phase 2 writes only Pi-side state (profile,
   current machine, marks, new session, capture points) and T48 *reads* to disk. Never a chip.
+  *Amended 2026-09-29 (the owner's decision):* the one exception is a T48 burn of a blank chip, armed at the Pi (a
+  hold on the 7″ for now, a physical ARM button later), blank-checked and verified.
 - **Plain HTML/CSS/JS dashboard**, house style, no framework, no CDN, no localStorage,
   big-tap UI at 1024×600.
 - **apt before pip.** evdev, qrcode, MAME all come from Debian packages.

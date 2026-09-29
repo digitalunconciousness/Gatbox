@@ -1,4 +1,4 @@
-## 2026-09-29 — M7 dump from the 7" passed; adding machines; SAVE READING
+## 2026-09-29 — M7 dump from the 7" passed; adding machines; SAVE READING; manuals; burning
 - ⏸ M7 dashboard dump PASSED ("It works"): the SegaSonic EPR-15781C, dumped from the DUMP tab, MATCH
   `sonic/epr-15781c.ic18`, archived under SegaSonic with its identification. Burning is still to decide.
 - Owner's requests: a way to add a new machine; what capture does; the manuals with their specs, viewable from the
@@ -49,6 +49,22 @@
   the same +5 V 4.90–5.10 and +12 V 11.5–12.5 as the owner's spec from 09-25.
 - FOUND: most older manuals give only current ratings and line voltage, no rail limits. Those machines get the
   facts; their window stays the profile's until a limit is confirmed or an actual value is set.
-- NEXT: install the list; CONFIRM the rail limits on the dashboard as each machine comes up; settle the CHECK
-  machines (Batman, D&D, SF2 Grandmaster, After Burner, Snow Bros 2, DDR's mix); burning (CLI per the spec, or the
-  dashboard, which would mean changing hard rule 6); M8 when she's ready.
+- DECIDED (owner): burning goes on the dashboard too, armed by holding a button on the 7" for now, and by a
+  physical ARM button once there's an enclosure to put it in. Hard rule 6 now reads: the only hardware write from the
+  dashboard is a T48 burn, armed at the Pi, blank-checked and verified; nothing else writes hardware.
+- BURN, on the DUMP tab (READ | BURN) and as `gatbox-dump --burn`:
+  - an image from the dump archive, or from its `_images/` folder for files that came from elsewhere;
+  - the part picked off the chip, as for a dump; only the EPROM sizes that match the image light up, and a
+    part of a different size is refused;
+  - BLANK CHECK first: the pins, then minipro's own blank check. A chip that isn't blank is refused, with the
+    advice to UV-erase it;
+  - then HOLD 3 S TO BURN, only on the Pi's own screen. A phone sees the same page but is told to arm it at the
+    Pi. Letting go early sends nothing. The arm lasts 30 s, and the blank check must be under 5 minutes old;
+  - the write, minipro's verify, then two read-backs, each compared with the image. VERIFIED only if all three
+    agree. Every burn, verified or stopped, gets a line in the archive's burn log;
+  - from the command line, instead of the hold, the part name is typed back after the blank check.
+- Burning needs no system change (same service, same folders): the next bootstrap run installs it, with the
+  manuals list.
+- NEXT: install (burn + the manuals list); a real burn to a blank chip from the 7"; CONFIRM the rail limits on the
+  dashboard as each machine comes up; settle the CHECK machines (Batman, D&D, SF2 Grandmaster, After Burner, Snow
+  Bros 2, DDR's mix); M8 when she's ready.

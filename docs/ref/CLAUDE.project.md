@@ -20,7 +20,7 @@ in `docs/gatbox-master-guide.html`. **Hardware acquisition status lives in
   - M4 data model and JSON API;
   - M5 the dashboard;
   - M6 the scanner;
-  - M7 T48 dumps (dashboard dump passed 2026-09-29; burning still to decide).
+  - M7 T48 dumps and burns (dashboard dump passed 2026-09-29; burn built the same day, armed by a hold on the 7″).
 - **Owner requests (2026-09-29), also done:**
   - add machines on the dashboard (+ export for the maintenance app);
   - SAVE READING (was CAPTURE);
@@ -55,10 +55,10 @@ in `docs/gatbox-master-guide.html`. **Hardware acquisition status lives in
   - MACHINE: the roster card, add machine, ROM chips from MAME;
   - MANUALS: the viewer, the spec sheet;
   - SYSTEM, DEVICES;
-  - DUMP: T48 reads only.
+  - DUMP: T48 reads, and BURN (a blank chip, armed by a 3 s hold on the Pi's own screen, verified).
 - `gatbox-scand` (the EY-H2 scanner: roster slug → machine, `GATBOX:MARK`,
   `GATBOX:NEW`), `gatbox-dump` (T48 read twice → MAME romident → archive in
-  `/srv/gatbox/roms`), `gatbox-mame-roms` (each machine's chips from `mame -listxml`),
+  `/srv/gatbox/roms`; `--burn`: blank check → write + verify → 2 read-backs → `burns.jsonl`), `gatbox-mame-roms` (each machine's chips from `mame -listxml`),
   `gatbox-manuals` (the floor's documents into `/srv/gatbox/manuals`).
 - `firmware/` — two targets:
   - **Stick injector** — Pico (RP2040/RP2350) USB-host → JAMMA control injector.
@@ -99,8 +99,9 @@ Eyoyo EY-H2 barcode scanner, Waveshare 7inch HDMI LCD (C), RTC coin cell
 (non-rechargeable: never enable charging). Everything else below is **planned, not
 purchased**. Don't write code that assumes it's attached, and don't tell the owner to
 test against it.
-- EPROM: XGecu T48 via `minipro`, exact part names only (never auto-detected); the
-  dashboard reads only, a write/burn path is still to be decided.
+- EPROM: XGecu T48 via `minipro`, exact part names only (never auto-detected). The
+  dashboard reads, and burns a blank chip: the only hardware write it has, armed at the Pi
+  (a 3 s hold on the 7″ for now, a physical ARM button later), blank-checked, verified.
 - Scope / logic / AWG: ADALM2000 (M2K) via libm2k / Scopy. *(planned)*
 - DMM: UNI-T UT61E over the **UT-D02 serial optical cable + PL-2303 adapter** —
   sigrok driver **`uni-t-ut61e-ser:conn=/dev/gatbox-dmm`** (udev symlink to the

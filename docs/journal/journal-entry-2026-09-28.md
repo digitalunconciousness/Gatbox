@@ -152,3 +152,11 @@
     suggests.
   - The command line `gatbox-dump` already works on the real T48: the SegaSonic chip came back MATCH
     `sonic/epr-15781c.ic18`.
+- 2026-09-29, first dumps from the 7":
+  - The kiosk was still showing the old page after the install; the dashboard now reloads itself after installs.
+  - One mis-tap picked the TSOP version of the chip instead of the DIP one. minipro refused it (nonsense chip ID)
+    before reading. The picker now lists DIP parts first with the adapter-only packages apart under a warning, and
+    that stop now offers the DIP version.
+  - The identification failed because the dump service couldn't find MAME (Debian keeps it in /usr/games); that's
+    fixed.
+  - The dump itself was byte-for-byte the same as the earlier ones, archived under SegaSonic.

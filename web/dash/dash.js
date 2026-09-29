@@ -720,6 +720,11 @@
       const d = await api("GET", "/api/system");
       S.sys = d; S.local = !!(d.client && d.client.local);
       S.offset = d.time.epoch * 1000 - Date.now();
+      // a new install changed the dashboard's files: load them (the 7" kiosk never reloads on its own)
+      if (d.dash_version) {
+        if (!S.dashVersion) S.dashVersion = d.dash_version;
+        else if (S.dashVersion !== d.dash_version) { location.reload(); return; }
+      }
     } catch (e) { return; }
     renderHeader();
     if (S.view !== "system") return;
@@ -845,22 +850,49 @@
   }
   function onDump(st) { D.st = st; if (S.view === "dump") renderDump(); }
   function dumpReq(extra) {
-    return api("POST", "/api/dump", Object.assign({part: D.part, label: D.label}, extra || {}))
-      .then(() => toast(`DUMP queued: ${D.part} · ${D.label}`)).catch(fail);
+    const body = Object.assign({part: D.part, label: D.label}, D.machine ? {machine: D.machine} : {}, extra || {});
+    return api("POST", "/api/dump", body).then(() => toast(`DUMP queued: ${D.part} · ${D.label}`)).catch(fail);
+  }
+  async function pickDumpMachine() {
+    let R;
+    try { R = await api("GET", "/api/roster"); } catch (e) { return fail(e); }
+    const pick = await sheet("Which machine is this chip from?", (pane, done) => {
+      let q = "";
+      const field = el("div", "kp-field"), list = el("div", "picklist");
+      const draw = () => {
+        field.textContent = q || "type to filter"; field.appendChild(el("span", "cur"));
+        clear(list);
+        const Q = q.toLowerCase();
+        for (const m of R.machines.filter(m => !Q || m.name.toLowerCase().includes(Q) || m.slug.includes(Q)).slice(0, 60)) {
+          const b = el("button", "row");
+          add(b, el("b", null, m.name), el("div", "mut", m.slug));
+          b.addEventListener("click", () => done(m));
+          list.appendChild(b);
+        }
+      };
+      const keys = el("div", "keys");
+      for (const k of "QWERTYUIOPASDFGHJKL⌫ZXCVBNM-0123456789") {
+        const b = el("button", null, k);
+        b.addEventListener("click", () => { q = k === "⌫" ? q.slice(0, -1) : q + k; draw(); });
+        keys.appendChild(b);
+      }
+      S.kd = e => { if (e.key === "Backspace") q = q.slice(0, -1); else if (e.key.length === 1) q += e.key; else return; draw(); };
+      document.addEventListener("keydown", S.kd);
+      add(pane, field, list, keys);
+      draw();
+    });
+    if (pick) { D.machine = pick.slug; D.machineName = pick.name; renderDump(); }
   }
   async function pickFamily(f) {
     let r;
     try { r = await api("GET", "/api/dump/parts?family=" + encodeURIComponent(f.id)); } catch (e) { return fail(e); }
     const pick = await sheet(`${f.label}: which one is printed on the chip?`, (pane, done) => {
       pane.appendChild(el("div", "mut", "minipro's own names. The maker's prefix matters (TMS, AM, M, MBM…): the chip-ID check " +
-                                        "stops a wrong pick and names the right one. Names without @ are DIP."));
-      const list = el("div", "picklist");
-      for (const n of r.parts) {
-        const b = el("button", "row", n);
-        b.addEventListener("click", () => done(n));
-        list.appendChild(b);
-      }
-      pane.appendChild(list);
+                                        "stops a wrong pick and names the right one."));
+      const box = el("div", "scroll");
+      box.style.cssText = "overflow:auto;min-height:0;display:flex;flex-direction:column;gap:6px";
+      partLists(box, r.parts, done);
+      pane.appendChild(box);
     });
     if (pick) { D.part = pick; renderDump(); }
   }
@@ -870,19 +902,36 @@
     let r;
     try { r = await api("GET", "/api/dump/parts?q=" + encodeURIComponent(q)); } catch (e) { return fail(e); }
     const pick = await sheet(`"${q}": ${r.parts.length}${r.more ? "+" : ""} parts`, (pane, done) => {
-      const list = el("div", "picklist");
       if (!r.parts.length) pane.appendChild(el("div", "mut", "Nothing matches. Try fewer characters."));
-      for (const n of r.parts) { const b = el("button", "row", n); b.addEventListener("click", () => done(n)); list.appendChild(b); }
-      pane.appendChild(list);
+      const box = el("div", "scroll");
+      box.style.cssText = "overflow:auto;min-height:0;display:flex;flex-direction:column;gap:6px";
+      partLists(box, r.parts, done);
+      pane.appendChild(box);
     });
     if (pick) { D.part = pick; renderDump(); }
+  }
+  // DIP parts go straight in the T48's socket; TSOP / PLCC / SOP need an adapter (2026-09-29: a DIP chip picked as
+  // TSOP32 by one tap answered 0xFEFF). So DIP first, and the rest apart, under a warning.
+  const isDip = n => !n.includes("@") || /@DIP/i.test(n);
+  function partLists(box, names, done) {
+    const dip = names.filter(isDip), other = names.filter(n => !isDip(n));
+    const list = items => {
+      const l = el("div", "picklist");
+      for (const n of items) { const b = el("button", "row", n); b.addEventListener("click", () => done(n)); l.appendChild(b); }
+      return l;
+    };
+    if (dip.length) add(box, el("h3", null, "DIP: goes straight in the socket (names without @ are DIP too)"), list(dip));
+    if (other.length) {
+      const h = el("h3", "warn", "Other packages: only with a socket adapter (TSOP, PLCC, SOP…)");
+      add(box, h, list(other));
+    }
   }
   function renderDump() {
     const B = clear($("#du-body")), st = D.st || {}, t48 = (st.t48 || {}).present;
     const head = el("div", "card");
     add(head, el("div", "big " + (t48 ? "ok" : "mut"), t48 ? "T48 READY" : "T48 NOT PLUGGED IN"),
         el("div", "mut", (t48 ? `USB ${st.t48.usb_id} · ` : "Plug the XGecu T48 into the Pi (USB a466:0a53). ") +
-                         `machine: ${(S.st && (S.st.machine_name || S.st.machine)) || "none (dumps go to 'unassigned')"} · reads only`));
+                         "reads only: nothing here writes a chip"));
     if (!st.spool) head.appendChild(el("div", "warn", "The dump service isn't installed yet (no spool)."));
     B.appendChild(head);
     const s = st.status;
@@ -900,6 +949,21 @@
     }
     // the picker
     const p = el("div", "card");
+    // the machine this dump is archived under: the current one unless picked here (just for dumps: picking one here
+    // doesn't change the logger's machine, so a bench dump never starts a new log file)
+    const mrow = el("div", "btnrow");
+    mrow.style.alignItems = "center";
+    const cur_m = D.machine ? D.machineName : ((S.st && (S.st.machine_name || S.st.machine)) || null);
+    const mchip = el("span", "chip", cur_m || "unassigned");
+    const other = el("button", null, "OTHER MACHINE");
+    other.addEventListener("click", pickDumpMachine);
+    add(mrow, el("b", null, "FOR"), mchip, other);
+    if (D.machine) {
+      const back = el("button", null, "CURRENT");
+      back.addEventListener("click", () => { D.machine = null; renderDump(); });
+      mrow.appendChild(back);
+    }
+    p.appendChild(mrow);
     add(p, el("h2", null, "1 · PART"));
     const row = el("div", "btnrow");
     row.style.alignItems = "center";
@@ -909,6 +973,7 @@
       const change = el("button", null, "CHANGE");
       change.addEventListener("click", () => { D.part = null; renderDump(); });
       add(row, cur, change);
+      if (!isDip(D.part)) row.appendChild(el("span", "warn", "not DIP: only with a socket adapter"));
     }
     const srch = el("button", null, "SEARCH");
     srch.addEventListener("click", searchParts);
@@ -943,7 +1008,8 @@
     const L = el("div", "card");
     L.appendChild(el("h2", null, "Dumps for this machine"));
     B.appendChild(L);
-    api("GET", "/api/dumps").then(r => dumpList(L, r.dumps)).catch(() => {});
+    api("GET", "/api/dumps" + (D.machine ? "?machine=" + encodeURIComponent(D.machine) : ""))
+      .then(r => dumpList(L, r.dumps)).catch(() => {});
   }
   function resultCard(s) {
     const c = el("div", "card");

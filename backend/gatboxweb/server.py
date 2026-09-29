@@ -15,6 +15,7 @@ import sys
 import subprocess
 import threading
 import time
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
@@ -169,8 +170,22 @@ def get_dash(h, m, q):
 
 
 # --- JSON API ---------------------------------------------------------------------------------
+def dash_version():
+    """A fingerprint of the installed dashboard files: an open page reloads itself when it changes (an install), so the
+    7" kiosk never keeps running old code (2026-09-29: the DUMP tab still said "arrives in M7" after the M7 install)."""
+    parts = []
+    for n in sorted(os.listdir(config.DASH)) if os.path.isdir(config.DASH) else []:
+        try:
+            st = os.stat(os.path.join(config.DASH, n))
+            parts.append(f"{n}:{st.st_size}:{st.st_mtime_ns}")
+        except OSError:
+            pass
+    return format(zlib.crc32("|".join(parts).encode()), "08x")      # stable across restarts (hash() isn't)
+
+
 def api_system(h, m, q):
-    h.json(200, dict(system.snapshot(), client={"local": h.is_local()}))   # local = the Pi's own screen
+    h.json(200, dict(system.snapshot(), client={"local": h.is_local()},      # local = the Pi's own screen
+                     dash_version=dash_version()))
 
 
 def api_meter(h, m, q):

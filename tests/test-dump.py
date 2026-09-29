@@ -51,7 +51,8 @@ def main():
 
     print("part names:")
     code, out = dump("--search", "27C020")
-    check("--search lists every 27C020 variant", code == 0 and out.split()[-3:] == ["27C020@DIP32", "TMS27C020@DIP32", "AM27C020@DIP32"])
+    check("--search lists every 27C020 variant", code == 0 and {"27C020@DIP32", "TMS27C020@DIP32", "AM27C020@DIP32",
+          "TMS27C020@TSOP32", "TMS27C020@PLCC32"} <= set(out.split()))
     code, out = dump("-p", "27C999@DIP32", "-l", "X")
     check("an unknown part is refused", code == 2 and "isn't a T48 part name" in out)
     code, out = dump("-p", "27C02", "-l", "X")
@@ -72,6 +73,15 @@ def main():
     check("no gatbox-web: machine from -m, clock 'unknown'", side["machine"] == "sonic-test" and side["clock"] == "unknown")
     code, out = dump("-p", "27C020@DIP32", "-l", "AGAIN", "-m", "sonic-test")
     check("the same chip again: already archived, nothing new", code == 0 and "already archived" in out and len(files("sonic-test")) == 2)
+    code, out = dump("-p", "27C020@DIP32", "-l", "NOMAME", "-m", "m0", GATBOX_MAME=f"{T}/no-such-mame")
+    side0 = f"{T}/roms/m0/NOMAME_{sha[:8]}.json"
+    check("MAME missing: archived anyway, identification null + the error",
+          code == 0 and "MAME couldn't run" in out and json.load(open(side0))["romident"]["match"] is None)
+    code, out = dump("-p", "27C020@DIP32", "-l", "NOMAME", "-m", "m0", FAKE_MAME_MATCH="epr-15781c.ic18 sonic SegaSonic")
+    s0 = json.load(open(side0))
+    check("the same chip again with MAME: the sidecar gets the MATCH (the .bin untouched)",
+          code == 0 and "identified now" in out and s0["romident"]["match"] and "identified" in s0 and len(files("m0")) == 2
+          and open(f"{T}/roms/m0/NOMAME_{sha[:8]}.bin", "rb").read() == rom)
     code, out = dump("-p", "27C020@DIP32", "-l", "X1", FAKE_MAME_MATCH="")
     check("no -m and no gatbox-web: 'unassigned', NO MATCH", code == 0 and "NO MATCH" in out and len(files("unassigned")) == 2)
 
@@ -85,6 +95,13 @@ def main():
     code, out = dump("-p", "27C020@DIP32", "-l", "ID", "-m", "m2", "--ignore-id", FAKE_ID="mismatch")
     side = json.load(open(f"{T}/roms/m2/" + [f for f in files("m2") if f.endswith(".json")][0]))
     check("--ignore-id reads (-y) and the sidecar says so", code == 0 and side["id_check"].startswith("ignored (--ignore-id)"))
+    code, out = dump("-p", "TMS27C020@TSOP32", "-l", "PKG", "-m", "m2b", FAKE_ID="unknown")
+    check("a TSOP pick for a DIP chip (0xFEFF, unknown): the adapter note, and the DIP version to use",
+          code == 2 and "got 0xFEFF (unknown)" in out and "needs a socket adapter" in out
+          and "-p TMS27C020@DIP32" in out and "--ignore-id" not in out and files("m2b") == [])
+    code, out = dump("-p", "OLD2716", "-l", "NOID", "-m", "m2b", FAKE_ID="unknown")
+    check("no known ID from a DIP part: check the seating; --ignore-id only for a part with no ID",
+          code == 2 and "seated" in out and "--ignore-id" in out and files("m2b") == [])
     code, out = dump("-p", "27C020@DIP32", "-l", "PIN", "-m", "m3", FAKE_PIN="bad")
     check("bad pin contact: STOPPED before reading", code == 2 and "pin check" in out and "reseat" in out and files("m3") == [])
     code, out = dump("-p", "27C020@DIP32", "-l", "PIN", "-m", "m3", FAKE_PIN="unsupported")

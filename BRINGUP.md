@@ -346,6 +346,24 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
     DIP package (e.g. `M27C801`).
   - A stop offers the one-tap fix: USE <the part minipro names>, READ ANYWAY (ignore the ID), ARCHIVE ANYWAY
     (blank), I CHECKED (non-JEDEC), TRY AGAIN (reseat).
+- **First dashboard dumps (2026-09-29 01:2x–01:4x, the SegaSonic chip), three findings:**
+  - **The kiosk kept the old page after the install** (the DUMP tab still said "arrives in M7"). The server now
+    reports a fingerprint of the installed dashboard files (`dash_version` in /api/system), and the page reloads
+    itself within 10 s when it changes.
+  - **A one-tap mis-pick of `TMS27C020@TSOP32`** for the DIP chip: minipro answered "Invalid Chip ID: expected
+    0x9732, got 0xFEFF (unknown)" and stopped before reading. The screen offered only READ ANYWAY. Now:
+    - the picker lists DIP parts first and the adapter-only packages (TSOP/PLCC/SOP) apart, under an amber
+      warning, and a non-DIP pick says so;
+    - `gatbox-dump` tells the causes apart: (a) minipro names another part → USE it; (b) a non-DIP pick with an
+      unknown ID → the adapter note + USE <the DIP version>; (c) a DIP part with an unknown ID → check the
+      seating, and --ignore-id only for a part with no ID.
+  - **"MAME couldn't run": `FileNotFoundError`.** Debian's MAME is `/usr/games/mame`, and a systemd service's PATH
+    has no /usr/games. gatbox-dump now finds it by its full path. A dump archived without an identification gets
+    it (the sidecar only; the .bin is never rewritten) when the same chip is dumped again. A MAME that runs but
+    doesn't answer is reported as an error, not a NO MATCH.
+  - The dump itself was right: SHA-1 `9f524012…`, the same as the two earlier dumps (the TSOP mis-pick did the chip
+    no harm). It was archived under segasonic-the-hedgehog through the DUMP tab's new **FOR <machine>** choice (per
+    dump; the logger's machine, DDR at the time, stays as it is).
 - **Part names (minipro -q T48 -l, 32,361 entries):** generic names repeat (two `27C010@DIP32` entries), next to
   manufacturer-prefixed ones (AM27C010, M27C1001, TMS27C010…). The M2 dump showed why the exact part matters: generic
   `27C020@DIP32` refused a TI chip, "Invalid Chip ID: expected 0x8934, got 0x9732 (TMS27C020@DIP32)", and it read as

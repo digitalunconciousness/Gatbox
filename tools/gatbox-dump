@@ -40,7 +40,10 @@ import urllib.request
 import zlib
 
 MINIPRO = os.environ.get("GATBOX_MINIPRO", "minipro")
-MAME = os.environ.get("GATBOX_MAME", "mame")
+# Debian installs MAME as /usr/games/mame, and a systemd service's PATH has no /usr/games (2026-09-29: the first
+# dashboard dump failed to identify with FileNotFoundError). So: its full path, found once.
+MAME = (os.environ.get("GATBOX_MAME") or shutil.which("mame")
+        or ("/usr/games/mame" if os.path.exists("/usr/games/mame") else "mame"))
 ROMS = os.environ.get("GATBOX_ROMS", "/srv/gatbox/roms")
 API = os.environ.get("GATBOX_API", "http://127.0.0.1")
 PROGRAMMER = "T48"
@@ -110,15 +113,33 @@ class Dump:
         # 2026-09-28 (M2): "Invalid Chip ID: expected 0x8934, got 0x9732 (TMS27C020@DIP32)", and minipro exits non-zero
         bad_id = next((l for l in out if "chip id" in l.lower() and ("invalid" in l.lower() or "mismatch" in l.lower())), None)
         if bad_id and not self.ignore_id:
-            m = re.search(r"\(([^)]+@[^)]+)\)", bad_id)
-            raise Stop(f"minipro: {bad_id}",
-                       f"minipro thinks this chip is {m.group(1)}: dump again with -p {m.group(1)}" if m else
-                       "check the part number on the chip; --ignore-id reads it anyway (-y), and the sidecar says so")
+            raise self.id_stop(bad_id)
         if bad_id:
             self.info["id_check"] = f"ignored (--ignore-id): {bad_id}"
         if code != 0 or not os.path.exists(path):
             raise Stop(f"read {n} failed: " + " / ".join(out[-3:]), "check the chip is in the socket, notch toward the lever")
         return open(path, "rb").read()
+
+    def id_stop(self, msg):
+        """minipro refused the chip ID. What to do depends on why:
+          * it names another part, "got 0x9732 (TMS27C020@DIP32)" (2026-09-28, the SegaSonic chip read as the generic
+            27C020): use that part
+          * a part in a package the socket doesn't take directly, "got 0xFEFF (unknown)" (2026-09-29: the same DIP chip
+            read as TMS27C020@TSOP32): the DIP version of the same part, when minipro has one
+          * no known ID from a DIP part: the chip isn't seated, or it's an old part with no ID. Only then read anyway."""
+        m = re.search(r"\(([^)]+@[^)]+)\)", msg)
+        if m:
+            return Stop(f"minipro: {msg}", f"minipro thinks this chip is {m.group(1)}: dump again with -p {m.group(1)}")
+        base, _, pkg = self.part.partition("@")
+        if pkg and not pkg.upper().startswith("DIP"):
+            dip = next((p for p in parts(base) if p.split("@")[0] == base and ("@" not in p or "@DIP" in p.upper())), None)
+            return Stop(f"minipro: {msg}",
+                        f"{self.part} is the {pkg} package, which needs a socket adapter; the T48's socket takes DIP chips "
+                        "directly" + (f": dump again with -p {dip}" if dip else ": pick the DIP version of this part"))
+        return Stop(f"minipro: {msg}",
+                    "the chip didn't answer with a known ID: check it's seated (notch toward the lever, lever down) and the "
+                    "part number printed on it. Only a part with no ID at all needs --ignore-id (it reads anyway, and the "
+                    "sidecar says so)")
 
     def go(self):
         base = self.part.split("@")[0].upper()
@@ -162,9 +183,19 @@ class Dump:
         os.makedirs(folder, exist_ok=True)
         for side in glob.glob(os.path.join(folder, f"*_{self.info['sha1'][:8]}.json")):
             try:
-                if json.load(open(side)).get("sha1") == self.info["sha1"]:
+                old = json.load(open(side))
+                if old.get("sha1") == self.info["sha1"]:
                     self.info["archived"] = {"path": side[:-5] + ".bin", "new": False}
                     self.step("archive", "already archived as " + os.path.basename(side[:-5]) + ".bin")
+                    # the .bin is never rewritten; a sidecar whose identification never ran (MAME missing) gets this one
+                    if (old.get("romident") or {}).get("match") is None and self.info["romident"].get("match") is not None:
+                        old.update(romident=self.info["romident"],
+                                   identified=datetime.datetime.now().astimezone().isoformat(timespec="seconds"))
+                        tmp = side + ".tmp"
+                        with open(tmp, "w") as f:
+                            json.dump(old, f, indent=1)
+                        os.replace(tmp, side)
+                        self.step("archive", "identified now: the sidecar was updated")
                     return
             except (OSError, ValueError):
                 continue
@@ -207,6 +238,9 @@ def romident(data):
         rest = line.split("=", 1)[1].split(None, 2)
         if len(rest) >= 2:
             matches.append({"rom": rest[0], "set": rest[1], "description": rest[2].strip() if len(rest) > 2 else ""})
+    if not matches and "NO MATCH" not in r.stdout:      # MAME ran but didn't answer: an error, not a NO MATCH
+        return {"match": None, "matches": [],
+                "error": ((r.stderr or r.stdout).strip()[-300:] or f"mame -romident exited {r.returncode}")}
     return {"match": bool(matches), "matches": matches}
 
 

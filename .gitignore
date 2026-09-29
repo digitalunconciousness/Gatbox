@@ -23,3 +23,6 @@ data/gatbox-barcade-roster.json
 # ROM dumps are copyrighted: never in the public repo
 *.bin
 roms/
+
+# Claude Code: local permission choices on this Pi, not project settings
+.claude/settings.local.json

@@ -51,6 +51,11 @@ main{position:relative;overflow:hidden;padding:10px 12px}
 .view{display:none;height:100%}
 .view.on{display:flex;flex-direction:column;gap:8px}
 .scroll{overflow:auto;-webkit-user-select:text;user-select:text}
+/* the scrolling views (SESSIONS, SYSTEM, DUMP…) on the kiosk: a slim violet bar instead of Chromium's grey one */
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:5px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:active{background-color:var(--mag)}
 
 /* banners */
 #banners{display:flex;flex-direction:column;gap:6px}

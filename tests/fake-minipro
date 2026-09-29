@@ -13,7 +13,8 @@ import os
 import sys
 
 a = sys.argv[1:]
-parts = os.environ.get("FAKE_PARTS", "27C010@DIP32,27C020@DIP32,TMS27C020@DIP32,AM27C020@DIP32,27C1000@DIP32").split(",")
+parts = os.environ.get("FAKE_PARTS", "27C010@DIP32,27C020@DIP32,TMS27C020@DIP32,AM27C020@DIP32,27C1000@DIP32,"
+                                     "TMS27C020@TSOP32,TMS27C020@PLCC32,OLD2716").split(",")
 print("Found T48 00.1.32 (0x120)\nWarning: T48 support is not yet complete!", file=sys.stderr)
 
 
@@ -45,6 +46,10 @@ if "-z" in a:
     print("Pin test passed.", file=sys.stderr)
     sys.exit(0)
 if "-r" in a:
+    if os.environ.get("FAKE_ID") == "unknown":            # 2026-09-29: a DIP chip read as a TSOP32 part
+        if "-y" not in a:
+            print("Invalid Chip ID: expected 0x9732, got 0xFEFF (unknown)", file=sys.stderr)
+            sys.exit(1)
     if os.environ.get("FAKE_ID") == "mismatch":
         if "-y" not in a:
             print("Invalid Chip ID: expected 0x8934, got 0x9732 (TMS27C020@DIP32)", file=sys.stderr)

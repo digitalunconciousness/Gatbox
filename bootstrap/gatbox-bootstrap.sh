@@ -98,6 +98,7 @@ bootstrap/files/user/autotouch-off.desktop      .config/autostart/autotouch.desk
 TOUCH_LINE='<touch[^>]*deviceName="WaveShare WS170120'
 PKGS=(sigrok-cli python3-matplotlib python3-qrcode rsync git curl util-linux-extra
       build-essential pkg-config libusb-1.0-0-dev zlib1g-dev       # minipro build
+      libarchive-tools                                              # bsdtar: XGecu .rar -> T48 firmware (minipro's dump-alg script)
       mame)                                                        # mame -romident only, no gameplay
 # minipro: pinned upstream release. Bump deliberately: check its T48 support and changelog, and refresh
 # bootstrap/files/minipro-<tag>/ (its udev rules, which its `make install` skips on Pi OS) at the same time.

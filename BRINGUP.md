@@ -299,6 +299,24 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   - **Plan:** a small separate service (gpiozero Button, internal pull-up, 50 ms debounce, 2 s hold-off) that posts
     a mark with source `button`. Only the button's two leads touch the header; no external voltage.
 
+### M7 notes
+- **The T48 on this Pi (2026-09-28):**
+  - It reports firmware 00.1.03 (0x103). minipro 0.7.4 expects 01.1.32 (0x120, `T48_FIRMWARE_STRING` in
+    src/t48.h) and warns "Firmware is out of date".
+  - The T48 keeps its FPGA algorithms on the programmer, and they're updated with the firmware (minipro man page,
+    ALGORITHMS).
+  - The owner asked for the update. minipro's own `dump-alg-minipro.bash` pins where the matching file comes from:
+    `xgproV1278_Setup.rar` from the Kreeblah/XGecu_Software mirror (official XGecu software), SHA-256
+    `cf5dd277…b8eec9`, whose `UpdateT48.dat` is 01.1.32. The download matched that checksum.
+  - Pi OS's 7zip can't open RAR (it wrote an empty file), so the bootstrap adds `libarchive-tools` (bsdtar, the
+    script's own prerequisite).
+  - The firmware file is XGecu's and never goes in the repo.
+  - `minipro -F` checks the file's version, size and CRC and asks y/n before switching the T48 to its bootloader.
+- **Part names (minipro -q T48 -l, 32,361 entries):** generic names repeat (two `27C010@DIP32` entries), next to
+  manufacturer-prefixed ones (AM27C010, M27C1001, TMS27C010…). The M2 dump showed why the exact part matters: generic
+  `27C020@DIP32` refused a TI chip, "Invalid Chip ID: expected 0x8934, got 0x9732 (TMS27C020@DIP32)", and it read as
+  `TMS27C020@DIP32`. The dump flow surfaces that message and re-selects; it never passes `-y`.
+
 ## Bring-up 1: bootstrap run — 2026-09-23
 
 ### What ran

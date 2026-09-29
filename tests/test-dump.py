@@ -155,6 +155,7 @@ def main():
     check("a bad request (label) never reaches the programmer", code == 0 and json.load(open(f"{sp}/status.json"))["state"] == "stopped")
     code, out = dump("--job", f"{sp}/request.json")
     check("no request: nothing to do", code == 0)
+    burn_jobs(sp)
 
     web_side()
 
@@ -251,6 +252,55 @@ def burn_cli():
           code == 2 and "TMS27C020@DIP32" in out and chip_now() == blank)
     code, out = burn("--burn", f"{T}/nope.bin", "-p", "27C020@DIP32", inp="27C020@DIP32\n")
     check("an image that isn't there: refused", code == 2 and "nope.bin" in out)
+
+
+def burn_jobs(sp):
+    """The dashboard's BLANK CHECK and BURN, as gatbox-dump.service runs them: op blank / op burn requests."""
+    import time
+    print("burn jobs (gatbox-dump.service):")
+    os.makedirs(f"{T}/roms/_images", exist_ok=True)
+    img = os.urandom(262144)
+    open(f"{T}/roms/_images/diag.bin", "wb").write(img)
+    image, blank = f"{T}/roms/_images/diag.bin", b"\xff" * 262144
+
+    def job(req, **env):
+        json.dump(req, open(f"{sp}/request.json", "w"))
+        code, _ = burn("--job", f"{sp}/request.json", "--status", f"{sp}/status.json", **env)
+        return code, json.load(open(f"{sp}/status.json"))
+
+    def chip(data=blank):
+        open(f"{T}/chip.bin", "wb").write(data)
+
+    chip()
+    code, st = job({"id": "b1", "op": "blank", "image": image, "part": "27C020@DIP32", "machine": "m10"})
+    check("op blank on a blank chip: done, blank_ok, with the image's SHA-1 and the part",
+          code == 0 and st["op"] == "blank" and st["state"] == "done" and st["blank_ok"] is True
+          and st["sha1"] == hashlib.sha1(img).hexdigest() and st["part"] == "27C020@DIP32" and st["image"] == image
+          and not os.path.exists(f"{sp}/request.json"))
+    chip(img)
+    code, st = job({"id": "b2", "op": "blank", "image": image, "part": "27C020@DIP32"})
+    check("op blank on a programmed chip: stopped, blank_ok false", st["state"] == "stopped" and st["blank_ok"] is False)
+    chip()
+    code, st = job({"id": "b3", "op": "burn", "image": image, "part": "27C020@DIP32"})
+    check("op burn with no arm: stopped, nothing written", st["state"] == "stopped" and "arm" in st["error"]
+          and open(f"{T}/chip.bin", "rb").read() == blank)
+    now = time.time()
+    code, st = job({"id": "b4", "op": "burn", "image": image, "part": "27C020@DIP32",
+                    "armed": {"by": "screen", "at": now - 60, "until": now - 30}})
+    check("op burn with an expired arm: stopped, nothing written", st["state"] == "stopped" and "expired" in st["error"]
+          and open(f"{T}/chip.bin", "rb").read() == blank)
+    code, st = job({"id": "b5", "op": "burn", "image": f"{T}/img.bin", "part": "27C020@DIP32",
+                    "armed": {"by": "screen", "at": now, "until": now + 30}})
+    check("op burn with an image outside the archive: stopped, nothing written", st["state"] == "stopped"
+          and "archive" in st["error"] and open(f"{T}/chip.bin", "rb").read() == blank)
+    code, st = job({"id": "b6", "op": "burn", "image": image, "part": "27C020@DIP32", "machine": "m10",
+                    "armed": {"by": "screen", "at": now, "until": now + 30}})
+    check("op burn, armed: done, verified; the chip holds the image", code == 0 and st["op"] == "burn" and st["state"] == "done"
+          and st["verified"] is True and open(f"{T}/chip.bin", "rb").read() == img)
+    check("... logged with who armed it", burns()[-1]["state"] == "verified" and burns()[-1]["armed"]["by"] == "screen"
+          and burns()[-1]["machine"] == "m10")
+    check("... and the request is used up (claimed once)", not os.path.exists(f"{sp}/request.json")
+          and not os.path.exists(f"{sp}/running.json"))
 
 
 def t48_present():

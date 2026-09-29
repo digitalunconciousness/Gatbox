@@ -239,7 +239,8 @@ class Burn(Dump):
          (-s is never passed);
       2. the non-JEDEC confirmation; the pin check;
       3. blank check (minipro -b): a UV EPROM can only be programmed from erased (all 0xFF);
-      4. the go-ahead: the dashboard's arm (a hold on the 7", unexpired, one per request) or the typed part name;
+      4. the go-ahead: the dashboard's arm (a hold on the 7", unexpired when the job starts, one per request) or the
+         part name typed after the blank check;
       5. minipro -w: it programs, then verifies against the image itself ("Verification OK");
       6. two reads, each compared with the image: VERIFIED only if both are identical to it.
     Every burn, stopped or verified, is a line in <roms>/burns.jsonl."""
@@ -290,13 +291,15 @@ class Burn(Dump):
         return data
 
     def go(self):
-        data = self.prepare()
-        if self.arm is not None:                        # the dashboard: a hold on the Pi's own screen, 30 s to use it
+        # the dashboard's go-ahead: a hold on the Pi's own screen, good for a burn that starts within 30 s. Checked as
+        # the job starts, so a slow blank check on a big chip can't run it out
+        if self.arm is not None:
             if not isinstance(self.arm, dict) or not isinstance(self.arm.get("until"), (int, float)) \
                     or self.arm["until"] < time.time():
                 raise Stop("the arm expired before the burn started", "hold the button again")
             self.info["armed"] = {k: self.arm.get(k) for k in ("by", "at", "until")}
-        elif self.confirm is None or not self.confirm(self):
+        data = self.prepare()
+        if self.arm is None and (self.confirm is None or not self.confirm(self)):
             raise Stop("not burned: the part name didn't match", "type the exact part name to write the chip")
         self.step("writing", f"{self.part} ← {os.path.basename(self.image)}", progress=0.4)
         code, out = run(["-p", self.part, "-w", self.image], timeout=1200)
@@ -384,6 +387,8 @@ def run_job(request, status):
         return 0
     try:
         req = json.load(open(running))
+        if req.get("op") in ("blank", "burn"):
+            return burn_job(req, status)
         part, label, machine = str(req.get("part", "")), str(req.get("label", "")), str(req.get("machine") or "unassigned")
         d = Dump(part, label, machine, bool(req.get("ignore_id")), bool(req.get("keep_blank")), status,
                  say=lambda m: print("gatbox-dump:" + m, flush=True))
@@ -413,6 +418,51 @@ def run_job(request, status):
             os.remove(running)
         except FileNotFoundError:
             pass
+
+
+def in_archive(path):
+    """An image the dashboard may burn: a file inside the dump archive (machine folders, or _images/), by real path."""
+    real, root = os.path.realpath(path), os.path.realpath(ROMS)
+    return real.startswith(root + os.sep) and os.path.isfile(real)
+
+
+def burn_job(req, status):
+    """The dashboard's BLANK CHECK (op blank: steps 1-3) and BURN (op burn: all of them, armed by a hold on the Pi's
+    own screen; gatbox-web accepts that request from the Pi's own screen only). A stop is a result: exit 0."""
+    op, image, part = req["op"], str(req.get("image", "")), str(req.get("part", ""))
+    machine = str(req.get("machine") or "unassigned")
+    d = Burn(image, part, machine, arm=req.get("armed") if op == "burn" else None, status=status,
+             say=lambda m: print("gatbox-dump:" + m, flush=True))
+    d.info.update(op=op, non_jedec_ok=bool(req.get("yes")), job=req.get("id"), requested_at=req.get("at"))
+    try:
+        if not in_archive(image):
+            raise Stop("that image isn't in the dump archive", "pick one from the archive (or put it in /srv/gatbox/roms/_images)")
+        if machine != "unassigned" and not SLUG.match(machine):
+            raise Stop("bad request: machine", "gatbox-web validates this; this shouldn't happen")
+        if part not in parts(part):
+            raise Stop(f"{part!r} isn't a T48 part name in minipro")
+        d.step("starting", f"{op} · {os.path.basename(image)} · {part}", progress=0.02)
+        if op == "blank":
+            d.prepare()
+        elif req.get("armed") is None:
+            raise Stop("not armed: a burn needs the hold on the Pi's own screen", "hold the BURN button at the Pi")
+        else:
+            d.go()
+        d.info["state"] = "done"
+    except Stop as s:
+        d.info.update(state="stopped", error=s.what, hint=s.hint)
+    except Exception as e:                          # a crash still ends as a result the dashboard can show
+        d.info.update(state="stopped", error=f"gatbox-dump failed: {e!r}", hint="see journalctl -u gatbox-dump")
+    if op == "burn":
+        d.log()
+    d.info["finished_at"] = round(time.time(), 3)
+    tmp = status + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(d.info, f)
+    os.replace(tmp, status)
+    print(f"gatbox-dump: {op} {d.info['state']}: {d.info.get('error') or ('verified' if d.info.get('verified') else 'blank')}",
+          flush=True)
+    return 0
 
 
 def burn_cli(args, ap):

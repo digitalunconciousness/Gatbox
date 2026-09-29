@@ -19,7 +19,9 @@ The read, in order (M7 spec):
   8. Archive: <roms>/<machine>/<label>_<sha1:8>.bin + .json sidecar. Never overwrites; a dump with the same SHA-1
      already in that machine's folder is reported as already archived.
 
-Reads only. Writing a chip is a separate tool, never this one.
+Burning (2026-09-29, the owner's decision): gatbox-dump --burn IMAGE -p PART writes an image into a blank chip, the
+part name typed to confirm (see class Burn: size check, blank check, write + minipro's verify, 2 read-backs). The
+dashboard's BURN runs the same steps through gatbox-dump.service, armed by a hold on the Pi's own screen.
 
 Environment: GATBOX_ROMS (archive, default /srv/gatbox/roms), GATBOX_API (gatbox-web, for the current machine and
 the clock source; default http://127.0.0.1), GATBOX_MINIPRO / GATBOX_MAME (tests: stand-ins for the real programs).
@@ -221,6 +223,116 @@ class Dump:
                 "tool": "gatbox-dump"}
 
 
+def device(part):
+    """minipro -d PART: the part's size in bytes and its programming voltage ("Memory: 262144 Bytes", "VPP programming
+    voltage: 13V", minipro 0.7.4 on this Pi, 2026-09-29)."""
+    _, out = run(["-q", PROGRAMMER, "-d", part], timeout=60)
+    size = next((int(m.group(1)) for l in out for m in [re.match(r"Memory:\s*(\d+)\s*Bytes", l)] if m), None)
+    vpp = next((l.split(":", 1)[1].strip() for l in out if l.lower().startswith("vpp programming voltage")), None)
+    return size, vpp
+
+
+class Burn(Dump):
+    """Write an image into a blank EPROM on the T48, then prove it (2026-09-29, the owner's decision: a dashboard burn
+    armed at the Pi; the terminal types the part name instead). In order, and every stop leaves the chip as it was:
+      1. the image is a file; its size equals the part's (minipro -d), so minipro's own size check never matters
+         (-s is never passed);
+      2. the non-JEDEC confirmation; the pin check;
+      3. blank check (minipro -b): a UV EPROM can only be programmed from erased (all 0xFF);
+      4. the go-ahead: the dashboard's arm (a hold on the 7", unexpired, one per request) or the typed part name;
+      5. minipro -w: it programs, then verifies against the image itself ("Verification OK");
+      6. two reads, each compared with the image: VERIFIED only if both are identical to it.
+    Every burn, stopped or verified, is a line in <roms>/burns.jsonl."""
+
+    def __init__(self, image, part, machine, arm=None, confirm=None, status=None, say=print):
+        super().__init__(part, "burn", machine, status=status, say=say)
+        self.image, self.arm, self.confirm = image, arm, confirm
+        self.info.update(op="burn", image=image)
+
+    def check_blank(self):
+        code, out = run(["-p", self.part, "-b"], timeout=300)
+        bad_id = next((l for l in out if "chip id" in l.lower() and ("invalid" in l.lower() or "mismatch" in l.lower())), None)
+        if bad_id:
+            raise self.id_stop(bad_id)
+        if code == 0 and any("is blank" in l for l in out):
+            self.info["blank_ok"] = True
+            self.step("blank check", "blank", progress=0.3)
+            return
+        self.info["blank_ok"] = False
+        where = next((l for l in out if l.startswith("Verification failed")), " / ".join(out[-2:]))
+        raise Stop(f"the chip is not blank ({where})", "UV-erase it first (a programmed EPROM can only go back to 0xFF "
+                                                      "under UV light), or put in a blank one")
+
+    def prepare(self):
+        """Steps 1-3: everything short of writing. Used alone by the dashboard's BLANK CHECK."""
+        if not os.path.isfile(self.image):
+            raise Stop(f"no image file at {self.image}", "pick an image from the archive")
+        data = open(self.image, "rb").read()
+        size, vpp = device(self.part)
+        self.info.update(size=len(data), sha1=hashlib.sha1(data).hexdigest(), vpp=vpp, part_size=size)
+        if size != len(data):
+            raise Stop(f"the image is {len(data):,} bytes, {self.part} holds {size:,}" if size else
+                       f"minipro doesn't give {self.part}'s size", "pick the part whose size matches the image")
+        self.step("image", f"{len(data):,} bytes · SHA-1 {self.info['sha1'][:12]}… · {self.part} · VPP {vpp}", progress=0.05)
+        base = self.part.split("@")[0].upper()
+        if any(x in base for x in NON_JEDEC) and not self.info.get("non_jedec_ok"):
+            raise Stop(f"{self.part}: non-JEDEC pinout variants exist for this part (address lines A5/A7)",
+                       "check the chip's datasheet against the board, then run again with --yes")
+        code, out = run(["-p", self.part, "-z"], timeout=120)
+        if "not supported" in " ".join(out).lower():
+            self.info["pin_check"] = "not supported for this part"
+        elif code != 0:
+            raise Stop("pin check: " + " / ".join(out[-3:]), "reseat the chip (notch toward the lever), lever down")
+        else:
+            self.info["pin_check"] = "ok"
+        self.step("pin check", self.info["pin_check"], progress=0.1)
+        self.check_blank()
+        return data
+
+    def go(self):
+        data = self.prepare()
+        if self.arm is not None:                        # the dashboard: a hold on the Pi's own screen, 30 s to use it
+            if not isinstance(self.arm, dict) or not isinstance(self.arm.get("until"), (int, float)) \
+                    or self.arm["until"] < time.time():
+                raise Stop("the arm expired before the burn started", "hold the button again")
+            self.info["armed"] = {k: self.arm.get(k) for k in ("by", "at", "until")}
+        elif self.confirm is None or not self.confirm(self):
+            raise Stop("not burned: the part name didn't match", "type the exact part name to write the chip")
+        self.step("writing", f"{self.part} ← {os.path.basename(self.image)}", progress=0.4)
+        code, out = run(["-p", self.part, "-w", self.image], timeout=1200)
+        bad_id = next((l for l in out if "chip id" in l.lower() and ("invalid" in l.lower() or "mismatch" in l.lower())), None)
+        if bad_id:
+            raise self.id_stop(bad_id)
+        failed = next((l for l in out if l.startswith("Verification failed")), None)
+        if code != 0 or failed or not any(l.startswith("Verification OK") for l in out):
+            raise Stop("the write failed: " + (failed or " / ".join(out[-3:])),
+                       "the chip may be partly programmed now: UV-erase it before trying again (or try another chip)")
+        self.step("minipro's verify", "OK", progress=0.7)
+        with tempfile.TemporaryDirectory(prefix="gatbox-burn-") as tmp:
+            reads = []
+            for n in (1, 2):
+                self.step(f"read-back {n} of 2", progress=0.75 + 0.1 * n)
+                reads.append(self.read(os.path.join(tmp, f"{n}.bin"), n))
+        if any(r != data for r in reads):
+            diff = [sum(1 for x, y in zip(r, data) if x != y) + abs(len(r) - len(data)) for r in reads]
+            raise Stop(f"the read-backs don't match the image ({diff[0]:,} and {diff[1]:,} bytes differ)",
+                       "reseat the chip and read it back (READ): if it still differs, the chip didn't take the program")
+        self.info.update(verified=True, reads_compared=2)
+        self.step("verified", "2 read-backs identical to the image", progress=1.0)
+
+    def log(self):
+        """One line per burn, stopped or verified, in <roms>/burns.jsonl (next to the archive it burns from)."""
+        i = self.info
+        line = {"date": datetime.datetime.now().astimezone().isoformat(timespec="seconds"), "epoch": round(time.time(), 3),
+                "state": "verified" if i.get("verified") else "stopped", "image": self.image, "sha1": i.get("sha1"),
+                "size": i.get("size"), "part": self.part, "vpp": i.get("vpp"), "machine": self.machine,
+                "blank_ok": i.get("blank_ok"), "armed": i.get("armed"), "error": i.get("error"),
+                "programmer": programmer(), "tool": "gatbox-dump --burn"}
+        os.makedirs(ROMS, exist_ok=True)
+        with open(os.path.join(ROMS, "burns.jsonl"), "a") as f:
+            f.write(json.dumps(line) + "\n")
+
+
 def romident(data):
     """mame -romident on the dump: every match, or none."""
     with tempfile.TemporaryDirectory(prefix="gatbox-romident-") as tmp:
@@ -303,6 +415,46 @@ def run_job(request, status):
             pass
 
 
+def burn_cli(args, ap):
+    """gatbox-dump --burn IMAGE -p PART: the terminal's burn. The go-ahead is the part name, typed after the blank
+    check, once the image and the part are on screen."""
+    if not args.part:
+        ap.error("--burn needs -p PART (the exact minipro name printed on the blank chip)")
+    if args.part not in parts(args.part):
+        ap.error(f"{args.part!r} isn't a T48 part name in minipro")
+    machine = args.machine or current_machine()
+
+    def confirm(b):
+        side = b.image[:-4] + ".json"
+        ident = ""
+        try:
+            ri = json.load(open(side)).get("romident") or {}
+            ident = "; ".join(f"{m['set']}/{m['rom']}" for m in ri.get("matches", [])) or ("NO MATCH" if ri.get("match") is False else "")
+        except (OSError, ValueError):
+            pass
+        i = b.info
+        print(f"\n  image  {b.image}\n         {i['size']:,} bytes · SHA-1 {i['sha1']}" + (f" · MAME {ident}" if ident else ""))
+        print(f"  chip   {b.part} · {i['part_size']:,} bytes · VPP {i['vpp']} · blank")
+        print(f"\nType the part name ({b.part}) to write this chip; anything else cancels: ", end="", flush=True)
+        return sys.stdin.readline().strip() == b.part
+
+    b = Burn(args.burn, args.part, machine, confirm=confirm)
+    b.info["non_jedec_ok"] = args.yes
+    print(f"gatbox-dump: burn {args.burn} into {args.part}")
+    try:
+        b.go()
+    except Stop as s:
+        b.info.update(state="stopped", error=s.what, hint=s.hint)
+        b.log()
+        print(f"\nSTOPPED: {s.what}" + (f"\n  → {s.hint}" if s.hint else ""))
+        return 2
+    b.info["state"] = "done"
+    b.log()
+    print(f"\nVERIFIED: {args.part} now holds {os.path.basename(args.burn)} (SHA-1 {b.info['sha1'][:12]}…): minipro's "
+          "verify OK, 2 read-backs identical to the image")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--search", metavar="TEXT", help="list the T48 part names containing TEXT")
@@ -313,6 +465,8 @@ def main():
     ap.add_argument("--keep-blank", action="store_true", help="archive an all-FF / all-00 read too")
     ap.add_argument("--yes", action="store_true", help="confirm a non-JEDEC part (27C1000, 27C301)")
     ap.add_argument("--json", action="store_true", help="print the result as JSON")
+    ap.add_argument("--burn", metavar="IMAGE", help="write IMAGE into a blank chip (-p PART): blank check, the part "
+                                                    "name typed to confirm, write, verify, 2 read-backs")
     ap.add_argument("--status", help=argparse.SUPPRESS)          # the dashboard job's progress file
     ap.add_argument("--job", help=argparse.SUPPRESS)             # the dashboard job's request file (gatbox-dump.service)
     args = ap.parse_args()
@@ -327,6 +481,8 @@ def main():
         found = parts(args.search)
         print("\n".join(found) if found else f"nothing matches {args.search!r}")
         return 0
+    if args.burn:
+        return burn_cli(args, ap)
     if not args.part or not args.label:
         ap.error("-p PART and -l LABEL are needed (or --search TEXT)")
     if not LABEL.match(args.label):

@@ -134,6 +134,8 @@ def main():
     j = json.loads(out.strip().splitlines()[-1])
     check("... and for a stop: state stopped, error, hint", code == 2 and j["state"] == "stopped" and "differ" in j["error"] and j["hint"])
 
+    burn_cli()
+
     print("job mode (gatbox-dump.service):")
     sp = f"{T}/spool"
     os.makedirs(sp)
@@ -181,6 +183,74 @@ def main():
     else:
         print("  skip  (mame not installed)")
     print(f"dump: {passed} passed, {failed} failed")
+
+
+def burn(*args, inp="", **env):
+    """gatbox-dump --burn against the fake chip (FAKE_CHIP), the part name typed on stdin."""
+    e = dict(os.environ, GATBOX_MINIPRO=os.path.join(REPO, "tests/fake-minipro"), GATBOX_MAME=os.path.join(REPO, "tests/fake-mame"),
+             GATBOX_ROMS=f"{T}/roms", GATBOX_API="http://127.0.0.1:9", FAKE_CHIP=f"{T}/chip.bin", FAKE_COUNTER=f"{T}/count")
+    e.update({k: str(v) for k, v in env.items()})
+    if os.path.exists(f"{T}/count"):
+        os.remove(f"{T}/count")
+    r = subprocess.run(["python3", DUMP] + list(args), capture_output=True, text=True, env=e, timeout=60, input=inp)
+    return r.returncode, r.stdout + r.stderr
+
+
+def burns():
+    p = f"{T}/roms/burns.jsonl"
+    return [json.loads(l) for l in open(p)] if os.path.exists(p) else []
+
+
+def burn_cli():
+    """Burning a chip from the terminal: every stop leaves the chip as it was; the part name is typed to confirm."""
+    print("burn (CLI):")
+    img = os.urandom(262144)
+    open(f"{T}/img.bin", "wb").write(img)
+    open(f"{T}/small.bin", "wb").write(os.urandom(131072))
+    blank = b"\xff" * 262144
+
+    def chip(data=blank):
+        open(f"{T}/chip.bin", "wb").write(data)
+
+    def chip_now():
+        return open(f"{T}/chip.bin", "rb").read()
+
+    chip()
+    code, out = burn("--burn", f"{T}/small.bin", "-p", "27C020@DIP32", inp="27C020@DIP32\n")
+    check("an image the wrong size for the part: stopped before the chip is touched",
+          code == 2 and "131,072 bytes" in out and "262,144" in out and chip_now() == blank)
+    chip(img)
+    code, out = burn("--burn", f"{T}/img.bin", "-p", "27C020@DIP32", inp="27C020@DIP32\n")
+    check("a chip that isn't blank: stopped (UV-erase it first), chip unchanged",
+          code == 2 and "not blank" in out and "UV" in out and chip_now() == img)
+    chip()
+    code, out = burn("--burn", f"{T}/img.bin", "-p", "27C020@DIP32", inp="27C010@DIP32\n")
+    check("the part name mistyped at the prompt: nothing written",
+          code == 2 and "not burned" in out and chip_now() == blank)
+    code, out = burn("--burn", f"{T}/img.bin", "-p", "27C020@DIP32", "-m", "sonic-test", inp="27C020@DIP32\n")
+    check("a good burn: blank check, write, minipro's verify, 2 read-backs = the image: VERIFIED",
+          code == 0 and "VERIFIED" in out and chip_now() == img)
+    last = burns()[-1]
+    check("... logged in burns.jsonl: image, its SHA-1, part, VPP, verified",
+          last["state"] == "verified" and last["sha1"] == hashlib.sha1(img).hexdigest() and last["part"] == "27C020@DIP32"
+          and last["image"] == f"{T}/img.bin" and last["vpp"] == "12.5V" and last["machine"] == "sonic-test")
+    chip()
+    code, out = burn("--burn", f"{T}/img.bin", "-p", "27C020@DIP32", inp="27C020@DIP32\n", FAKE_WRITE_FAIL=1)
+    check("minipro's verify fails after the write: FAILED, with its address, logged",
+          code == 2 and "Verification failed" in out and burns()[-1]["state"] == "stopped")
+    chip()
+    code, out = burn("--burn", f"{T}/img.bin", "-p", "27C020@DIP32", inp="27C020@DIP32\n", FAKE_FLAKY=1)
+    check("the read-backs disagree: FAILED (reseat and read it again)", code == 2 and "read-back" in out and "VERIFIED" not in out)
+    chip()
+    open(f"{T}/img1m.bin", "wb").write(os.urandom(131072))
+    code, out = burn("--burn", f"{T}/img1m.bin", "-p", "27C1000@DIP32", inp="27C1000@DIP32\n")
+    check("a non-JEDEC part needs --yes: stopped, nothing written", code == 2 and "non-JEDEC" in out and chip_now() == blank)
+    chip()
+    code, out = burn("--burn", f"{T}/img.bin", "-p", "27C020@DIP32", inp="27C020@DIP32\n", FAKE_ID="mismatch")
+    check("a chip-ID complaint: stopped with minipro's suggestion, nothing written",
+          code == 2 and "TMS27C020@DIP32" in out and chip_now() == blank)
+    code, out = burn("--burn", f"{T}/nope.bin", "-p", "27C020@DIP32", inp="27C020@DIP32\n")
+    check("an image that isn't there: refused", code == 2 and "nope.bin" in out)
 
 
 def t48_present():

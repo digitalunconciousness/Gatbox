@@ -1219,6 +1219,7 @@
   function docsCard(slug, d) {
     const c = el("div", "card");
     c.appendChild(el("h2", null, `Documents (${d.docs.length})`));
+    if (d.note) c.appendChild(el("div", "warn", d.note));
     if (!d.docs.length) c.appendChild(el("div", "mut", d.why ? `None here: ${d.why}` : "None here yet."));
     for (const x of d.docs) {
       const b = el("button", "row doc");

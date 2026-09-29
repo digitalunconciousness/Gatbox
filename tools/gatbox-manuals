@@ -44,7 +44,8 @@ LIST = "gatbox-manuals.json"
 DEST = os.environ.get("GATBOX_MANUALS", "/srv/gatbox/manuals")
 # where documents may come from (https only): the manual archives the list is built from
 HOSTS = {"archive.org", "www.arcade-museum.com", "arcade-museum.com", "www.sternpinball.com", "sternpinball.com",
-         "arcade.segakore.fr", "arcarc.xmission.com", "www.ipdb.org", "ipdb.org"}       # + any *.archive.org node
+         "wp.sternpinball.com", "arcade.segakore.fr", "arcarc.xmission.com", "www.ipdb.org", "ipdb.org",
+         "www.bandainamco-am.com", "www.pinrepair.com"}                                  # + any *.archive.org node
 TEST_HOSTS = {h for h in os.environ.get("GATBOX_MANUAL_HOSTS", "").split(",") if h}   # tests: plain http on these
 MAX = 400 * 1024 * 1024
 UA = "gatbox-manuals/1 (a personal archive of service manuals for machines in our care)"

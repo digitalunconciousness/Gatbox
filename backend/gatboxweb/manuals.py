@@ -136,8 +136,8 @@ def docs(slug):
     missing = [{"id": i, "title": d.get("title"), "kind": d.get("kind")} for i, d in by_id.items() if i not in here]
     order = {k: i for i, k in enumerate(KINDS)}
     out.sort(key=lambda d: (order.get(d["kind"], len(KINDS)), d["title"].lower()))
-    return {"slug": slug, "docs": out, "not_fetched": missing, "why": entry.get("why", ""), "kinds": KINDS,
-            "upload_max": config.UPLOAD_MAX}
+    return {"slug": slug, "docs": out, "not_fetched": missing, "why": entry.get("why", ""), "note": entry.get("note", ""),
+            "kinds": KINDS, "upload_max": config.UPLOAD_MAX}
 
 
 def overview():
@@ -350,7 +350,7 @@ def sheet(slug):
     for rail, x in rails.items():
         x["actual"] = (act.get("rails") or {}).get(rail)
         x["window"] = (eff.get("rails") or {}).get(rail)
-        x["source"] = (eff.get("sources") or {}).get(rail)
+        x["source"] = (eff.get("sources") or {}).get(rail) or ("specs file" if x["window"] else None)
         if conf.get(rail) and not any(m["confirmed"] for m in x["manual"]):
             x["confirmed_elsewhere"] = conf[rail]       # confirmed from a list entry that has since changed
     facts = [dict(f, title=titles.get(f.get("doc"), f.get("doc")), actual=(act.get("facts") or {}).get(f.get("what")))

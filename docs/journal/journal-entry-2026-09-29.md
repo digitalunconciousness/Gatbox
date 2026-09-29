@@ -34,3 +34,21 @@
   the manual says +5 V and the cabinet was boosted to 5.20 V: record 5.20 V with a note, taken from the meter or typed,
   and optionally give that machine its own window so a boosted rail doesn't read HIGH all night. The same for the
   rest of the spec page ("fuse is 8 A slow-blow", "LCD swap").
+- Manuals installed (the owner OK'd the new group, the folder and the web server's write access for uploads).
+- The floor's manuals list: 396 documents for 88 of the 95 machines, picked by hand from the public archives (other
+  games, cocktail and conversion versions, older printings and Japanese-only editions left out). 389 are on the Pi
+  (1.2 GB); 7 wait on Internet Archive servers that are erroring, and a later fetch gets them.
+- Where a machine has no manual of its own, the manual for the same board stands in, per MAME: UMK3 gets MK3's,
+  NBA Jam TE gets NBA Jam's, NFL Blitz 2000 gets the 1997 Blitz kit's.
+- Nothing found for Darkstalkers, DDR, House of the Dead 2, The Swarm, Retro Raccoons, Snow Bros 2 and Super Ghouls
+  (no arcade board: it was a Super Nintendo game). House of the Dead 2 and Retro Raccoons can be downloaded by hand
+  and added with ADD PDF; IPDB won't allow automated downloads, so the regular Addams Family manual is the same.
+- Spec sheets read off the manuals, every value checked against its page: 18 rail limits on 10 machines (Batman,
+  California Speed, Captain America, Defender, Gauntlet Legends, Hyper Sports, RoboCop, Super Pac-Man, Tekken 3,
+  Tetris) and 52 facts on 42 machines (power, line voltage, fuses, monitor). Gauntlet Legends' manual (p.51) gives
+  the same +5 V 4.90–5.10 and +12 V 11.5–12.5 as the owner's spec from 09-25.
+- FOUND: most older manuals give only current ratings and line voltage, no rail limits. Those machines get the
+  facts; their window stays the profile's until a limit is confirmed or an actual value is set.
+- NEXT: install the list; CONFIRM the rail limits on the dashboard as each machine comes up; settle the CHECK
+  machines (Batman, D&D, SF2 Grandmaster, After Burner, Snow Bros 2, DDR's mix); burning (CLI per the spec, or the
+  dashboard, which would mean changing hard rule 6); M8 when she's ready.

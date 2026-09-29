@@ -11,6 +11,9 @@
                    all 0xFF, -w programs it (bits go 1 -> 0 only, like a UV EPROM) and verifies, as minipro 0.7.4 does
     FAKE_WRITE_FAIL 1 = the write leaves one byte unprogrammed (so minipro's verify fails)
     FAKE_SIZES     part=bytes pairs for -d (default: the 27C020s 262144, 27C010 131072)
+    FAKE_ORG       part=Words|Bits pairs for -d: minipro 0.7.4 prints a 16-bit part's size in words ("Memory: 262144
+                   Words" for AM27C4096@DIP40, 524288 bytes, read off this Pi) and a PLD's in bits; default Bytes
+    FAKE_WRITE_JUNK 1 = after the write, output that isn't text (a stand-in for anything unexpected mid-burn)
 Progress is printed with \\r and ESC[K like the real one, so the parser's clean-up is tested too. Messages are
 minipro 0.7.4's own (src/main.c: "memory section is blank.", "Verification OK", "Verification failed at address").
 """
@@ -19,7 +22,7 @@ import sys
 
 a = sys.argv[1:]
 parts = os.environ.get("FAKE_PARTS", "27C010@DIP32,27C020@DIP32,TMS27C020@DIP32,AM27C020@DIP32,27C1000@DIP32,"
-                                     "TMS27C020@TSOP32,TMS27C020@PLCC32,OLD2716").split(",")
+                                     "TMS27C020@TSOP32,TMS27C020@PLCC32,OLD2716,27C301@DIP32").split(",")
 print("Found T48 00.1.32 (0x120)\nWarning: T48 support is not yet complete!", file=sys.stderr)
 
 
@@ -38,13 +41,15 @@ if "-l" in a or "-L" in a:
     sys.exit(0)
 SIZES = dict(x.split("=") for x in os.environ.get(
     "FAKE_SIZES", "27C020@DIP32=262144,TMS27C020@DIP32=262144,AM27C020@DIP32=262144,27C010@DIP32=131072,"
-                  "27C1000@DIP32=131072,TMS27C020@TSOP32=262144,TMS27C020@PLCC32=262144,OLD2716=2048").split(","))
+                  "27C1000@DIP32=131072,TMS27C020@TSOP32=262144,TMS27C020@PLCC32=262144,OLD2716=2048,27C301@DIP32=131072").split(","))
+ORG = dict(x.split("=") for x in os.environ.get("FAKE_ORG", "").split(",") if x)
 if "-d" in a:                                             # minipro -q T48 -d PART: the device's info
     dev = opt("-d")
     if dev not in parts:
         print(f"Device {dev} not found!", file=sys.stderr)
         sys.exit(1)
-    print(f"Name: {dev}\nMemory: {SIZES.get(dev, '262144')} Bytes\nPackage: DIP32\n"
+    org, n = ORG.get(dev, "Bytes"), int(SIZES.get(dev, "262144"))
+    print(f"Name: {dev}\nMemory: {n // 2 if org == 'Words' else n} {org}\nPackage: DIP32\n"
           "*******************************\nVPP programming voltage: 12.5V\nVDD write voltage: 6.5V")
     sys.exit(0)
 part = opt("-p")
@@ -95,6 +100,10 @@ if "-w" in a and chip:                                    # write, then verify (
         sys.stderr.write(f"\rWriting Code...  {pct}%\x1b[K")
     sys.stderr.write("\rWriting Code...  OK\x1b[K\n")
     open(chip, "wb").write(bytes(new))
+    if os.environ.get("FAKE_WRITE_JUNK") == "1":
+        sys.stderr.flush()
+        os.write(2, b"\xff\xfe\xfa not text\n")
+        sys.exit(0)
     if "-v" not in a:
         bad = next((i for i, (x, y) in enumerate(zip(src, new)) if x != y), None)
         if bad is not None:

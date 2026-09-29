@@ -252,6 +252,36 @@ def burn_cli():
           code == 2 and "TMS27C020@DIP32" in out and chip_now() == blank)
     code, out = burn("--burn", f"{T}/nope.bin", "-p", "27C020@DIP32", inp="27C020@DIP32\n")
     check("an image that isn't there: refused", code == 2 and "nope.bin" in out)
+    # a 16-bit part: minipro 0.7.4 gives its size in words ("Memory: 262144 Words" = 524,288 bytes, read off this Pi)
+    wide = dict(FAKE_PARTS="27C020@DIP32,AM27C4096@DIP40,ATF16V8B", FAKE_ORG="AM27C4096@DIP40=Words,ATF16V8B=Bits",
+                FAKE_SIZES="27C020@DIP32=262144,AM27C4096@DIP40=524288,ATF16V8B=2194")
+    img4 = os.urandom(524288)
+    open(f"{T}/img4m.bin", "wb").write(img4)
+    chip(b"\xff" * 524288)
+    code, out = burn("--burn", f"{T}/img4m.bin", "-p", "AM27C4096@DIP40", inp="AM27C4096@DIP40\n", **wide)
+    check("a 16-bit part (minipro: 'Memory: 262144 Words'): words x 2 = the image's 524,288 bytes, VERIFIED",
+          code == 0 and "VERIFIED" in out and chip_now() == img4)
+    chip()
+    code, out = burn("--burn", f"{T}/img.bin", "-p", "ATF16V8B", inp="ATF16V8B\n", **wide)
+    check("a part minipro sizes in bits (a PLD, not an EPROM): refused, nothing written",
+          code == 2 and "bits" in out.lower() and "EPROM" in out and chip_now() == blank)
+    # anything unexpected once the write has started still ends as a logged stop that says the chip was written
+    chip()
+    n0 = len(burns())
+    code, out = burn("--burn", f"{T}/img.bin", "-p", "27C020@DIP32", inp="27C020@DIP32\n", FAKE_WRITE_JUNK=1)
+    check("an unexpected error after the write starts: STOPPED (no traceback), the chip was written, logged",
+          code == 2 and "STOPPED" in out and "Traceback" not in out and "written" in out
+          and len(burns()) == n0 + 1 and burns()[-1]["state"] == "stopped")
+    # the burn log can't be written: the result still stands
+    log = f"{T}/roms/burns.jsonl"
+    os.rename(log, log + ".keep")
+    os.makedirs(log)
+    chip()
+    code, out = burn("--burn", f"{T}/img.bin", "-p", "27C020@DIP32", inp="27C020@DIP32\n")
+    check("the burn log can't be written: still VERIFIED, and it says the log wasn't written",
+          code == 0 and "VERIFIED" in out and "Traceback" not in out and "log" in out.lower() and chip_now() == img)
+    os.rmdir(log)
+    os.rename(log + ".keep", log)
 
 
 def burn_jobs(sp):
@@ -301,6 +331,22 @@ def burn_jobs(sp):
           and burns()[-1]["machine"] == "m10")
     check("... and the request is used up (claimed once)", not os.path.exists(f"{sp}/request.json")
           and not os.path.exists(f"{sp}/running.json"))
+    chip()
+    now = time.time()
+    code, st = job({"id": "b7", "op": "burn", "image": image, "part": "27C020@DIP32",
+                    "armed": {"by": "screen", "at": now, "until": now + 30}}, FAKE_FLAKY=1)
+    check("a stop after the write (the read-backs disagree): the status says the chip was written",
+          st["state"] == "stopped" and st.get("written") is True)
+    log = f"{T}/roms/burns.jsonl"
+    os.rename(log, log + ".keep")
+    os.makedirs(log)
+    code, st = job({"id": "b8", "op": "burn", "image": image, "part": "27C020@DIP32",
+                    "armed": {"by": "screen", "at": now - 60, "until": now - 30}})
+    check("the burn log can't be written: the job still ends with its result, the log's error beside it; not written",
+          code == 0 and st["state"] == "stopped" and "expired" in st["error"] and st.get("log_error")
+          and not st.get("written"))
+    os.rmdir(log)
+    os.rename(log + ".keep", log)
 
 
 def burn_web(w, call, B):

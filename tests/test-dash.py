@@ -595,6 +595,28 @@ def main():
             time.sleep(1.0)
             check("let go early: nothing armed, nothing sent", not os.path.exists(f"{T}/spool/request.json")
                   and open(f"{T}/chip.bin", "rb").read() == b"\xff" * 262144)
+            # count the page's POSTs to /api/burn; while __burnFail is set, answer them 409 (nothing gets burned)
+            q("(() => { window.__burnPosts = 0; window.__burnFail = true; const f0 = window.fetch; "
+              "window.fetch = (u, o) => { if (o && o.method === 'POST' && String(u) === '/api/burn') { window.__burnPosts++; "
+              "if (window.__burnFail) return Promise.resolve(new Response(JSON.stringify({error: 'the T48 dropped off USB'}), "
+              "{status: 409, headers: {'Content-Type': 'application/json'}})); } return f0(u, o); }; })()")
+            q("(() => { const b = document.querySelector('#du-body button.hold'); "
+              "for (const id of [11, 12]) b.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true, pointerId: id})); })()")
+            time.sleep(0.3)
+            q("(() => { const b = document.querySelector('#du-body button.hold'); "
+              "for (const id of [11, 12]) b.dispatchEvent(new PointerEvent('pointerup', {bubbles: true, pointerId: id})); })()")
+            time.sleep(3.5)
+            check("two fingers, both lifted early: nothing armed, nothing sent", q("window.__burnPosts") == 0)
+            q("document.querySelector('#du-body button.hold').dispatchEvent(new PointerEvent('pointerdown', {bubbles: true}))")
+            c.wait("window.__burnPosts === 1", 10)
+            time.sleep(1.0)                                            # the 409's toast; the button is spent
+            q("document.querySelector('#du-body button.hold').dispatchEvent(new PointerEvent('pointerdown', {bubbles: true}))")
+            time.sleep(0.2)
+            q("document.querySelector('#du-body button.hold').dispatchEvent(new PointerEvent('pointerup', {bubbles: true}))")
+            time.sleep(3.5)
+            check("a hold whose request fails (409): a fresh button, and a tap on it arms nothing",
+                  q("window.__burnPosts") == 1 and q("document.querySelector('#du-body button.hold').textContent").startswith("HOLD 3 S"))
+            q("window.__burnFail = false")
             q("(() => { const b = [...document.querySelectorAll('#du-body button')].find(b => b.textContent.startsWith('HOLD 3 S')); "
               "b.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true})); })()")
             c.wait("document.querySelector('#du-body').textContent.includes('BURNING')", 15)
@@ -630,6 +652,57 @@ def main():
                       and "arm it at the Pi" in text("#du-body"))
                 c.open(B + "/dash/", 1024, 600)
                 c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
+
+            print("BURN: a non-JEDEC confirmation covers that part only; a stop after the write says so:")
+            open(f"{T}/roms/_images/one-mbit.bin", "wb").write(os.urandom(131072))
+            open(f"{T}/chip.bin", "wb").write(b"\xff" * 131072)
+            c.open(B + "/dash/", 1024, 600)
+            c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
+            click('[data-view="dump"]')
+            c.wait("document.querySelectorAll('#du-body .seg button').length === 2", 15)
+            q("[...document.querySelectorAll('#du-body .seg button')].find(b => b.textContent === 'BURN').click()")
+            c.wait("document.querySelector('#du-body').textContent.includes('1 · IMAGE')", 10)
+            q("[...document.querySelectorAll('#du-body button')].find(b => b.textContent.startsWith('PICK AN IMAGE')).click()")
+            c.wait("[...document.querySelectorAll('#pane .picklist .row')].some(r => r.textContent.includes('one-mbit.bin'))", 10)
+            q("[...document.querySelectorAll('#pane .picklist .row')].find(r => r.textContent.includes('one-mbit.bin')).click()")
+            c.wait("document.querySelector('#du-body').textContent.includes('IMAGE: one-mbit.bin')", 10)
+
+            def search_part(name):
+                q("[...document.querySelectorAll('#du-body button')].find(b => b.textContent === 'SEARCH').click()")
+                c.wait("document.querySelector('#pane .kp-field')")
+                tap_keys(name.split("@")[0])
+                c.wait(f"[...document.querySelectorAll('#pane .picklist .row')].some(r => r.textContent === {json.dumps(name)})", 10)
+                q(f"[...document.querySelectorAll('#pane .picklist .row')].find(r => r.textContent === {json.dumps(name)}).click()")
+                c.wait(f"document.querySelector('#du-body').textContent.includes({json.dumps(name)})", 10)
+            search_part("27C1000@DIP32")
+            q("[...document.querySelectorAll('#du-body button')].find(b => b.textContent === 'BLANK CHECK').click()")
+            c.wait("[...document.querySelectorAll('#du-body button')].some(b => b.textContent === 'I CHECKED: BLANK CHECK AGAIN')", 30)
+            q("[...document.querySelectorAll('#du-body button')].find(b => b.textContent === 'I CHECKED: BLANK CHECK AGAIN').click()")
+            c.wait("document.querySelector('#du-body').textContent.includes('HOLD 3 S TO BURN one-mbit.bin → 27C1000@DIP32')", 30)
+            q("[...document.querySelectorAll('#du-body button')].find(b => b.textContent === 'CHANGE').click()")
+            c.wait("document.querySelectorAll('#du-body .tile').length === 14", 10)
+            search_part("27C301@DIP32")
+            q("[...document.querySelectorAll('#du-body button')].find(b => b.textContent === 'BLANK CHECK').click()")
+            c.wait("document.querySelector('#du-body').textContent.includes('27C301@DIP32: non-JEDEC') || "
+                   "document.querySelector('#du-body').textContent.includes('HOLD 3 S TO BURN one-mbit.bin → 27C301')", 30)
+            check("I CHECKED for 27C1000, then CHANGE to 27C301: its own non-JEDEC stop, no hold to burn",
+                  "27C301@DIP32: non-JEDEC" in text("#du-body")
+                  and not q("[...document.querySelectorAll('#du-body button')].some(b => b.textContent.startsWith('HOLD'))"))
+
+            def result_for(st):
+                json.dump(dict(st, op="burn", state="stopped", image=f"{T}/roms/_images/one-mbit.bin", part="27C301@DIP32",
+                               finished_at=time.time()), open(f"{T}/spool/.st.tmp", "w"))
+                os.replace(f"{T}/spool/.st.tmp", f"{T}/spool/status.json")
+                c.wait(f"document.querySelector('#du-body').textContent.includes({json.dumps(st['error'])})", 10)
+                return text("#du-body")
+            got = result_for({"error": "read 1 failed: IO error: expected 64 bytes but 0 bytes transferred", "written": True,
+                              "hint": "check the chip is in the socket, notch toward the lever"})
+            check("a stop after the write (a read-back failed): FAILED, and it says the chip was written",
+                  "FAILED" in got and "NOT BURNED" not in got and "the chip was written" in got)
+            shot("19f-burn-written")
+            got = result_for({"error": "the arm expired before the burn started", "hint": "hold the button again"})
+            check("a stop before the write: NOT BURNED, nothing about the chip being written",
+                  "NOT BURNED" in got and "the chip was written" not in got)
             done.set()
         else:
             print("  skip  (the T48 isn't plugged in)")

@@ -1700,30 +1700,35 @@
       sub: `${x.folder} · ${x.name} · ${KB(x.size)} · ${x.matches[0] || (x.match === false ? "NO MATCH" : "not identified")}`})),
       D.bimage && D.bimage.image);
     if (!pick) return;
-    D.bimage = r.images.find(x => x.image === pick); D.part = null; D.byes = false;   // a new image: pick its part next
+    D.bimage = r.images.find(x => x.image === pick); D.part = null; D.byes = null;    // a new image: pick its part next
     renderDump();
   }
   function burnReq(path) {
-    const body = Object.assign({image: D.bimage.image, part: D.part}, D.machine ? {machine: D.machine} : {}, D.byes ? {yes: true} : {});
+    // D.byes: the part the owner confirmed a non-JEDEC pinout for; it covers that part only, never a later CHANGE
+    const body = Object.assign({image: D.bimage.image, part: D.part}, D.machine ? {machine: D.machine} : {},
+                               D.byes && D.byes === D.part ? {yes: true} : {});
     return api("POST", path, body)
       .then(() => toast(path.endsWith("/blank") ? `BLANK CHECK queued: ${D.part}` : `BURN armed: ${D.bimage.name} → ${D.part}`))
-      .catch(fail);
+      .catch(e => { fail(e); renderDump(); });       // a refused burn: a fresh hold button replaces the spent one
   }
-  // hold to act (like SHUT DOWN): letting go early does nothing; while it's held, the tab doesn't redraw under it
+  // hold to act (like SHUT DOWN): letting go early does nothing; while it's held, the tab doesn't redraw under it.
+  // One pointer holds it (a second finger is ignored, and so is its release), and once it has fired it's spent
   function holdButton(label, ms, fire) {
     const b = el("button", "hold bad", label);
     b.style.cssText = "min-height:72px;font-size:20px;width:100%";
     b.style.setProperty("--ms", ms + "ms");
-    let t = null;
+    let t = null, who = null;
     const end = () => { D.holding = false; if (D.pending) { D.pending = false; setTimeout(renderDump, 0); } };
-    const stop = () => {
-      if (b.dataset.done) return;
-      clearTimeout(t); b.classList.remove("arm"); b.textContent = label;
-      if (D.holding) end();
+    const stop = e => {
+      if (t === null || e.pointerId !== who) return;
+      clearTimeout(t); t = who = null; b.classList.remove("arm"); b.textContent = label;
+      end();
     };
     b.addEventListener("pointerdown", e => {
-      e.preventDefault(); D.holding = true; b.classList.add("arm"); b.textContent = "KEEP HOLDING…";
-      t = setTimeout(() => { b.dataset.done = 1; b.textContent = "ARMED: STARTING…"; end(); fire(); }, ms);
+      e.preventDefault();
+      if (t !== null || b.dataset.done) return;
+      who = e.pointerId; D.holding = true; b.classList.add("arm"); b.textContent = "KEEP HOLDING…";
+      t = setTimeout(() => { t = who = null; b.dataset.done = 1; b.textContent = "ARMED: STARTING…"; end(); fire(); }, ms);
     });
     ["pointerup", "pointerleave", "pointercancel"].forEach(k => b.addEventListener(k, stop));
     return b;
@@ -1737,14 +1742,15 @@
           el("div", "mut", `SHA-1 ${s.sha1} · ${KB(s.size || 0)} · VPP ${s.vpp || "?"}`),
           el("div", "mut", "minipro's verify OK · 2 read-backs identical to the image"));
     } else {
-      const big = s.op === "blank" ? (s.blank_ok === false ? "NOT BLANK" : "STOPPED")
-                : /write failed|read-backs/.test(s.error || "") ? "FAILED" : "NOT BURNED";
-      add(c, el("div", "big bad", big), el("div", null, s.error || ""), s.hint ? el("div", "mut", "→ " + s.hint) : null);
+      const written = s.op === "burn" && (s.written || /write failed|read-backs/.test(s.error || ""));
+      const big = s.op === "blank" ? (s.blank_ok === false ? "NOT BLANK" : "STOPPED") : written ? "FAILED" : "NOT BURNED";
+      add(c, el("div", "big bad", big), el("div", null, s.error || ""), s.hint ? el("div", "mut", "→ " + s.hint) : null,
+          written ? el("div", "warn", "the chip was written, so it may be partly programmed: BLANK CHECK it before using it again") : null);
       const again = el("div", "btnrow");
       const btn = (t, f) => { const b = el("button", null, t); b.addEventListener("click", f); again.appendChild(b); };
       const m = /again with -p (\S+)/.exec(s.hint || "");
       if (m) btn("USE " + m[1], () => { D.part = m[1]; renderDump(); });
-      if (/--yes/.test(s.hint || "") && D.bimage) btn("I CHECKED: BLANK CHECK AGAIN", () => { D.byes = true; burnReq("/api/burn/blank"); });
+      if (/--yes/.test(s.hint || "") && D.bimage) btn("I CHECKED: BLANK CHECK AGAIN", () => { D.byes = D.part; burnReq("/api/burn/blank"); });
       if (again.childNodes.length) c.appendChild(again);
     }
     return c;

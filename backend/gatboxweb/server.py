@@ -314,6 +314,25 @@ def api_dump_post(h, m, q):
     h.json(202, req)
 
 
+def api_burn_images(h, m, q):
+    h.json(200, {"images": dump.images()})
+
+
+def api_burn_blank(h, m, q):
+    req = dump.blank_request(h.body())
+    h.log_line(f"burn: blank check {req['part']} for {os.path.basename(req['image'])}")
+    LIVE.emit("dump", dump.status())
+    h.json(202, req)
+
+
+def api_burn(h, m, q):
+    """POST /api/burn: the Pi's own screen only (h.is_local()): the hold there is the arm."""
+    req = dump.burn_request(h.body(), h.is_local())
+    h.log_line(f"burn: ARMED {req['part']} ← {os.path.basename(req['image'])} ({req['armed']['by']})")
+    LIVE.emit("dump", dump.status())
+    h.json(202, req)
+
+
 def api_dump_parts(h, m, q):
     h.json(200, dump.search(q1(q, "q"), q1(q, "family")))
 
@@ -598,6 +617,9 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("POST", r"/api/dump", api_dump_post),
     ("GET", r"/api/dump/parts", api_dump_parts),
     ("GET", r"/api/dumps", api_dumps),
+    ("GET", r"/api/burn/images", api_burn_images),
+    ("POST", r"/api/burn/blank", api_burn_blank),
+    ("POST", r"/api/burn", api_burn),
     ("GET", r"/api/roster", api_roster),
     ("POST", r"/api/roster", api_roster_add),
     ("GET", r"/api/roster/(?P<slug>[^/]+)", api_roster_entry),

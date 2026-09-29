@@ -303,6 +303,77 @@ def burn_jobs(sp):
           and not os.path.exists(f"{sp}/running.json"))
 
 
+def burn_web(w, call, B):
+    """gatbox-web's BURN API: the images it offers, BLANK CHECK, and the burn itself (the Pi's own screen only, after a
+    recent blank check of the same image and part). The runner stands in for gatbox-dump.path."""
+    import time
+    import urllib.error
+    import urllib.request
+    print("gatbox-web's BURN API:")
+    os.makedirs(f"{w}/roms/segasonic-the-hedgehog", exist_ok=True)
+    os.makedirs(f"{w}/roms/_images", exist_ok=True)
+    img = os.urandom(262144)
+    sha = hashlib.sha1(img).hexdigest()
+    open(f"{w}/roms/segasonic-the-hedgehog/EPR-15781C_{sha[:8]}.bin", "wb").write(img)
+    json.dump({"label": "EPR-15781C", "sha1": sha, "size": 262144,
+               "romident": {"match": True, "matches": [{"set": "sonic", "rom": "epr-15781c.ic18", "description": "x"}]}},
+              open(f"{w}/roms/segasonic-the-hedgehog/EPR-15781C_{sha[:8]}.json", "w"))
+    diag = os.urandom(131072)
+    open(f"{w}/roms/_images/diag-rom.bin", "wb").write(diag)
+    os.symlink("/etc/hostname", f"{w}/roms/_images/escape.bin")
+    open(f"{w}/chip.bin", "wb").write(b"\xff" * 262144)
+    code, r = call("GET", "/api/burn/images")
+    got = {x["image"]: x for x in r.get("images", [])} if code == 200 else {}
+    rel = f"segasonic-the-hedgehog/EPR-15781C_{sha[:8]}.bin"
+    check("images: the archive's (with SHA-1 + MAME match) and _images/ (SHA-1 computed); nothing outside the archive",
+          code == 200 and {rel, "_images/diag-rom.bin"} <= set(got) and "_images/escape.bin" not in got
+          and all(k.split("/")[0] in ("segasonic-the-hedgehog", "_images") for k in got) and got[rel]["sha1"] == sha
+          and got[rel]["matches"] == ["sonic/epr-15781c.ic18"] and got["_images/diag-rom.bin"]["size"] == 131072
+          and got["_images/diag-rom.bin"]["sha1"] == hashlib.sha1(diag).hexdigest())
+    bad = [call("POST", "/api/burn/blank", b)[0] for b in ({"image": "../../etc/passwd", "part": "27C020@DIP32"},
+                                                             {"image": "_images/escape.bin", "part": "27C020@DIP32"},
+                                                             {"image": rel, "part": "27C999@DIP32"})]
+    check("blank check: an image not in the list or an unknown part -> 400", bad == [400, 400, 400])
+    code, r = call("POST", "/api/burn", {"image": rel, "part": "27C020@DIP32"})
+    check("burn with no blank check first -> 409", code == 409 and "blank" in r["error"].lower())
+    lan = next((a for a in subprocess.run(["hostname", "-I"], capture_output=True, text=True).stdout.split() if "." in a), None)
+    if lan:
+        req = urllib.request.Request(B.replace("127.0.0.1", lan) + "/api/burn", method="POST",
+                                     data=json.dumps({"image": rel, "part": "27C020@DIP32"}).encode(),
+                                     headers={"Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(req, timeout=10)
+            code = 200
+        except urllib.error.HTTPError as e:
+            code = e.code
+        check("burn from the network (a phone) -> 403: only the Pi's own screen arms", code == 403)
+    if not t48_present():
+        print("  skip  (the T48 isn't plugged in: blank checks and burns are refused without it)")
+        return
+
+    def wait():
+        for _ in range(150):
+            c, st = call("GET", "/api/dump")
+            if not st["busy"] and st["status"] and st["status"].get("state") in ("done", "stopped"):
+                return st["status"]
+            time.sleep(0.2)
+    code, r = call("POST", "/api/burn/blank", {"image": rel, "part": "27C020@DIP32", "machine": "segasonic-the-hedgehog"})
+    st = wait()
+    check("BLANK CHECK -> 202, the job says blank", code == 202 and st["op"] == "blank" and st["blank_ok"] is True)
+    code, r = call("POST", "/api/burn", {"image": rel, "part": "TMS27C020@DIP32"})
+    code2, r = call("POST", "/api/burn", {"image": "_images/diag-rom.bin", "part": "27C020@DIP32"})
+    check("burn another part, or another image, than the blank check's -> 409 each", code == 409 and code2 == 409)
+    t0 = time.time()
+    code, r = call("POST", "/api/burn", {"image": rel, "part": "27C020@DIP32", "machine": "segasonic-the-hedgehog"})
+    check("burn after the blank check, on the Pi -> 202, armed by the screen for 30 s",
+          code == 202 and r["op"] == "burn" and r["armed"]["by"] == "screen" and abs(r["armed"]["until"] - (t0 + 30)) < 3)
+    st = wait()
+    check("... the job burns and verifies: the chip holds the image", st["op"] == "burn" and st["state"] == "done"
+          and st["verified"] is True and open(f"{w}/chip.bin", "rb").read() == img)
+    code, r = call("POST", "/api/burn", {"image": rel, "part": "27C020@DIP32"})
+    check("burn again without a new blank check -> 409 (the last job was a burn)", code == 409)
+
+
 def t48_present():
     import glob as g
     return any(open(p).read().strip() == "a466" for p in g.glob("/sys/bus/usb/devices/*/idVendor"))
@@ -340,10 +411,16 @@ def web_side():
     def runner():                                   # gatbox-dump.path: a request appears → gatbox-dump --job
         while not stop.is_set():
             if os.path.exists(f"{w}/spool/request.json"):
+                try:                                 # blank checks and burns get the fake chip, dumps the fake ROM
+                    op = json.load(open(f"{w}/spool/request.json")).get("op")
+                except (OSError, ValueError):
+                    op = None
+                chip = {"FAKE_CHIP": f"{w}/chip.bin"} if op in ("blank", "burn") else {}
                 subprocess.run(["python3", DUMP, "--job", f"{w}/spool/request.json", "--status", f"{w}/spool/status.json"],
                                env=dict(fake, GATBOX_MINIPRO=os.path.join(REPO, "tests/fake-minipro"),
                                         GATBOX_MAME=os.path.join(REPO, "tests/fake-mame"), GATBOX_ROMS=f"{w}/roms",
-                                        GATBOX_API=B, FAKE_ROM=f"{T}/rom.bin", FAKE_MAME_MATCH="epr-15781c.ic18 sonic SegaSonic"),
+                                        GATBOX_API=B, FAKE_ROM=f"{T}/rom.bin", FAKE_MAME_MATCH="epr-15781c.ic18 sonic SegaSonic",
+                                        **chip),
                                capture_output=True, timeout=60)
             time.sleep(0.2)
     threading.Thread(target=runner, daemon=True).start()
@@ -391,6 +468,7 @@ def web_side():
             os.remove(f"{w}/spool/running.json")
         else:
             print("  skip  (the T48 isn't plugged in: requests are refused without it)")
+        burn_web(w, call, B)
         check("server log: no errors", "Traceback" not in open(f"{w}/web.log").read())
     finally:
         stop.set()

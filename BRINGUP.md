@@ -44,8 +44,9 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       [x] installed (d578961) [x] each machine's ROM checklist from MAME's own hash data, no ROM sets downloaded
       (code + tests/test-mame.sh, test-dash) [x] manuals: MANUALS tab (viewer, search, phone upload), spec sheet
       (the manual's limits with page + words, CONFIRM, actual values from the field) (code + tests/test-manuals.sh,
-      test-dash) [ ] install both (needs OK: group gatbox-manuals, /srv/gatbox/manuals, gatbox-web.service) [ ] the
-      manuals list for the floor + fetch [ ] spec sheets read off the manuals [ ] project update + journal
+      test-dash) [x] install both (owner OK'd the group, the folder, the unit) [x] the manuals list for the floor +
+      fetch (396 documents for 88 of 95 machines, 389 on the Pi, 1.2 GB) [x] spec sheets read off the manuals (18
+      rail limits on 10 machines, 52 facts on 42) [ ] the list installed [ ] project update + journal
 
 ### M0 notes (2026-09-28)
 - **Spec vs reality:** the handoff and the project CLAUDE.md say the logger already writes `# mode=`, a
@@ -442,6 +443,41 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
     file (like a profile change). Confirmed specs stay on the Pi: the public repo keeps only the one it had.
   - Dashboard: MANUALS tab (FOR <machine>, like DUMP), the spec sheet table, the documents, ADD PDF on a phone; the
     viewer (page images, PREV/NEXT, swipe, pinch/drag/+−, double tap, page jump, SEARCH, OPEN PDF on a phone).
+  - **The list (2026-09-29):** 396 documents for 88 of the 95 machines, picked by hand. Sources:
+    - the Internet Archive's arcademanuals collection (4,753 items; the OCR'd `_text.pdf` when the original is an
+      image-only scan, 346 of 373);
+    - the Arcade Manual Archive's index (2,822 PDFs);
+    - Stern's own PDFs (wp.sternpinball.com);
+    - the SEGA documents database (SegaSonic 420-6095);
+    - pinrepair.com (Bally D&D);
+    - PrimeTime Amusements (Pac-Man Battle Royale; Bandai Namco's link is gone).
+
+    Left out: other games, cocktail/conversion variants, older printings and Japanese-only editions.
+    - Stand-ins: UMK3 gets the MK3 manual (same Wolf-unit board, MAME midwunit.cpp); NBA Jam TE gets NBA Jam's
+      (T-unit); NFL Blitz 2000 gets the 1997 Blitz kit (Seattle). The Sportstation manuals were dropped: those are the
+      Vegas board.
+    - Two candidates side by side, with a note: Batman (Atari video / Data East pinball), Batman pinball (TDK / The
+      Batman 2023), D&D pinball (Bally 1987 / Stern).
+    - None found: Darkstalkers, DDR (which mix?), House of the Dead 2 (only on Manualzz/ManualsLib: ADD PDF), The
+      Swarm, Retro Raccoons (glitchbit.com has it), Snow Bros 2, Super Ghouls (no arcade board). IPDB refuses
+      automated downloads (403), so the regular Addams Family manual is a note pointing there.
+  - **Fetch:** 389 of the 396 documents, 1.2 GB, sha256 pinned in the list. Seven are waiting on four Internet
+    Archive storage nodes that answer 500; a later `gatbox-manuals fetch` gets them.
+  - **Spec sheets:** found with scans of every document's text, then each read on its page.
+    - Rail limits (18, on 10 machines):
+      - Batman (Atari) +5 ±0.25;
+      - California Speed +5 4.90–5.10, +12 11.5–12.5, −5 −4.75..−5.25;
+      - Captain America +5 ±5%;
+      - Defender +5 4.75–5.25 (power supply recap);
+      - Gauntlet Legends +5 4.90–5.10, +12 11.5–12.5, −5, −12 (p.51: the same as the owner's specs file);
+      - Hyper Sports +5.0 ±0.1;
+      - RoboCop +5 4.90–5.10;
+      - Super Pac-Man +5 ±0.2;
+      - Tekken 3 +5 ±5% / kit +5% −1%, +12 ±5%;
+      - Tetris +5 ±0.25, +12 ±0.5.
+    - 52 facts on 42 machines: power, line voltage, fuses, monitor.
+    - A setpoint without limits ("adjust the +5V output to 5.4V", Aliens) is a fact, never a window.
+    - Each entry was checked by script against its page's text before it went in.
 
 ## Bring-up 1: bootstrap run — 2026-09-23
 

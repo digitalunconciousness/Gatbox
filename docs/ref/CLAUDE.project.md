@@ -20,7 +20,7 @@ in `docs/gatbox-master-guide.html`. **Hardware acquisition status lives in
   - M4 data model and JSON API;
   - M5 the dashboard;
   - M6 the scanner;
-  - M7 T48 dumps and burns (dashboard dump passed 2026-09-29; burn built the same day, armed by a hold on the 7″).
+  - M7 T48 dumps and burns (a dashboard dump and a first real burn from the 7″ both passed 2026-09-29).
 - **Owner requests (2026-09-29), also done:**
   - add machines on the dashboard (+ export for the maintenance app);
   - SAVE READING (was CAPTURE);

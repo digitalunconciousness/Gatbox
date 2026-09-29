@@ -70,7 +70,10 @@
   A stop after the write now says the chip may be partly programmed; BLANK CHECK it before using it again.
 - Burning needs no system change (same service, same folders): the next bootstrap run installs it, with the
   manuals list.
-- NEXT: install (burn + the manuals list); a real burn to a blank chip from the 7"; CONFIRM the rail limits on the
+- ⏸ M7 burn PASSED ("Burn tests pass"): at 17:05 an AM27C020 took the SegaSonic EPR-15781C image from the
+  archive: BLANK CHECK, the 3 s hold on the 7", then VERIFIED (minipro's verify and two read-backs). One bootstrap
+  run installed the burn and the manuals list. M7 is done.
+- NEXT: CONFIRM the rail limits on the
   dashboard as each machine comes up; settle the CHECK machines (Batman, D&D, SF2 Grandmaster, After Burner, Snow
   Bros 2, DDR's mix).
 - DECIDED (owner): M8, the homelab side (Sync, the war-room panel), is on hold until she's ready to sort out

@@ -5,9 +5,9 @@ Raspberry Pi OS Trixie 64-bit **Desktop**, labwc, hostname `gatbox`, user `<user
 logger** that gets left inside an arcade cabinet overnight, and is becoming the bench brain: 7" touch dashboard,
 T48 EPROM dumps, scanner → roster. No enclosure yet, so the Pi sits bare in the cabinet.
 
-**Phase 2 is in progress.** The spec is `docs/phase2-handoff.md` (the handoff's PROMPT.md), with the plan in
+**Phase 2: M0–M7 done (2026-09-29); M8 (stretch) is on hold at the owner's call.** The spec is `docs/phase2-handoff.md` (the handoff's PROMPT.md), with the plan in
 `docs/gatbox-phase2-plan.md`. Where they differ, the spec wins. **Resuming? Re-read the spec and
-the progress checklist in BRINGUP.md, then carry on from the first unchecked milestone.**
+the progress checklist in BRINGUP.md, then carry on from the first unchecked milestone that isn't on hold.**
 
 ## Signal chain
 UNI-T UT61E (original ES51922) → UT-D02 optical cable → CableCreation PL-2303 USB-RS232 → `/dev/gatbox-dmm`
@@ -138,3 +138,4 @@ the bootstrap, CLAUDE.md, the plan/progress and journal entries.
 ## Status
 Bring-up done 2026-09-23 (BRINGUP.md "Bring-up 1/2"). Phase 0 and Phase 1 (rail flight recorder) done and in use:
 first cabinet log 2026-09-25 (Gauntlet Legends). **Phase 2 started 2026-09-28**: progress checklist in BRINGUP.md.
+M0–M7 done 2026-09-29 (the first real burn from the 7″ that evening); M8 on hold.

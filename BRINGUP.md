@@ -32,7 +32,7 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       python3-qrcode); ⏸ Katasymbol labels **passed**: slug `DDR` (same machine, already picked), GATBOX:NEW → new
       file still `machine=ddr`, GATBOX:MARK → `# mark=…,scan,` in the live file and on the report plot. GPIO MARK
       button deferred (no enclosure yet). The overnight exit test (scan a cabinet, MARK at a crash) is real-world use.
-- [ ] **M7 2F T48 dump**: [x] T48 firmware 01.1.32 (owner flashed it, self-test passed) [x] gatbox-dump CLI (real
+- [x] **M7 2F T48 dump**: [x] T48 firmware 01.1.32 (owner flashed it, self-test passed) [x] gatbox-dump CLI (real
       chip: MATCH sonic/epr-15781c.ic18) [x] dashboard DUMP flow + gatbox-dump.path/.service + archive + part list
       (tests/test-dump.sh, test-dash) [x] install (owner OK'd the user, dirs, units, group) [x] ⏸ dump a known
       EPROM from the dashboard **passed** 2026-09-29 01:50 (owner: "It works"; SegaSonic EPR-15781C, MATCH
@@ -44,8 +44,9 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       /api/burn from loopback only, after a passing blank check of that image + part < 5 min old, `armed.until` =
       +30 s, checked when the job starts), `-w` (minipro erases only electrically-erasable chips, then "Verification
       OK"), 2 read-backs == the image, `burns.jsonl` (plan docs/plans/2026-09-29-t48-burn.md; tests/test-dump.sh,
-      test-dash; fake-minipro FAKE_CHIP) [ ] install (same units and paths: no system config change) [ ] ⏸ a real
-      burn to a blank chip from the 7″
+      test-dash; fake-minipro FAKE_CHIP) [x] install (same units and paths: no system config change) [x] ⏸ a real
+      burn from the 7″ **passed** 2026-09-29 17:05 (owner: "Burn tests pass"): AM27C020@DIP32 ← SegaSonic EPR-15781C
+      from the archive, BLANK CHECK → the 3 s hold → VERIFIED (minipro's verify + 2 read-backs), in burns.jsonl
 - [ ] **M8 2G stretch**: deferred by the owner (2026-09-29): the homelab side (Sync, the war-room panel) waits until
       she's ready to sort out her server setup. Don't start it or ask about it until she brings it up.
 - [ ] **Owner requests (2026-09-29)**, off-spec, one at a time with her OK on each design:
@@ -55,7 +56,7 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       (the manual's limits with page + words, CONFIRM, actual values from the field) (code + tests/test-manuals.sh,
       test-dash) [x] install both (owner OK'd the group, the folder, the unit) [x] the manuals list for the floor +
       fetch (396 documents for 88 of 95 machines, 389 on the Pi, 1.2 GB) [x] spec sheets read off the manuals (18
-      rail limits on 10 machines, 52 facts on 42) [ ] the list installed [x] project update + journal
+      rail limits on 10 machines, 52 facts on 42) [x] the list installed [x] project update + journal
 
 ### M0 notes (2026-09-28)
 - **Spec vs reality:** the handoff and the project CLAUDE.md say the logger already writes `# mode=`, a

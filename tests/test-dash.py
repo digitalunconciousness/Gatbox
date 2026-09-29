@@ -224,16 +224,20 @@ def main():
         time.sleep(1)
         check("OL shown as OL, resistance chip, no dial banner", text("#m-value") == "OL" and text("#m-mode") == "Resistance"
               and "SET DIAL" not in banners())
-        check("CAPTURE live on a bench profile", not q("document.querySelector('#b-capture').disabled"))
+        check("SAVE READING live on a bench profile, says where it goes",
+              not q("document.querySelector('#b-capture').disabled") and text("#b-capture") == "SAVE READINGto unassigned (no machine)")
         shot("09-ol")
 
-        print("capture (keypad):")
+        print("save reading (keypad):")
         click("#b-capture")
         c.wait("!document.querySelector('#sheet').classList.contains('hide')")
         shot("10-keypad")
         tap_keys("R12")
-        c.wait("document.querySelector('#toast').textContent.startsWith('CAPTURED')", 10)
-        check("capture saved (unassigned)", "R12" in text("#toast") and "unassigned" in text("#toast"))
+        c.wait("document.querySelector('#toast').textContent.startsWith('SAVED')", 10)
+        check("reading saved (unassigned)", "R12" in text("#toast") and "unassigned" in text("#toast"))
+        c.wait("document.querySelector('#m-saved').textContent.includes('R12')", 10)
+        check("... and listed under the reading", text("#m-saved") == "SAVED: R12 OL")
+        shot("10b-saved")
 
         print("the 09-25 fixture's 20 V burst (03:22:40-03:23:25):")
         api("PUT", "/api/meter/profile", {"id": "rail-5v"})
@@ -313,6 +317,64 @@ def main():
               all(s in text("#pane") for s in ("GATBOX:MARK", "GATBOX:NEW", "gauntlet-legends", "COPY")))
         shot("16b-label-list")
         q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'CLOSE').click()")
+
+        print("add a machine (keypad with shift, platform picker) + export:")
+        def field(label):
+            q(f"[...document.querySelectorAll('#pane .fld')].find(b => b.firstChild.textContent === {json.dumps(label)}).click()")
+
+        def key(ch):
+            q(f"[...document.querySelectorAll('#pane .keys button')].find(b => b.textContent === {json.dumps(ch)}).click()")
+
+        def typed(label, keys_):
+            field(label)
+            c.wait("document.querySelector('#pane .keys')")
+            for ch in keys_:
+                key(ch)
+            key("OK")
+            c.wait("document.querySelector('#pane .seg')")
+
+        click("#mc-add")
+        c.wait("!document.querySelector('#sheet').classList.contains('hide') && document.querySelector('#pane .seg')")
+        check("the form: name, maker, video/pinball, platform, notes; ADD disabled",
+              [x for x in q("[...document.querySelectorAll('#pane .fld span')].map(s => s.textContent)")] == ["NAME", "MAKER", "PLATFORM", "NOTES"]
+              and q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'ADD MACHINE').disabled"))
+        typed("NAME", ["Z", "abc", "a", "x", "x", "o", "n"])
+        typed("MAKER", "SEGA")
+        field("PLATFORM")
+        c.wait("document.querySelectorAll('#pane .picklist .row').length === 2")
+        q("[...document.querySelectorAll('#pane .picklist .row')].find(r => r.textContent.includes('hard drive')).click()")
+        c.wait("document.querySelector('#pane .idline').textContent.startsWith('ID zaxxon')", 10)
+        check("Zaxxon (shift worked), SEGA, the platform, and the ID before saving",
+              all(x in text("#pane") for x in ("Zaxxon", "SEGA", "Test platform with a hard drive", "ID zaxxon · permanent")))
+        shot("16c-add-machine")
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'ADD MACHINE').click()")
+        c.wait("document.querySelector('#toast').textContent.startsWith('ADDED Zaxxon')", 10)
+        check("added: toast, on the roster, marked added",
+              any(m["slug"] == "zaxxon" and m["added"] for m in api("GET", "/api/roster")["machines"]))
+        click("#mc-add")
+        c.wait("!document.querySelector('#sheet').classList.contains('hide') && document.querySelector('#pane .seg')")
+        typed("NAME", "GAUNTLET")
+        typed("MAKER", "X")
+        field("PLATFORM")
+        c.wait("document.querySelectorAll('#pane .picklist .row').length === 2")
+        q("document.querySelector('#pane .picklist .row').click()")
+        c.wait("document.querySelector('#pane .idline').textContent.includes('already on the roster')", 10)
+        check("a name already on the roster: said before saving, ADD stays off",
+              q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'ADD MACHINE').disabled"))
+        shot("16d-add-duplicate")
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'CANCEL').click()")
+        c.wait("document.querySelector('#sheet').classList.contains('hide')")
+        click("#mc-export")
+        c.wait("document.querySelector('#pane') && document.querySelector('#pane').textContent.includes('roster.json')", 10)
+        check("export on the kiosk: the address to open, the added machine with EDIT",
+              "/roster.json" in text("#pane") and "Zaxxon" in text("#pane")
+              and q("[...document.querySelectorAll('#pane button')].some(b => b.textContent === 'EDIT')"))
+        shot("16e-export")
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'EDIT').click()")
+        c.wait("document.querySelector('#pane h2').textContent === 'Edit Zaxxon'", 10)
+        check("EDIT: the same form, ID shown as permanent, no type switch",
+              "ID zaxxon (permanent)" in text("#pane") and not q("document.querySelector('#pane .seg')"))
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'CANCEL').click()")
 
         print("sessions:")
         click('[data-view="sessions"]')

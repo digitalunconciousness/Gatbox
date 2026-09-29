@@ -34,10 +34,15 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       button deferred (no enclosure yet). The overnight exit test (scan a cabinet, MARK at a crash) is real-world use.
 - [ ] **M7 2F T48 dump**: [x] T48 firmware 01.1.32 (owner flashed it, self-test passed) [x] gatbox-dump CLI (real
       chip: MATCH sonic/epr-15781c.ic18) [x] dashboard DUMP flow + gatbox-dump.path/.service + archive + part list
-      (tests/test-dump.sh, test-dash) [ ] install (needs OK: user gatbox-dump, /srv/gatbox/roms + spool, the two
-      units, gatbox-web joins group gatbox-dump) [ ] ⏸ dump a known EPROM from the dashboard [ ] burn (owner wants
-      it: CLI per the spec; dashboard burn is her call on hard rule 6)
+      (tests/test-dump.sh, test-dash) [x] install (owner OK'd the user, dirs, units, group) [x] ⏸ dump a known
+      EPROM from the dashboard **passed** 2026-09-29 01:50 (owner: "It works"; SegaSonic EPR-15781C, MATCH
+      sonic/epr-15781c.ic18 in the archive's sidecar) [ ] burn (owner wants it: CLI per the spec; dashboard burn is
+      her call on hard rule 6)
 - [ ] **M8 2G stretch**: ask first
+- [ ] **Owner requests (2026-09-29)**, off-spec, one at a time with her OK on each design:
+      [x] + ADD MACHINE / EDIT / EXPORT ROSTER, and CAPTURE → SAVE READING (code + tests/test-roster.sh, test-dash)
+      [ ] installed [ ] manuals, with specs cited to their page, viewable on the dashboard [ ] each machine's ROM
+      checklist from MAME's own hash data (no ROM sets downloaded)
 
 ### M0 notes (2026-09-28)
 - **Spec vs reality:** the handoff and the project CLAUDE.md say the logger already writes `# mode=`, a
@@ -368,6 +373,27 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   manufacturer-prefixed ones (AM27C010, M27C1001, TMS27C010…). The M2 dump showed why the exact part matters: generic
   `27C020@DIP32` refused a TI chip, "Invalid Chip ID: expected 0x8934, got 0x9732 (TMS27C020@DIP32)", and it read as
   `TMS27C020@DIP32`. The dump flow surfaces that message and re-selects; it never passes `-y`.
+
+### Owner requests notes (2026-09-29)
+- **"There is no way to import a new game/machine."** MACHINE → **+ ADD MACHINE**: name, maker, VIDEO GAME /
+  PINBALL, platform (the roster's 44, or NOT SURE = platform + risk `confirm`, the roster's own convention), notes.
+  - gatbox-web makes the ID from the name (lower-case, hyphens; apostrophes dropped, & → and, accents folded, `pin-`
+    for pinball) and shows it before saving (a dry run), because it's permanent: it's what the QR code holds. A
+    name or ID already on the roster (retired ones too) is refused before saving. `unassigned` is reserved.
+  - Saved to `/var/lib/gatbox-web/roster-added.json` in the roster's entry format (all 8 fields, the file's order).
+    The installed roster file is never written: the bootstrap owns it and the maintenance app is its source.
+  - `gatboxlib.profiles.roster()` merges the additions, so the picker, scanner, captures, the DUMP tab's FOR
+    machine, and the label sheet (`/labels.pdf` rebuilds when the additions change) all take a new machine at once.
+  - EDIT (machines added here only) changes the name, maker, platform or notes; the ID and kind stay.
+  - **EXPORT ROSTER**: `GET /roster.json`, the file plus the additions in the file's own layout (2-space indent,
+    ASCII escapes), for the maintenance app to import. On the kiosk it shows the address to open on a phone.
+  - When a newer roster file (installed by the bootstrap) has the same slug, the file's entry wins and the Pi's copy
+    is ignored; a slug the file retires stays off the floor. A damaged additions file is never overwritten (503).
+- **"What does capture even do?"** It saved the live reading with a label into the machine's notes, but the only
+  place to see them was MACHINE → Captures. Now: **SAVE READING**, the subtitle says which machine it goes to, the
+  last three show on one line under the reading, and MACHINE lists "Saved readings".
+- The on-screen keypad got a shift key (abc/ABC) and ' & : ! for names. The meter's action buttons now cut long
+  subtitles with "…" instead of widening the grid past the screen edge.
 
 ## Bring-up 1: bootstrap run — 2026-09-23
 

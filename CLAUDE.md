@@ -35,6 +35,9 @@ The bootstrap's MANIFEST maps repo files to installed paths. `--check` (no root)
   `server.py`). Fonts in `/usr/local/share/gatbox-web/fonts`. Stdlib, DynamicUser, `video` group + a private /dev
   holding only /dev/vcio_gencmd (vcgencmd). No D-Bus from inside it: /api/system reads the kernel, sysfs, /proc, iw.
 - The dashboard (M5) at `/dash/` (static files in `/usr/local/share/gatbox-web/dash`), which the 7" kiosk opens.
+  MACHINE → + ADD MACHINE writes `/var/lib/gatbox-web/roster-added.json` (roster entry format; the installed roster
+  file is never written), merged by `gatboxlib.profiles.roster()`; the file wins a slug both have. `GET /roster.json`
+  exports file + additions for the maintenance app.
 - `gatbox-scand` + `gatbox-scand.service` (M6): grabs the EY-H2 (USB af99:8002) and posts each code to gatbox-web
   (`POST /api/scan`, loopback): roster slug → machine, `GATBOX:MARK` → mark, `GATBOX:NEW` → new file.
   DynamicUser + input group, input devices only, localhost only. `gatbox-labels` / `/labels.pdf`: QR sheet (the owner

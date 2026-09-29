@@ -40,12 +40,13 @@
         </div>
         <div class="hero-read"><span id="m-value">—</span><span id="m-unit"></span><span id="m-state" class="badge hide"></span></div>
         <div id="m-session" class="mut">…</div>
+        <div id="m-saved" class="hide"></div>
       </div>
       <div class="actions">
         <button id="b-mark" class="act">MARK<small>hold: with a label</small></button>
         <button id="b-new" class="act">NEW FILE<small>end this one</small></button>
         <button id="b-alarm" class="act">ALARM ON<small>over-voltage takeover</small></button>
-        <button id="b-capture" class="act">CAPTURE<small>save this reading</small></button>
+        <button id="b-capture" class="act">SAVE READING<small>to the machine</small></button>
       </div>
     </div>
     <div class="chartbox">
@@ -70,7 +71,8 @@
   <!-- MACHINE: the current roster machine -->
   <section id="v-machine" class="view scroll">
     <div class="btnrow"><button id="mc-pick">PICK MACHINE</button><button id="mc-clear">CLEAR</button>
-      <button id="mc-labels">LABEL LIST</button></div>
+      <button id="mc-labels">LABEL LIST</button><button id="mc-add">+ ADD MACHINE</button>
+      <button id="mc-export">EXPORT ROSTER</button></div>
     <div id="mc-body"></div>
   </section>
 

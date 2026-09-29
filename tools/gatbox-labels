@@ -11,7 +11,8 @@ Letter-size PDF (cut on the dashed lines):
 
 A machine QR is 33 mm across (about 1 mm a module for a slug), comfortable for the EY-H2 at ~20 cm. Error correction
 level M, so a scuffed label still reads. QR from python3-qrcode (apt), drawing from python3-matplotlib (apt).
-The roster is found the same way as everywhere else ($GATBOX_DATA, the repo's data/, /usr/local/share/gatbox).
+The roster is found the same way as everywhere else ($GATBOX_DATA, the repo's data/, /usr/local/share/gatbox),
+plus the machines added on the dashboard when the state dir can be read ($GATBOX_STATE: gatbox-web's /labels.pdf).
 """
 import argparse
 import os

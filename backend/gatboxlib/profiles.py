@@ -5,7 +5,8 @@ it's workplace data, git-ignored, and may be missing on a fresh clone). Found in
 data/ when running from a checkout, else /usr/local/share/gatbox.
 
 State (written only by gatbox-web, read by gatbox-raillog via gatbox-meta): profile.json ({"id", "window"}) and
-machine (a roster slug) in $GATBOX_STATE, else /var/lib/gatbox-web.
+machine (a roster slug) in $GATBOX_STATE, else /var/lib/gatbox-web. Also roster-added.json: the machines added on
+the dashboard, merged into roster() (the installed roster file itself is never written).
 """
 import json, math, os
 
@@ -53,9 +54,42 @@ def machine_specs(dd=None):
     return (_load(os.path.join(dd or data_dir(), "gatbox-machine-specs.json")) or {}).get("machines", {})
 
 
-def roster(dd=None):
-    """The roster dict, or None when it isn't installed (fresh clone: it's git-ignored workplace data)."""
-    return _load(os.path.join(dd or data_dir(), "gatbox-barcade-roster.json"))
+ROSTER_FILE = "gatbox-barcade-roster.json"
+ADDED_FILE = "roster-added.json"      # in the state dir: machines added on the dashboard (gatbox-web writes it)
+FLOOR = ("video_games", "pinball")
+
+
+def roster_file(dd=None):
+    """The installed roster file as it is, or None when it isn't installed (it's git-ignored workplace data)."""
+    return _load(os.path.join(dd or data_dir(), ROSTER_FILE))
+
+
+def roster_added(sd=None):
+    """Machines added on the Pi: {"video_games": [...], "pinball": [...]} in the roster's own entry format. Empty when
+    there are none or the file can't be read here (a login shell can't see gatbox-web's private state; a damaged file
+    is left for gatbox-web to report, never guessed at)."""
+    try:
+        d = _load(os.path.join(sd or state_dir(), ADDED_FILE))
+    except (OSError, ValueError):
+        d = None
+    d = d if isinstance(d, dict) else {}
+    return {k: [e for e in d.get(k, []) if isinstance(e, dict) and e.get("slug")] for k in FLOOR}
+
+
+def roster(dd=None, sd=None):
+    """The roster: the installed file plus the machines added on the Pi, appended to video_games / pinball. The file
+    wins a slug both have, and its retired slugs stay retired. None when neither exists. The cached file dict is never
+    changed: a merge builds new lists."""
+    base, extra = roster_file(dd), roster_added(sd)
+    if not any(extra.values()):
+        return base
+    r = dict(base) if isinstance(base, dict) else {"meta": {}, "video_games": [], "pinball": [], "retired": []}
+    taken = {e.get("slug") for k in FLOOR + ("retired",) for e in r.get(k, []) if isinstance(e, dict)}
+    for k in FLOOR:
+        new = [e for e in extra[k] if e["slug"] not in taken]
+        if new:
+            r[k] = list(r.get(k, [])) + new
+    return r
 
 
 def roster_slugs(dd=None):

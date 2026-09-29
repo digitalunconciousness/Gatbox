@@ -99,7 +99,17 @@
     on("alarm", onAlarm);
     on("mark", m => { if (m.pending) S.pending.push(m); else S.marks.push(m); chartDecor();
                       toast(`MARK ${hms(m.epoch, true)}${m.label ? " · " + m.label : ""}${m.pending ? " (goes into the next file)" : ""}`); });
-    on("capture", c => toast(`CAPTURED ${c.label}: ${c.display} → ${c.machine}`));
+    on("capture", c => {
+      const to = c.machine === "unassigned" ? "unassigned (no machine set)"
+               : c.machine === (S.st && S.st.machine) ? (S.st.machine_name || c.machine) : c.machine;
+      toast(`SAVED ${c.label}: ${c.display} → ${to}`);
+      loadSaved();
+    });
+    on("roster", r => {
+      toast(r.action === "added" ? `ADDED ${r.name} · ID ${r.slug} · it's in PICK MACHINE and the label list`
+                                 : `UPDATED ${r.name}`);
+      if (S.view === "machine") loadMachine();
+    });
     on("scan", onScan);
     on("dump", onDump);
     on("state", st => onState(st));
@@ -162,6 +172,22 @@
     if (now.jack) S.leadWarn = false;
     chartDecor(); renderMeter(); renderHeader(); renderNav();
     if (S.view === "machine") loadMachine();
+    if (S.savedFor !== (S.st.machine || null)) loadSaved();
+  }
+
+  // SAVE READING's notes: the current machine's last three, on one line under the reading
+  const savedText = k => /inf/i.test(k.value) ? "OL" : `${k.value} ${k.unit}`;
+  async function loadSaved() {
+    const slug = (S.st && S.st.machine) || null;
+    S.savedFor = slug;
+    let d;
+    try { d = await api("GET", "/api/captures" + (slug ? "?machine=" + encodeURIComponent(slug) : "")); } catch (e) { return; }
+    if (S.savedFor !== slug) return;                // the machine changed while this was on its way
+    const L = d.captures.slice(-3).reverse(), box = clear($("#m-saved"));
+    box.classList.toggle("hide", !L.length);
+    if (!L.length) return;
+    box.appendChild(document.createTextNode("SAVED: "));
+    L.forEach((k, i) => add(box, document.createTextNode(i ? " · " : ""), el("b", null, k.label), document.createTextNode(" " + savedText(k))));
   }
 
   // --- over-voltage -------------------------------------------------------------------------
@@ -293,7 +319,8 @@
     ab.lastChild.textContent = a.applies ? `over ${si(a.limit, "V", 0.001)} takes the screen` : "this profile has no limit";
     const cb = $("#b-capture");
     cb.disabled = !(p.kind === "bench" && on);
-    cb.lastChild.textContent = p.kind === "bench" ? (on ? "save this reading" : "needs a live reading") : "bench profiles only";
+    const to = S.st.machine ? `to ${S.st.machine_name || S.st.machine}` : "to unassigned (no machine)";
+    cb.lastChild.textContent = p.kind === "bench" ? (on ? to : "needs a live reading") : "bench profiles only";
   }
 
   // MARK: tap = now; hold = now, then a label on the keypad (the time is the press, not the typing)
@@ -319,7 +346,7 @@
     api("PUT", "/api/meter/alarm", {on}).then(st => { onState(st); toast(on ? "ALARM ON" : "ALARM OFF: over-voltage won't take the screen (still logged)", on ? "" : "warn"); }).catch(fail);
   });
   $("#b-capture").addEventListener("click", async () => {
-    const label = await keypad({title: "Capture label (e.g. U12 PIN 3)", max: 40});
+    const label = await keypad({title: "Save reading: a label (e.g. U12 PIN 3)", max: 40});
     if (!label) return;
     api("POST", "/api/captures", {label}).catch(fail);
   });
@@ -342,7 +369,7 @@
   }
   function keypad({title, max, number, value}) {
     return sheet(title, (pane, done) => {
-      let txt = value || "";
+      let txt = value || "", lower = false;
       const field = el("div", "kp-field");
       const show = () => { field.textContent = txt; field.appendChild(el("span", "cur")); };
       show();
@@ -355,13 +382,28 @@
         else if (txt.length < (max || 40)) txt += k;
         show();
       };
-      for (const r of rows) for (const k of r) {
-        const b = el("button", null, k);
-        b.addEventListener("click", () => press(k));
+      const letters = [];
+      const key = (k, cls, label) => {
+        const b = el("button", cls || null, label || k), letter = /^[A-Z]$/.test(k);
+        b.addEventListener("click", () => press(letter && lower ? k.toLowerCase() : k));
+        if (letter) letters.push(b);
         keys.appendChild(b);
+        return b;
+      };
+      for (const r of rows) for (const k of r) key(k);
+      if (!number) {                                 // shift (names aren't all caps), the symbols names use, space
+        const sh = el("button", "wide shift", "abc");
+        sh.addEventListener("click", () => {
+          lower = !lower;
+          sh.textContent = lower ? "ABC" : "abc"; sh.classList.toggle("on", lower);
+          letters.forEach(b => { b.textContent = lower ? b.textContent.toLowerCase() : b.textContent.toUpperCase(); });
+        });
+        keys.appendChild(sh);
+        key("'"); key("&");
+        const sp = el("button", "x4", "SPACE"); sp.addEventListener("click", () => press(" ")); keys.appendChild(sp);
+        key(":"); key("!");
       }
-      if (!number) { const sp = el("button", "x4", "SPACE"); sp.addEventListener("click", () => press(" ")); keys.appendChild(sp); }
-      const cancel = el("button", number ? "" : "wide", "CANCEL"), ok = el("button", number ? "" : "x4", "OK");
+      const cancel = el("button", number ? "" : "x4", "CANCEL"), ok = el("button", number ? "" : "x6", "OK");
       ok.style.borderColor = "var(--mag)";
       cancel.addEventListener("click", () => done(null));
       ok.addEventListener("click", () => done(txt.trim()));
@@ -585,12 +627,21 @@
     let m;
     try { m = await api("GET", "/api/machine"); } catch (e) { return fail(e); }
     $("#mc-clear").disabled = !m.slug;
-    $("#mc-pick").disabled = !m.roster;
-    if (!m.roster) { B.appendChild(el("div", "card warn", "No roster installed on this Pi (data/gatbox-barcade-roster.json).")); return; }
-    if (!m.slug) { B.appendChild(el("div", "card mut", "No machine set. PICK MACHINE, or scan its QR code (the scanner comes in M6).")); return; }
+    $("#mc-pick").disabled = $("#mc-export").disabled = $("#mc-labels").disabled = !m.roster;
+    if (!m.roster) { B.appendChild(el("div", "card warn", "No roster installed on this Pi (data/gatbox-barcade-roster.json). + ADD MACHINE starts one here.")); return; }
+    if (!m.slug) { B.appendChild(el("div", "card mut", "No machine set. PICK MACHINE, or scan its QR code.")); return; }
     const e = m.entry, c = el("div", "card");
     add(c, el("div", "big", e.name), el("div", "mut", `${e.slug} · ${e.mfr || ""} · ${e.kind === "pinball" ? "pinball" : "video game"}`));
+    if (e.added) {
+      const r = el("div", "btnrow"), ed = el("button", null, "EDIT");
+      r.style.cssText = "align-items:center;margin-top:6px";
+      ed.addEventListener("click", () => editMachine(e));
+      add(r, el("span", "badge cy", "ADDED ON THIS PI"), el("span", "mut", "EXPORT ROSTER takes it to the maintenance app"), ed);
+      c.appendChild(r);
+    }
     if (e.platform_info) add(c, el("div", null, e.platform_info.desc || e.platform));
+    else if (e.platform === NOT_SURE) add(c, el("div", "warn", "Platform: not sure yet"));
+    if (e.notes) add(c, el("div", "mut", e.notes));
     if (e.risk_info && e.risk_info.length) {
       const ch = el("div", "chips");
       for (const r of e.risk_info) ch.appendChild(el("span", "badge warn", r.flag + (r.meaning ? ": " + r.meaning : "")));
@@ -621,12 +672,12 @@
       for (const [r, w] of Object.entries(e.spec.rails)) c.appendChild(el("div", null, `${r.replace("-", "−")}  ${w[0]}–${w[1]} V`));
       if (e.spec.source) c.appendChild(el("div", "mut", e.spec.source));
     } else c.appendChild(el("div", "mut", "None on file (gatbox-machine-specs.json takes numbers from the machine's own manual)."));
-    c.appendChild(el("h3", null, "Captures"));
+    c.appendChild(el("h3", null, "Saved readings"));
     try {
       const cp = await api("GET", "/api/captures?machine=" + encodeURIComponent(e.slug));
-      if (!cp.captures.length) c.appendChild(el("div", "mut", "None yet: pick a bench profile and press CAPTURE."));
+      if (!cp.captures.length) c.appendChild(el("div", "mut", "None yet: pick a bench profile and press SAVE READING."));
       for (const k of cp.captures.slice(-30).reverse())
-        c.appendChild(el("div", null, `${k.iso.replace("T", " ")}  ${k.label}  ${k.value} ${k.unit}  (${modeLabel(k.mode)}${k.flags ? ", " + k.flags : ""})`));
+        c.appendChild(el("div", null, `${k.iso.replace("T", " ")}  ${k.label}  ${savedText(k)}  (${modeLabel(k.mode)}${k.flags ? ", " + k.flags : ""})`));
     } catch (x) { c.appendChild(el("div", "bad", String(x.message))); }
     c.appendChild(el("h3", null, "Dumps"));
     try { dumpList(c, (await api("GET", "/api/dumps?machine=" + encodeURIComponent(e.slug))).dumps); }
@@ -684,18 +735,26 @@
   $("#mc-pick").addEventListener("click", async () => {
     let R;
     try { R = await api("GET", "/api/roster"); } catch (e) { return fail(e); }
-    const pick = await sheet("Pick the machine", (pane, done) => {
+    const pick = await pickFrom("Pick the machine", R.machines.map(m => ({
+      key: m.slug, title: m.name, find: [m.name.toLowerCase(), m.slug],
+      sub: m.slug + (m.spec ? " · rail spec" : "") + (m.added ? " · added here" : "")})), S.st && S.st.machine);
+    if (!pick) return;
+    api("PUT", "/api/machine", {slug: pick}).then(r => { toast(`Machine: ${r.entry.name}${r.new_file ? " · new file started" : ""}`); loadMachine(); }).catch(fail);
+  });
+
+  // a pick list filtered with its own letter keys (the kiosk has no keyboard): machines, platforms
+  function pickFrom(title, items, cur) {
+    return sheet(title, (pane, done) => {
       let q = "";
-      const field = el("div", "kp-field");
-      const list = el("div", "picklist");
+      const field = el("div", "kp-field"), list = el("div", "picklist");
       const draw = () => {
         field.textContent = q || "type to filter"; field.appendChild(el("span", "cur"));
         clear(list);
         const Q = q.toLowerCase();
-        for (const m of R.machines.filter(m => !Q || m.name.toLowerCase().includes(Q) || m.slug.includes(Q)).slice(0, 60)) {
-          const b = el("button", "row");
-          add(b, el("b", null, m.name), el("div", "mut", m.slug + (m.spec ? " · rail spec" : "")));
-          b.addEventListener("click", () => done(m.slug));
+        for (const it of items.filter(it => !Q || it.find.some(f => f.includes(Q))).slice(0, 60)) {
+          const b = el("button", "row" + (it.key === cur ? " on" : ""));
+          add(b, el("b", null, it.title), el("div", "mut", it.sub));
+          b.addEventListener("click", () => done(it.key));
           list.appendChild(b);
         }
       };
@@ -710,8 +769,118 @@
       add(pane, field, list, keys);
       draw();
     });
+  }
+
+  // + ADD MACHINE / EDIT: the roster's own fields. The server makes the ID from the name; a dry run shows it before
+  // saving, because it's permanent (it's what the QR code holds). EDIT is for machines added here: ID and kind stay.
+  const NOT_SURE = "confirm";           // the roster's own mark for a board nobody has confirmed yet
+  async function machineForm(f, slug) {
+    let plats = [];
+    try { plats = (await api("GET", "/api/roster")).platforms || []; } catch (e) { /* no roster yet: NOT SURE only */ }
+    const pdesc = k => k === NOT_SURE ? "NOT SURE (confirm later)" : ((plats.find(p => p.key === k) || {}).desc || k);
+    for (;;) {
+      const act = await sheet(slug ? `Edit ${f.name}` : "Add a machine", (pane, done) => {
+        const form = el("div", "form");
+        const fld = (label, value, a, hint) => {
+          const b = el(a ? "button" : "div", "row fld");
+          add(b, el("span", "mut", label), el("b", value ? null : "mut", value || hint));
+          if (a) b.addEventListener("click", () => done(a));
+          return b;
+        };
+        add(form, fld("NAME", f.name, "name", "tap to type"), fld("MAKER", f.mfr, "mfr", "tap to type"));
+        if (slug) form.appendChild(fld("TYPE", f.kind === "pinball" ? "Pinball" : "Video game"));
+        else {
+          const seg = el("div", "seg");
+          for (const [k, t] of [["video_games", "VIDEO GAME"], ["pinball", "PINBALL"]]) {
+            const b = el("button", f.kind === k ? "on" : null, t);
+            b.addEventListener("click", () => done("kind:" + k));
+            seg.appendChild(b);
+          }
+          form.appendChild(seg);
+        }
+        add(form, fld("PLATFORM", f.platform ? pdesc(f.platform) : "", "platform", "tap to pick"),
+            fld("NOTES", f.notes, "notes", "optional"));
+        const idl = el("div", "idline mut"), row = el("div", "btnrow");
+        const save = el("button", "primary", slug ? "SAVE" : "ADD MACHINE"), cancel = el("button", null, "CANCEL");
+        save.disabled = true;
+        save.addEventListener("click", () => done("save"));
+        cancel.addEventListener("click", () => done(null));
+        add(row, save, cancel);
+        add(pane, form, idl, row);
+        const ready = f.name && f.mfr && f.platform;
+        if (slug) { idl.textContent = `ID ${slug} (permanent)`; save.disabled = !ready; }
+        else if (!ready) idl.textContent = "Needs a name, a maker and a platform (NOT SURE is fine).";
+        else {
+          idl.textContent = "checking the name…";
+          api("POST", "/api/roster", Object.assign({}, f, {dry_run: true})).then(d => {
+            idl.textContent = `ID ${d.entry.slug} · permanent: it's what the QR code holds`;
+            idl.className = "idline ok"; save.disabled = false;
+          }).catch(e => { idl.textContent = e.message; idl.className = "idline bad"; });
+        }
+      });
+      if (act == null) return null;
+      if (act === "name") { const v = await keypad({title: "Machine name (as on the marquee)", max: 60, value: f.name}); if (v != null) f.name = v; }
+      else if (act === "mfr") { const v = await keypad({title: "Maker (e.g. CAPCOM, WILLIAMS)", max: 40, value: f.mfr}); if (v != null) f.mfr = v; }
+      else if (act === "notes") { const v = await keypad({title: "Notes (optional)", max: 200, value: f.notes}); if (v != null) f.notes = v; }
+      else if (act === "platform") {
+        const p = await pickFrom("Platform: the board family", [
+          {key: NOT_SURE, title: pdesc(NOT_SURE), sub: "flagged 'confirm' until someone checks the board", find: ["not sure", NOT_SURE]},
+          ...plats.map(p => ({key: p.key, title: p.desc, sub: p.key, find: [p.desc.toLowerCase(), p.key]}))], f.platform);
+        if (p) f.platform = p;
+      }
+      else if (act.startsWith("kind:")) f.kind = act.slice(5);
+      else if (act === "save") {
+        const body = {name: f.name, mfr: f.mfr, platform: f.platform, notes: f.notes};
+        try {
+          return (slug ? await api("PUT", "/api/roster/" + encodeURIComponent(slug), body)
+                       : await api("POST", "/api/roster", Object.assign(body, {kind: f.kind}))).entry;
+        } catch (e) { fail(e); }
+      }
+    }
+  }
+  const editMachine = e => machineForm({name: e.name, mfr: e.mfr || "", kind: e.kind, platform: e.platform, notes: e.notes || ""}, e.slug);
+  $("#mc-add").addEventListener("click", () => machineForm({name: "", mfr: "", kind: "video_games", platform: null, notes: ""}));
+
+  // EXPORT ROSTER: the roster file + the machines added here, for the maintenance app (a download on a phone; the
+  // kiosk can't hand a file to anyone, so it shows the address to open)
+  function piAddr() {
+    const n = (S.sys && S.sys.network) || {};
+    if (n.hotspot && n.hotspot.active && n.hotspot.address) return n.hotspot.address;
+    if (n.wifi && (n.wifi.ipv4 || []).length) return n.wifi.ipv4[0];
+    const i = (n.interfaces || []).find(x => x.ipv4 && x.ipv4.length);
+    return i ? i.ipv4[0] : null;
+  }
+  $("#mc-export").addEventListener("click", async () => {
+    let R;
+    try { R = await api("GET", "/api/roster"); } catch (e) { return fail(e); }
+    const mine = R.machines.filter(m => m.added);
+    const pick = await sheet("Export the roster", (pane, done) => {
+      pane.appendChild(el("div", null, (mine.length ? `The roster file plus the ${mine.length} machine${mine.length > 1 ? "s" : ""} added on this Pi`
+                                                    : "The roster file as installed (nothing added on this Pi yet)")
+                                        + ", in the file's own format, ready for the maintenance app to import."));
+      if (S.local) {
+        const a = piAddr();
+        add(pane, el("div", "mut", "On your phone (same network), open:"),
+            el("div", "big cy", `http://${a ? a.split("/")[0] : "<the Pi's address>"}/roster.json`));
+      } else {
+        const a = el("a", "btnlink", "DOWNLOAD gatbox-barcade-roster.json");
+        a.href = "/roster.json"; a.setAttribute("download", "gatbox-barcade-roster.json");
+        pane.appendChild(a);
+      }
+      if (!mine.length) return;
+      const list = el("div", "form");
+      for (const m of mine) {
+        const r = el("div", "row card"), t = el("div"), b = el("button", null, "EDIT");
+        r.style.cssText = "display:flex;align-items:center;gap:10px"; t.style.flex = "1";
+        add(t, el("b", null, m.name), el("div", "mut", `${m.slug} · ${m.mfr || ""}`));
+        b.addEventListener("click", () => done(m.slug));
+        add(r, t, b);
+        list.appendChild(r);
+      }
+      add(pane, el("h3", null, "Added on this Pi"), list);
+    });
     if (!pick) return;
-    api("PUT", "/api/machine", {slug: pick}).then(r => { toast(`Machine: ${r.entry.name}${r.new_file ? " · new file started" : ""}`); loadMachine(); }).catch(fail);
+    try { editMachine(await api("GET", "/api/roster/" + encodeURIComponent(pick))); } catch (e) { fail(e); }
   });
 
   // --- SYSTEM -------------------------------------------------------------------------------

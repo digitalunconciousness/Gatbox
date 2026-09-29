@@ -89,13 +89,18 @@ _labels_lock = threading.Lock()
 
 def get_labels(h, m, q):
     """The QR label sheet (gatbox-labels) as a PDF: the command card + every machine on the floor. Rebuilt when the
-    roster or the tool changes."""
+    roster, the machines added on the dashboard, or the tool change."""
     from gatboxlib import profiles
-    rp = os.path.join(profiles.data_dir(), "gatbox-barcade-roster.json")
-    try:
-        key = f"{int(os.stat(rp).st_mtime)}_{int(os.stat(config.LABELS).st_mtime)}"
-    except OSError:
+
+    def mt(p):
+        try:
+            return os.stat(p).st_mtime_ns
+        except OSError:
+            return 0
+    rp, ap = os.path.join(profiles.data_dir(), profiles.ROSTER_FILE), os.path.join(config.CTRL, profiles.ADDED_FILE)
+    if not (mt(rp) or mt(ap)) or not mt(config.LABELS):
         return h.send(503, phone.page("No labels", "<h1>No roster or no gatbox-labels on this Pi</h1>"))
+    key = f"{mt(rp)}_{mt(ap)}_{mt(config.LABELS)}"                  # machines added on the dashboard count too
     out = os.path.join(config.CACHE, f"labels_{key}.pdf")
     with _labels_lock:
         if not os.path.exists(out):
@@ -108,6 +113,15 @@ def get_labels(h, m, q):
                 return h.send(500, phone.page("Labels failed", f"<pre>{html.escape(r.stderr or r.stdout)}</pre>"))
     with open(out, "rb") as f:
         h.send(200, f.read(), "application/pdf", [("Content-Disposition", 'inline; filename="gatbox-labels.pdf"')])
+
+
+def get_roster_json(h, m, q):
+    """The roster for the maintenance app to import: the installed file plus the machines added on the dashboard."""
+    body = roster.export()
+    if body is None:
+        return h.send(503, phone.page("No roster", "<h1>No roster on this Pi</h1>"))
+    h.send(200, body, "application/json; charset=utf-8",
+           [("Content-Disposition", 'attachment; filename="gatbox-barcade-roster.json"')])
 
 
 def get_font(h, m, q):
@@ -320,7 +334,25 @@ def api_roster(h, m, q):
     L = roster.listing()
     if L is None:
         raise Bad(503, "no roster installed (data/gatbox-barcade-roster.json)")
-    h.json(200, {"machines": L})
+    h.json(200, {"machines": L, "platforms": roster.platforms(), "added": sum(1 for x in L if x["added"])})
+
+
+def api_roster_add(h, m, q):
+    """POST /api/roster: add a machine (dry_run: just the ID it would get). See roster.add."""
+    entry, kind, saved = roster.add(h.body())
+    if saved:
+        h.log_line(f"roster: added {entry['slug']} ({entry['name']})")
+        LIVE.emit("roster", {"action": "added", "slug": entry["slug"], "name": entry["name"]})
+    h.json(201 if saved else 200, {"entry": entry, "kind": kind, "saved": saved})
+
+
+def api_roster_edit(h, m, q):
+    entry, kind = roster.edit(m["slug"], h.body())
+    h.log_line(f"roster: edited {entry['slug']}")
+    LIVE.emit("roster", {"action": "edited", "slug": entry["slug"], "name": entry["name"]})
+    if meter.resolved()["machine"] == entry["slug"]:
+        LIVE.emit("state", meter.state(full=False))          # its name shows in every client's header
+    h.json(200, {"entry": entry, "kind": kind})
 
 
 def api_roster_entry(h, m, q):
@@ -371,6 +403,7 @@ def api_live(h, m, q):
         session    a new file (dial turn, NEW, profile/machine change) or {"file": null} when logging stops
         alarm      an over-voltage event opened (spike), escalated (alarm) or closed
         mark / capture / state   something done through the API (by any client)
+        roster     a machine added or edited on the dashboard
         heartbeat  every 15 s, even while samples flow: {"t", "logging", "age_s"}
     Event ids are sequence numbers: a client reconnecting with Last-Event-ID gets what it missed, if still kept."""
     with LIVE.cv:
@@ -439,6 +472,7 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("GET", r"/csv/(?P<name>[^/]+)", get_csv),
     ("GET", r"/font/(?P<file>[^/]+)", get_font),
     ("GET", r"/labels\.pdf", get_labels),
+    ("GET", r"/roster\.json", get_roster_json),
     ("POST", r"/control", post_control),
     ("GET", r"/kiosk/state", get_kiosk_state),
     ("POST", r"/kiosk/(?P<what>exit|shutdown)", post_kiosk),
@@ -470,7 +504,9 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("GET", r"/api/dump/parts", api_dump_parts),
     ("GET", r"/api/dumps", api_dumps),
     ("GET", r"/api/roster", api_roster),
+    ("POST", r"/api/roster", api_roster_add),
     ("GET", r"/api/roster/(?P<slug>[^/]+)", api_roster_entry),
+    ("PUT", r"/api/roster/(?P<slug>[^/]+)", api_roster_edit),
 ]]
 
 

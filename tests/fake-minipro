@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""A stand-in for minipro in the T48 tests: no programmer, no chip. Driven by the environment:
+
+    FAKE_ROM       the file a read returns (missing = the read fails)
+    FAKE_PARTS     part names it "knows" (comma-separated; default a few 27C-series ones)
+    FAKE_PIN       ok | unsupported | bad
+    FAKE_ID        ok | mismatch (read fails with minipro's 2026-09-28 message unless -y)
+    FAKE_FLAKY     1 = the second read differs in one byte
+    FAKE_COUNTER   a file counting reads (for FAKE_FLAKY)
+Progress is printed with \\r and ESC[K like the real one, so the parser's clean-up is tested too.
+"""
+import os
+import sys
+
+a = sys.argv[1:]
+parts = os.environ.get("FAKE_PARTS", "27C010@DIP32,27C020@DIP32,TMS27C020@DIP32,AM27C020@DIP32,27C1000@DIP32").split(",")
+print("Found T48 00.1.32 (0x120)\nWarning: T48 support is not yet complete!", file=sys.stderr)
+
+
+def opt(o):
+    return a[a.index(o) + 1] if o in a else None
+
+
+if "--version" in a:
+    print("minipro version 0.7.4     A free and open TL866 series programmer")
+    sys.exit(0)
+if "-l" in a or "-L" in a:
+    q = opt("-L")
+    for p in parts:
+        if q is None or q.lower() in p.lower():
+            print(p)
+    sys.exit(0)
+part = opt("-p")
+if part not in parts:
+    print(f"Device {part} not found!", file=sys.stderr)
+    sys.exit(1)
+if "-z" in a:
+    pin = os.environ.get("FAKE_PIN", "ok")
+    if pin == "unsupported":
+        print("Pin test is not supported.", file=sys.stderr)
+        sys.exit(1)
+    if pin == "bad":
+        print("Bad contact on pin:12", file=sys.stderr)
+        sys.exit(1)
+    print("Pin test passed.", file=sys.stderr)
+    sys.exit(0)
+if "-r" in a:
+    if os.environ.get("FAKE_ID") == "mismatch":
+        if "-y" not in a:
+            print("Invalid Chip ID: expected 0x8934, got 0x9732 (TMS27C020@DIP32)", file=sys.stderr)
+            sys.exit(1)
+        print("WARNING: Chip ID mismatch: expected 0x8934, got 0x9732 (TMS27C020@DIP32)", file=sys.stderr)
+    src = os.environ.get("FAKE_ROM")
+    if not src or not os.path.exists(src):
+        print("IO error: expected 64 bytes but 0 bytes transferred", file=sys.stderr)
+        sys.exit(1)
+    data = bytearray(open(src, "rb").read())
+    cnt = os.environ.get("FAKE_COUNTER")
+    n = 0
+    if cnt:
+        n = int(open(cnt).read() or 0) if os.path.exists(cnt) else 0
+        open(cnt, "w").write(str(n + 1))
+    if os.environ.get("FAKE_FLAKY") == "1" and n % 2 == 1:
+        data[100] ^= 0x10
+    for pct in (0, 50, 100):
+        sys.stderr.write(f"\rReading Code...  {pct}%\x1b[K")
+    sys.stderr.write("\rReading Code...  OK\x1b[K\n")
+    open(opt("-r"), "wb").write(bytes(data))
+    sys.exit(0)
+print("fake-minipro: unsupported arguments " + " ".join(a), file=sys.stderr)
+sys.exit(2)

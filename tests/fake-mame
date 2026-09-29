@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# A stand-in for `mame -romident` in the T48 tests. FAKE_MAME_MATCH="rom set description" = one match, printed the
+# way MAME 0.276 prints it (seen 2026-09-28 on the SegaSonic dump); unset = NO MATCH.
+f=${2:?}
+echo "Identifying $f...."
+if [ -n "${FAKE_MAME_MATCH:-}" ]; then
+    read -r rom set desc <<<"$FAKE_MAME_MATCH"
+    printf '%-20s = %-20s  %-10s  %s\n' "$(basename "$f")" "$rom" "$set" "$desc"
+else
+    printf '%-20s NO MATCH\nNo roms matched.\n' "$(basename "$f")"
+fi

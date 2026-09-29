@@ -317,6 +317,12 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
     with the answer "n": "contains firmware version 00.1.32 (newer)", the same 0x120 it expects (its own print
     format). After: `Found T48 00.1.32 (0x120)`, no out-of-date warning. `minipro -t` with the socket empty: every
     VPP / VCC / GND pin driver and logic pin Good, VPP and VCC overcurrent protection OK, supply 5.03 V.
+- **gatbox-dump on the real T48 (2026-09-28 21:44, the SegaSonic EPR-15781C chip, TI 27C020):**
+  - `-p 27C020@DIP32` stopped at read 1 with minipro's own words, "Invalid Chip ID: expected 0x8934, got 0x9732
+    (TMS27C020@DIP32)", and the suggestion to use `-p TMS27C020@DIP32`.
+  - `-p TMS27C020@DIP32`: pin check not supported for this part (noted), two reads identical (262,144 bytes), SHA-1
+    `9f524012…` (the same as the M2 dump, so the firmware update changed nothing), MATCH `sonic/epr-15781c.ic18`.
+    Archived with its sidecar. 14 s in all.
 - **Part names (minipro -q T48 -l, 32,361 entries):** generic names repeat (two `27C010@DIP32` entries), next to
   manufacturer-prefixed ones (AM27C010, M27C1001, TMS27C010…). The M2 dump showed why the exact part matters: generic
   `27C020@DIP32` refused a TI chip, "Invalid Chip ID: expected 0x8934, got 0x9732 (TMS27C020@DIP32)", and it read as

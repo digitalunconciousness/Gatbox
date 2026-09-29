@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""gatbox-dump — read an EPROM on the XGecu T48, identify it against MAME, archive it under its machine.
+
+    gatbox-dump --search 27C020                        the part names minipro knows for the T48 (pick one exactly)
+    gatbox-dump -p TMS27C020@DIP32 -l EPR-15781C       read, identify, archive (machine: the current one)
+    gatbox-dump -p PART -l LABEL -m SLUG [--ignore-id] [--keep-blank] [--yes] [--json]
+
+The read, in order (M7 spec):
+  1. The part is the exact minipro name. It is never auto-detected: the same chip exists under several names
+     (27C020@DIP32 vs TMS27C020@DIP32 …) and minipro's chip-ID check is what catches a wrong pick.
+  2. 27C1000 / 27C301: the non-JEDEC pinout warning, and a confirmation (--yes).
+  3. minipro's pin-contact check (-z), if it supports it for the part ("Pin test is not supported." is fine).
+  4. Two full reads, compared. Different = the chip isn't seated well: stop, reseat, try again.
+  5. All 0xFF (blank, or no contact) and all 0x00 (no contact, dead chip) are flagged, and not archived unless
+     --keep-blank.
+  6. A chip-ID complaint stops the read and shows minipro's message (it usually names the right part). minipro's
+     -y (ignore the ID) is passed only with --ignore-id, and the sidecar says so.
+  7. SHA-1 + CRC32, then `mame -romident` → MATCH <set>/<rom> (every match listed) or NO MATCH.
+  8. Archive: <roms>/<machine>/<label>_<sha1:8>.bin + .json sidecar. Never overwrites; a dump with the same SHA-1
+     already in that machine's folder is reported as already archived.
+
+Reads only. Writing a chip is a separate tool, never this one.
+
+Environment: GATBOX_ROMS (archive, default /srv/gatbox/roms), GATBOX_API (gatbox-web, for the current machine and
+the clock source; default http://127.0.0.1), GATBOX_MINIPRO / GATBOX_MAME (tests: stand-ins for the real programs).
+"""
+import argparse
+import datetime
+import glob
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+import zlib
+
+MINIPRO = os.environ.get("GATBOX_MINIPRO", "minipro")
+MAME = os.environ.get("GATBOX_MAME", "mame")
+ROMS = os.environ.get("GATBOX_ROMS", "/srv/gatbox/roms")
+API = os.environ.get("GATBOX_API", "http://127.0.0.1")
+PROGRAMMER = "T48"
+LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$")       # a chip label, safe as a file name
+SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+NON_JEDEC = ("27C1000", "27C301")
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+class Stop(Exception):
+    """A reason to stop the dump, for the person at the T48 (and the dashboard's result card)."""
+    def __init__(self, what, hint=""):
+        super().__init__(what)
+        self.what, self.hint = what, hint
+
+
+def clean(text):
+    """minipro's output without its progress-bar tricks (\\r redraws, ESC[K)."""
+    lines = []
+    for raw in ANSI.sub("", text).replace("\r", "\n").splitlines():
+        line = raw.strip()
+        if line and not re.match(r"^(Reading Code|Writing Code|Verifying Code)\.*\s*\d+%$", line):
+            lines.append(line)
+    return lines
+
+
+def run(args, timeout=600):
+    r = subprocess.run([MINIPRO] + args, capture_output=True, text=True, timeout=timeout)
+    return r.returncode, clean(r.stdout + "\n" + r.stderr)
+
+
+def parts(search=None):
+    """Part names minipro knows for the T48 (a search, or the whole list)."""
+    args = ["-q", PROGRAMMER] + (["-L", search] if search else ["-l"])
+    _, out = run(args, timeout=60)
+    skip = ("Found ", "Warning", "Device code", "Serial code", "Manufactured", "USB speed", "Supply voltage",
+            "Expected", "minipro", "Supported programmers")
+    return [l for l in out if not l.startswith(skip)]
+
+
+def api(path):
+    try:
+        with urllib.request.urlopen(API + path, timeout=3) as r:
+            return json.loads(r.read())
+    except (OSError, ValueError):
+        return None
+
+
+class Dump:
+    def __init__(self, part, label, machine, ignore_id=False, keep_blank=False, status=None, say=print):
+        self.part, self.label, self.machine = part, label, machine
+        self.ignore_id, self.keep_blank, self.status_file, self.say = ignore_id, keep_blank, status, say
+        self.info = {"part": part, "label": label, "machine": machine, "steps": []}
+
+    def step(self, name, detail="", progress=None):
+        self.info["steps"].append({"step": name, "detail": detail, "at": round(time.time(), 3)})
+        self.say(f"  {name}" + (f": {detail}" if detail else ""))
+        if self.status_file:
+            tmp = self.status_file + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(dict(self.info, state="running", step=name, detail=detail, progress=progress), f)
+            os.replace(tmp, self.status_file)
+
+    def read(self, path, n):
+        args = ["-p", self.part, "-r", path] + (["-y"] if self.ignore_id else [])
+        code, out = run(args)
+        # 2026-09-28 (M2): "Invalid Chip ID: expected 0x8934, got 0x9732 (TMS27C020@DIP32)", and minipro exits non-zero
+        bad_id = next((l for l in out if "chip id" in l.lower() and ("invalid" in l.lower() or "mismatch" in l.lower())), None)
+        if bad_id and not self.ignore_id:
+            m = re.search(r"\(([^)]+@[^)]+)\)", bad_id)
+            raise Stop(f"minipro: {bad_id}",
+                       f"minipro thinks this chip is {m.group(1)}: dump again with -p {m.group(1)}" if m else
+                       "check the part number on the chip; --ignore-id reads it anyway (-y), and the sidecar says so")
+        if bad_id:
+            self.info["id_check"] = f"ignored (--ignore-id): {bad_id}"
+        if code != 0 or not os.path.exists(path):
+            raise Stop(f"read {n} failed: " + " / ".join(out[-3:]), "check the chip is in the socket, notch toward the lever")
+        return open(path, "rb").read()
+
+    def go(self):
+        base = self.part.split("@")[0].upper()
+        if any(x in base for x in NON_JEDEC) and not self.info.get("non_jedec_ok"):
+            raise Stop(f"{self.part}: non-JEDEC pinout variants exist for this part (address lines A5/A7)",
+                       "check the chip's datasheet against the board, then run again with --yes")
+        code, out = run(["-p", self.part, "-z"], timeout=120)
+        joined = " ".join(out)
+        if "not supported" in joined.lower():
+            self.info["pin_check"] = "not supported for this part"
+        elif code != 0:
+            raise Stop("pin check: " + " / ".join(out[-3:]), "reseat the chip (notch toward the lever), lever down")
+        else:
+            self.info["pin_check"] = "ok"
+        self.step("pin check", self.info["pin_check"])
+        with tempfile.TemporaryDirectory(prefix="gatbox-dump-") as tmp:
+            self.step("read 1 of 2", progress=0.1)
+            a = self.read(os.path.join(tmp, "a.bin"), 1)
+            self.step("read 2 of 2", f"{len(a):,} bytes", progress=0.5)
+            b = self.read(os.path.join(tmp, "b.bin"), 2)
+        self.info.setdefault("id_check", "ok")
+        if a != b:
+            diff = sum(1 for x, y in zip(a, b) if x != y) + abs(len(a) - len(b))
+            raise Stop(f"the two reads differ ({diff:,} bytes)", "reseat the chip and dump again: a bad contact reads differently each time")
+        self.info.update(size=len(a), reads_compared=2, identical=True)
+        blank = "all 0xFF (a blank chip, or no contact)" if a.count(0xFF) == len(a) else \
+                "all 0x00 (no contact, or a dead chip)" if a.count(0) == len(a) else None
+        self.info["blank"] = blank
+        if blank:
+            self.step("blank check", blank)
+            if not self.keep_blank:
+                raise Stop(f"the chip reads {blank}", "check the seating and the part; --keep-blank archives it anyway")
+        sha1, crc = hashlib.sha1(a).hexdigest(), f"{zlib.crc32(a) & 0xFFFFFFFF:08x}"
+        self.info.update(sha1=sha1, crc32=crc)
+        self.step("identify", f"SHA-1 {sha1[:12]}… CRC32 {crc}", progress=0.8)
+        self.info["romident"] = romident(a)
+        return a
+
+    def archive(self, data, roms):
+        folder = os.path.join(roms, self.machine)
+        os.makedirs(folder, exist_ok=True)
+        for side in glob.glob(os.path.join(folder, f"*_{self.info['sha1'][:8]}.json")):
+            try:
+                if json.load(open(side)).get("sha1") == self.info["sha1"]:
+                    self.info["archived"] = {"path": side[:-5] + ".bin", "new": False}
+                    self.step("archive", "already archived as " + os.path.basename(side[:-5]) + ".bin")
+                    return
+            except (OSError, ValueError):
+                continue
+        path = os.path.join(folder, f"{self.label}_{self.info['sha1'][:8]}.bin")
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)       # never overwrite
+        except FileExistsError:
+            raise Stop(f"{path} already exists with different contents", "use another label")
+        with open(fd, "wb") as f:
+            f.write(data)
+        self.info["archived"] = {"path": path, "new": True}
+        with open(os.open(path[:-4] + ".json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644), "w") as f:
+            json.dump(self.sidecar(), f, indent=1)
+        self.step("archive", path)
+
+    def sidecar(self):
+        i = self.info
+        return {"part": i["part"], "label": i["label"], "machine": i["machine"], "size": i["size"], "sha1": i["sha1"],
+                "crc32": i["crc32"], "romident": i["romident"], "reads_compared": i["reads_compared"],
+                "identical": i["identical"], "blank": i["blank"], "pin_check": i.get("pin_check"),
+                "id_check": i.get("id_check"), "date": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+                "epoch": round(time.time(), 3), "clock": clock_source(), "programmer": programmer(),
+                "tool": "gatbox-dump"}
+
+
+def romident(data):
+    """mame -romident on the dump: every match, or none."""
+    with tempfile.TemporaryDirectory(prefix="gatbox-romident-") as tmp:
+        p = os.path.join(tmp, "dump.bin")
+        with open(p, "wb") as f:
+            f.write(data)
+        try:
+            r = subprocess.run([MAME, "-romident", p], capture_output=True, text=True, timeout=300, cwd=tmp)
+        except (OSError, subprocess.SubprocessError) as e:
+            return {"match": None, "matches": [], "error": repr(e)}
+    matches = []
+    for line in r.stdout.splitlines():               # "dump.bin = epr-15781c.ic18   sonic   SegaSonic … (Japan, rev. C)"
+        if "=" not in line:
+            continue
+        rest = line.split("=", 1)[1].split(None, 2)
+        if len(rest) >= 2:
+            matches.append({"rom": rest[0], "set": rest[1], "description": rest[2].strip() if len(rest) > 2 else ""})
+    return {"match": bool(matches), "matches": matches}
+
+
+def clock_source():
+    s = api("/api/system")
+    return ((s or {}).get("clock") or {}).get("source") or "unknown"
+
+
+def programmer():
+    code, out = run(["--version"], timeout=30)
+    ver = next((l for l in out if l.startswith("minipro version")), None)
+    found = next((l for l in out if l.startswith("Found ")), None)
+    return {"minipro": ver.split()[2] if ver else None, "found": found}
+
+
+def current_machine():
+    m = api("/api/machine")
+    return (m or {}).get("slug") or "unassigned"
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--search", metavar="TEXT", help="list the T48 part names containing TEXT")
+    ap.add_argument("-p", "--part", help="the exact minipro part name, e.g. TMS27C020@DIP32")
+    ap.add_argument("-l", "--label", help="the chip's label, e.g. EPR-15781C (letters, digits . _ -)")
+    ap.add_argument("-m", "--machine", help="roster slug (default: the current machine, else 'unassigned')")
+    ap.add_argument("--ignore-id", action="store_true", help="read despite a chip-ID mismatch (minipro -y)")
+    ap.add_argument("--keep-blank", action="store_true", help="archive an all-FF / all-00 read too")
+    ap.add_argument("--yes", action="store_true", help="confirm a non-JEDEC part (27C1000, 27C301)")
+    ap.add_argument("--json", action="store_true", help="print the result as JSON")
+    ap.add_argument("--status", help=argparse.SUPPRESS)          # the dashboard job's progress file
+    args = ap.parse_args()
+
+    if args.search is not None:
+        found = parts(args.search)
+        print("\n".join(found) if found else f"nothing matches {args.search!r}")
+        return 0
+    if not args.part or not args.label:
+        ap.error("-p PART and -l LABEL are needed (or --search TEXT)")
+    if not LABEL.match(args.label):
+        ap.error("label: 1-40 of letters, digits, '.', '_', '-' (it becomes the file name)")
+    machine = args.machine or current_machine()
+    if machine != "unassigned" and not SLUG.match(machine):
+        ap.error(f"machine: not a roster slug: {machine!r}")
+    if args.part not in parts(args.part):
+        near = parts(args.part.split("@")[0])[:12]
+        ap.error(f"{args.part!r} isn't a T48 part name in minipro" + (": did you mean one of\n  " + "\n  ".join(near) if near else ""))
+
+    say = (lambda *a: None) if args.json else print
+    d = Dump(args.part, args.label, machine, args.ignore_id, args.keep_blank, args.status, say)
+    d.info["non_jedec_ok"] = args.yes
+    say(f"gatbox-dump: {args.part}, label {args.label}, machine {machine}")
+    try:
+        data = d.go()
+        d.archive(data, ROMS)
+    except Stop as s:
+        d.info.update(state="stopped", error=s.what, hint=s.hint)
+        if args.status:
+            json.dump(d.info, open(args.status, "w"))
+        if args.json:
+            print(json.dumps(d.info))
+        else:
+            print(f"\nSTOPPED: {s.what}" + (f"\n  → {s.hint}" if s.hint else ""))
+        return 2
+    d.info["state"] = "done"
+    if args.status:
+        json.dump(d.info, open(args.status, "w"))
+    if args.json:
+        print(json.dumps(d.info))
+        return 0
+    ri, i = d.info["romident"], d.info
+    print()
+    if ri.get("match"):
+        print("MATCH: " + "; ".join(f"{m['set']}/{m['rom']} ({m['description']})" for m in ri["matches"]))
+    elif ri.get("match") is None:
+        print(f"MAME couldn't run: {ri.get('error')}")
+    else:
+        print("NO MATCH: MAME doesn't know this ROM (a revision, a modified dump, or a bad read: compare with the board's sticker)")
+    print(f"  {i['size']:,} bytes · SHA-1 {i['sha1']} · CRC32 {i['crc32']} · 2 reads identical")
+    a = i["archived"]
+    print(("  archived: " if a["new"] else "  already archived: ") + a["path"])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

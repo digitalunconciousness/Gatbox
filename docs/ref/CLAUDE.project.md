@@ -26,8 +26,8 @@ in `docs/gatbox-master-guide.html`. **Hardware acquisition status lives in
   - SAVE READING (was CAPTURE);
   - each machine's ROM chip checklist from MAME;
   - the MANUALS tab: the floor's manuals on the Pi, spec sheets with CONFIRM and actual values from the field.
-- **Next:** M8 (stretch: Sync, the war-room panel) is on hold until the owner is ready to sort out her server setup. **Phase 3:** M2K + MEGA4/uhubctl and any dashboard
-  action that writes to hardware.
+- **Next:** M8 (stretch: Sync, the war-room panel) is on hold until the owner is ready to sort out her server setup. **Phase 3:** M2K + MEGA4/uhubctl and any other
+  dashboard action that writes to hardware (the T48 burn is the one there is).
 - Code: GitHub `digitalunconciousness/Gatbox` (public: no personal info, no roster,
   no ROMs, no manuals). The Pi's own `CLAUDE.md` in the repo is the detailed contract
   for Pi-side work.

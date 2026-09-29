@@ -63,6 +63,11 @@
   - the write, minipro's verify, then two read-backs, each compared with the image. VERIFIED only if all three
     agree. Every burn, verified or stopped, gets a line in the archive's burn log;
   - from the command line, instead of the hold, the part name is typed back after the blank check.
+- A fresh review of the burn code, fixed before any real burn:
+  - two fingers on the hold button, or a tap after a refused burn, could arm it without the 3 s hold;
+  - 16-bit EPROMs (27C1024, 27C4096, 27C160, 27C322) were refused, because minipro gives their size in words;
+  - a burn log that couldn't be written could hide the result.
+  A stop after the write now says the chip may be partly programmed; BLANK CHECK it before using it again.
 - Burning needs no system change (same service, same folders): the next bootstrap run installs it, with the
   manuals list.
 - NEXT: install (burn + the manuals list); a real burn to a blank chip from the 7"; CONFIRM the rail limits on the

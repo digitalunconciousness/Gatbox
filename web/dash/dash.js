@@ -276,6 +276,7 @@
     // actions
     const nb = $("#b-new");
     nb.firstChild.textContent = S.st.stopped ? "START LOGGING" : "NEW FILE";
+    nb.lastChild.textContent = S.st.stopped ? "logging is stopped" : "end this one";
     const ab = $("#b-alarm");
     ab.disabled = !a.applies;
     ab.firstChild.textContent = !a.applies ? "NO ALARM" : a.on ? "ALARM ON" : "ALARM OFF";

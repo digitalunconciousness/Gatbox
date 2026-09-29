@@ -75,16 +75,16 @@
 
   <!-- SYSTEM: the Pi -->
   <section id="v-system" class="view scroll">
-    <div id="sy-grid" class="grid"></div>
+    <!-- first on the Pi's own screen: shut down before pulling power -->
     <div id="sy-kiosk" class="card hide">
-      <h2>This screen</h2>
       <div class="btnrow">
-        <button class="hold" data-act="exit" data-ms="1500">HOLD TO EXIT KIOSK</button>
         <button class="hold bad" data-act="shutdown" data-ms="3000">HOLD 3 S TO SHUT DOWN</button>
+        <button class="hold" data-act="exit" data-ms="1500">HOLD TO EXIT KIOSK</button>
+        <span class="mut" style="flex:1;min-width:220px">Shut down powers the Pi off safely: unplug only when the screen
+          is dark and the LED is red. Exit closes the kiosk until the next login.</span>
       </div>
-      <p class="mut">Exit closes the kiosk until the next login. Shut down powers the Pi off safely; unplug only when
-        the screen is dark and the LED is red.</p>
     </div>
+    <div id="sy-grid" class="grid"></div>
   </section>
 
   <!-- DEVICES -->

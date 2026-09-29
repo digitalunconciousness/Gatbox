@@ -41,8 +41,9 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
 - [ ] **M8 2G stretch**: ask first
 - [ ] **Owner requests (2026-09-29)**, off-spec, one at a time with her OK on each design:
       [x] + ADD MACHINE / EDIT / EXPORT ROSTER, and CAPTURE → SAVE READING (code + tests/test-roster.sh, test-dash)
-      [ ] installed [ ] manuals, with specs cited to their page, viewable on the dashboard [ ] each machine's ROM
-      checklist from MAME's own hash data (no ROM sets downloaded)
+      [x] installed (d578961) [x] each machine's ROM checklist from MAME's own hash data, no ROM sets downloaded
+      (code + tests/test-mame.sh, test-dash) [ ] its install [ ] manuals, with specs cited to their page, viewable on
+      the dashboard
 
 ### M0 notes (2026-09-28)
 - **Spec vs reality:** the handoff and the project CLAUDE.md say the logger already writes `# mode=`, a
@@ -394,6 +395,25 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   last three show on one line under the reading, and MACHINE lists "Saved readings".
 - The on-screen keypad got a shift key (abc/ABC) and ' & : ! for names. The meter's action buttons now cut long
   subtitles with "…" instead of widening the grid past the screen edge.
+- **"All of the MAME files for the games that I have for easy hashing."** No ROM sets are downloaded (copyrighted;
+  only piracy sites carry them). Hashing doesn't need them: MAME's driver list carries every chip's name, size,
+  CRC32 and SHA-1.
+  - `data/gatbox-mame-sets.json` (git-ignored: it's the floor list; the local pre-push hook refuses it by name):
+    slug → the MAME **parent** set, `sure` or `check` (+ why), `prefer` (the version shown first), or `set: null` +
+    why for machines MAME doesn't have. Built by hand from MAME's own list (name, maker, year, driver): matching by
+    name alone put the Joust and Defender *pinballs* on the video games, a Tiger handheld on Batman, and a mahjong
+    game on TMNT.
+  - `gatbox-mame-roms --build` streams `mame -listxml` (~290 MB of XML) and keeps the mapped parents and all their
+    clones (revisions, regions), devices and BIOS machines aside. The bootstrap runs it at install, only when the
+    MAME version or the list changed (`--check`), with HOME in a throwaway dir. The real SegaSonic set built this way
+    lists epr-15781c.ic18 with the SHA-1 of the owner's dump (tests/test-mame.py checks it).
+  - `/api/mame/<slug>` ticks a chip when any archived dump has its SHA-1 (under any machine, `unassigned` too) and
+    shows first the version the dumps match best, else `prefer`, else the parent.
+  - MACHINE → "ROM chips (MAME)": the version switch, ✓ + the dump's label, size + the EPROM families of that size,
+    CRC, SHA-1, board region; hard-disk / CD images listed as "not a T48 job". DUMP → WHICH CHIP?: the machine's
+    chips, undumped first; a pick fills the label from the chip's printed name (MAME's name before the board spot)
+    and lights the family tiles of its size. The exact part is still picked off the chip (hard rule 6).
+  - `data/eproms.json` families carry `bytes` (a whole-chip dump's size) for that.
 
 ## Bring-up 1: bootstrap run — 2026-09-23
 

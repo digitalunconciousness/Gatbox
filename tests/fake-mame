@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-# A stand-in for `mame -romident` in the T48 tests. FAKE_MAME_MATCH="rom set description" = one match, printed the
-# way MAME 0.276 prints it (seen 2026-09-28 on the SegaSonic dump); unset = NO MATCH.
+# A stand-in for MAME in the tests.
+#   -romident FILE   FAKE_MAME_MATCH="rom set description" = one match, printed the way MAME 0.276 prints it (seen
+#                    2026-09-28 on the SegaSonic dump); unset = NO MATCH.
+#   -version         FAKE_MAME_VERSION, else "0.276 (mame0276)"
+#   -listxml         FAKE_MAME_XML, else tests/mame-listxml.xml (a cut-down driver list)
+case "${1:-}" in
+    -version) echo "${FAKE_MAME_VERSION:-0.276 (mame0276)}"; exit 0 ;;
+    -listxml) cat "${FAKE_MAME_XML:-$(dirname "$0")/mame-listxml.xml}"; exit 0 ;;
+esac
 f=${2:?}
 echo "Identifying $f...."
 if [ -n "${FAKE_MAME_MATCH:-}" ]; then

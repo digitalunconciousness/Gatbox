@@ -19,7 +19,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from . import captures, config, devices, dump, meter, phone, report, roster, sessions, system
+from . import captures, config, devices, dump, mame, meter, phone, report, roster, sessions, system
 from .live import LIVE
 from .meter import Bad
 
@@ -355,6 +355,10 @@ def api_roster_edit(h, m, q):
     h.json(200, {"entry": entry, "kind": kind})
 
 
+def api_mame(h, m, q):
+    h.json(200, mame.checklist(m["slug"]))
+
+
 def api_roster_entry(h, m, q):
     e = roster.entry(m["slug"])
     if e is None:
@@ -507,6 +511,7 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("POST", r"/api/roster", api_roster_add),
     ("GET", r"/api/roster/(?P<slug>[^/]+)", api_roster_entry),
     ("PUT", r"/api/roster/(?P<slug>[^/]+)", api_roster_edit),
+    ("GET", r"/api/mame/(?P<slug>[^/]+)", api_mame),
 ]]
 
 

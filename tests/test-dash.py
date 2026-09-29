@@ -92,7 +92,7 @@ def setup():
         raise SystemExit(f"port {PORT} is already in use: stop whatever runs there first")
     except OSError:
         pass
-    for d in ("log", "run", "ctrl", "cache", "data", "led", "spool", "roms"):
+    for d in ("log", "run", "ctrl", "cache", "data", "led", "spool"):
         os.makedirs(os.path.join(T, d))
     with open(f"{T}/led/trigger", "w") as f:
         f.write("[mmc0] none\n")
@@ -115,10 +115,25 @@ def setup():
                    "pinball": [], "retired": []}, f)
     if os.path.exists(FX):
         shutil.copy(FX, f"{T}/log/")
+    # the MAME chip list (built at install on the Pi; here by hand) + one archived dump that ticks a chip
+    rom = lambda n, h: {"name": n, "size": 524288, "crc": h * 8, "sha1": h * 40, "region": "user1"}   # noqa: E731
+    with open(f"{T}/mame-roms.json", "w") as f:
+        json.dump({"meta": {"mame": "0.276 (mame0276)", "key": "test"}, "machines": {
+            "gauntlet-legends": {"set": "gauntleg", "status": "sure", "why": "", "prefer": "gauntleg", "versions": [
+                {"name": "gauntleg", "desc": "Gauntlet Legends (version 1.6)", "year": "1998", "mfr": "Atari Games",
+                 "parent": True, "roms": [rom("legend15.u10", "a"), rom("legend15.u11", "b")],
+                 "disks": [{"name": "gauntleg", "sha1": "c" * 40, "region": "ide:0:hdd"}]},
+                {"name": "gauntleg12", "desc": "Gauntlet Legends (version 1.2)", "year": "1998", "mfr": "Atari Games",
+                 "parent": False, "roms": [rom("legend12.u10", "d")], "disks": []}]},
+            "gauntlet": {"set": None, "status": "none", "why": "test: no set", "prefer": None}}}, f)
+    os.makedirs(f"{T}/roms/gauntlet-legends")
+    with open(f"{T}/roms/gauntlet-legends/LEGEND15-U10_aaaaaaaa.json", "w") as f:
+        json.dump({"label": "LEGEND15-U10", "part": "27C040@DIP32", "sha1": "a" * 40, "date": "2026-09-29T10:00:00-05:00",
+                   "romident": {"match": True, "matches": [{"set": "gauntleg", "rom": "legend15.u10", "description": "x"}]}}, f)
     env = dict(os.environ, GATBOX_WEB_PORT=str(PORT), STATE_DIRECTORY=f"{T}/ctrl", CACHE_DIRECTORY=f"{T}/cache",
                GATBOX_LOGDIR=f"{T}/log", GATBOX_RUNDIR=f"{T}/run", GATBOX_REPORT=os.path.join(REPO, "tools/gatbox-rail-report"),
                GATBOX_DATA=f"{T}/data", MPLCONFIGDIR=f"{T}/cache/mpl", GATBOX_DUMP_SPOOL=f"{T}/spool",
-               GATBOX_ROMS=f"{T}/roms", GATBOX_MINIPRO_PARTS=f"{T}/parts.txt")
+               GATBOX_ROMS=f"{T}/roms", GATBOX_MINIPRO_PARTS=f"{T}/parts.txt", GATBOX_MAME_ROMS=f"{T}/mame-roms.json")
     os.environ["GATBOX_DATA"] = f"{T}/data"               # the logger's gatbox-meta reads the same data
     procs["web"] = subprocess.Popen(["python3", os.path.join(REPO, "backend/gatbox-web")], env=env,
                                     stdout=open(f"{T}/web.log", "w"), stderr=subprocess.STDOUT, start_new_session=True)
@@ -287,6 +302,18 @@ def main():
         check("machine card: name, risk, critical action, rail spec", all(s in text("#mc-body") for s in
               ("Gauntlet Legends", "aging drive", "image drive now", "+5V  4.9–5.1 V")))
         shot("14-machine")
+        c.wait("document.querySelector('#mc-body').textContent.includes('OF 2 DUMPED')", 10)
+        check("ROM chips (MAME): 1 of 2 dumped, ✓ with the dump's label, the disk not a T48 job",
+              all(s_ in text("#mc-body") for s_ in ("ROM chips (MAME)", "1 OF 2 DUMPED", "← LEGEND15-U10", "not a T48 job",
+                                                     "512 KB · 27C040 / 27C4001 or 27C4096 / 27C400")))
+        q("document.querySelector('#v-machine').scrollTop = 10000")
+        shot("14b-machine-chips")
+        q("[...document.querySelectorAll('#mc-body button')].find(b => b.textContent === 'gauntleg ▸').click()")
+        c.wait("document.querySelectorAll('#pane .picklist .row').length === 2", 10)
+        q("[...document.querySelectorAll('#pane .picklist .row')].find(r => r.textContent.includes('1.2')).click()")
+        c.wait("document.querySelector('#mc-body').textContent.includes('0 OF 1 DUMPED')", 10)
+        check("the version switch: MAME's other version, its own chips", "legend12.u10" in text("#mc-body")
+              and "Gauntlet Legends (version 1.2)" in text("#mc-body"))
         click('[data-view="meter"]')
         c.wait("document.querySelector('#m-window').textContent.includes('machine spec')", 20)
         check("meter: 4.9–5.1 V machine spec · Gauntlet Legends", "4.9–5.1 V · machine spec · Gauntlet Legends" in text("#m-window"))
@@ -387,6 +414,25 @@ def main():
                   and "OV 3 (3 suspect)" in text("#s-list"))
             shot("16-sessions-fixture")
         stop("logger")
+
+        print("DUMP: which chip (MAME's list):")
+        api("PUT", "/api/machine", {"slug": "gauntlet-legends"})
+        click('[data-view="dump"]')
+        c.wait("[...document.querySelectorAll('#du-body button')].some(b => b.textContent.startsWith('WHICH CHIP?'))", 15)
+        q("[...document.querySelectorAll('#du-body button')].find(b => b.textContent.startsWith('WHICH CHIP?')).click()")
+        c.wait("document.querySelectorAll('#pane .picklist .row').length === 1", 10)
+        check("the chips of the version shown (1.2 was picked on MACHINE)", "legend12.u10" in text("#pane"))
+        q("document.querySelector('#pane .picklist .row').click()")
+        c.wait("document.querySelector('#du-body').textContent.includes('CHIP: legend12.u10')", 10)
+        check("picked: the label from its printed name, the 512 KB family tiles lit (the part is still yours to pick)",
+              "LABEL: LEGEND12" in text("#du-body") and "fits 27C040 / 27C4001 or 27C4096 / 27C400" in text("#du-body")
+              and q("[...document.querySelectorAll('#du-body .tile.on')].map(t => t.firstChild.textContent).join('|')")
+              == "27C040 / 27C4001|27C4096 / 27C400" and "1 · PART" in text("#du-body"))
+        shot("17-dump-chip")
+        api("DELETE", "/api/machine")
+        c.wait("!document.querySelector('#du-body').textContent.includes('CHIP: legend12')", 10)
+        check("no machine: the chip and its label go with it", not q("document.querySelectorAll('#du-body .tile.on').length")
+              and "TYPE THE CHIP'S LABEL" in text("#du-body"))
 
         print("DUMP (M7; a runner stands in for gatbox-dump.path):")
         if any(open(p_).read().strip() == "a466" for p_ in __import__("glob").glob("/sys/bus/usb/devices/*/idVendor")):

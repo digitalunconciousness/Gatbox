@@ -172,6 +172,7 @@
     if (now.jack) S.leadWarn = false;
     chartDecor(); renderMeter(); renderHeader(); renderNav();
     if (S.view === "machine") loadMachine();
+    if (S.view === "dump" && D.st) renderDump();          // FOR <machine> and its chip list follow the machine
     if (S.savedFor !== (S.st.machine || null)) loadSaved();
   }
 
@@ -679,6 +680,7 @@
       for (const k of cp.captures.slice(-30).reverse())
         c.appendChild(el("div", null, `${k.iso.replace("T", " ")}  ${k.label}  ${savedText(k)}  (${modeLabel(k.mode)}${k.flags ? ", " + k.flags : ""})`));
     } catch (x) { c.appendChild(el("div", "bad", String(x.message))); }
+    await mameSection(c, e.slug);
     c.appendChild(el("h3", null, "Dumps"));
     try { dumpList(c, (await api("GET", "/api/dumps?machine=" + encodeURIComponent(e.slug))).dumps); }
     catch (x) { c.appendChild(el("div", "mut", "No dump archive on this Pi yet.")); }
@@ -1006,9 +1008,73 @@
     if (S.view === "dump") loadDump();
   }
 
+  // --- ROM CHIPS (MAME): the machine's MAME set, every chip, ticked when the archive has a dump with its SHA-1 ------
+  // (built at install from the Pi's own MAME: hashes only). A version switch when MAME knows several (revisions,
+  // regions); it starts on the version the dumps match best. The pick is kept in this page's memory only.
+  const KB = n => n >= 1048576 ? `${n / 1048576} MB` : `${n / 1024} KB`;
+  const famsFor = n => (D.fams || []).filter(f => (f.bytes || []).includes(n));
+  async function families() {
+    if (!D.fams) { try { D.fams = (await api("GET", "/api/dump/parts")).families; } catch (e) { return []; } }
+    return D.fams;
+  }
+  async function mameList(slug) {
+    const j = await api("GET", "/api/mame/" + encodeURIComponent(slug));
+    S.mameVer = S.mameVer || {};
+    return [j, j.versions.find(x => x.name === (S.mameVer[slug] || j.default)) || j.versions[0]];
+  }
+  async function mameSection(c, slug) {
+    c.appendChild(el("h3", null, "ROM chips (MAME)"));
+    const box = el("div");
+    c.appendChild(box);
+    let j, v;
+    try { [j, v] = await mameList(slug); await families(); } catch (e) { box.appendChild(el("div", "mut", e.message)); return; }
+    if (!v) {
+      box.appendChild(el("div", j.status === "missing" ? "warn" : "mut", (j.status === "none" ? "Not in MAME: " : "") + (j.why || "No MAME set.")));
+      return;
+    }
+    const head = el("div", "btnrow"), vb = el("button", null, `${v.name} ▸`);
+    head.style.alignItems = "center";
+    vb.disabled = j.versions.length < 2;
+    vb.addEventListener("click", async () => {
+      const pick = await pickFrom(`Which version? (${j.versions.length} in MAME ${j.mame || ""})`, j.versions.map(x => ({
+        key: x.name, title: x.desc, find: [x.desc.toLowerCase(), x.name],
+        sub: `${x.name}${x.parent ? " · parent" : ""} · ${x.mfr} ${x.year} · ${x.dumped} of ${x.roms.length} dumped`})), v.name);
+      if (pick) { S.mameVer[slug] = pick; loadMachine(); }
+    });
+    add(head, vb, el("span", null, `${v.desc} · ${v.mfr} ${v.year}`),
+        el("span", "badge " + (v.dumped ? "ok" : "mut"), `${v.dumped} OF ${v.roms.length} DUMPED`),
+        j.status === "check" ? el("span", "badge warn", "CHECK") : null);
+    box.appendChild(head);
+    if (j.status === "check" && j.why) box.appendChild(el("div", "warn", "Match not confirmed: " + j.why + " A dump from the board settles it."));
+    if (j.versions.length > 1) box.appendChild(el("div", "mut", `MAME knows ${j.versions.length} versions: tap ${v.name} ▸ to switch.`));
+    const wrap = el("div");
+    wrap.style.overflowX = "auto";
+    const t = el("table", "t chips-t"), hr = el("tr");
+    for (const h of ["", "CHIP", "SIZE", "CRC", "SHA-1", "ON THE BOARD"]) hr.appendChild(el("th", null, h));
+    t.appendChild(hr);
+    for (const r of v.roms) {
+      const tr = el("tr"), d = r.dumped[0], fam = famsFor(r.size).map(f => f.label).join(" or ");
+      const name = el("td");
+      add(name, el("b", null, r.name), d ? el("div", "ok", `← ${d.label}${d.machine !== slug ? ` (archived under ${d.machine})` : ""}`) : null);
+      add(tr, el("td", d ? "ok" : "mut", d ? "✓" : "·"), name,
+          el("td", null, KB(r.size) + (fam ? ` · ${fam}` : "")), el("td", null, r.crc || "—"),
+          el("td", r.sha1 ? null : "warn", r.sha1 ? r.sha1.slice(0, 8) : (r.status === "nodump" ? "no known dump" : "no hash")),
+          el("td", "mut", (r.region || "") + (r.bios ? ` · BIOS ${r.bios}` : "")));
+      t.appendChild(tr);
+    }
+    for (const dk of v.disks) {
+      const tr = el("tr");
+      add(tr, el("td", "mut", "▣"), el("td", null, dk.name), el("td", "mut", "hard disk / CD image: not a T48 job"),
+          el("td"), el("td", null, (dk.sha1 || "").slice(0, 8)), el("td", "mut", dk.region || ""));
+      t.appendChild(tr);
+    }
+    wrap.appendChild(t);
+    box.appendChild(wrap);
+  }
+
   // --- DUMP (M7): part → label → DUMP → result. gatbox-web queues it; gatbox-dump.service does the reading. -----
   // Reads only: nothing on this screen writes to a chip (hard rule 6).
-  const D = {part: null, label: null, family: null, parts: null, fams: null, st: null};
+  const D = {part: null, label: null, family: null, parts: null, fams: null, st: null, chip: null};
   async function loadDump() {
     try {
       const [st, pl] = await Promise.all([api("GET", "/api/dump"), D.fams ? null : api("GET", "/api/dump/parts")]);
@@ -1050,7 +1116,25 @@
       add(pane, field, list, keys);
       draw();
     });
-    if (pick) { D.machine = pick.slug; D.machineName = pick.name; renderDump(); }
+    if (pick) { D.machine = pick.slug; D.machineName = pick.name; D.chip = null; renderDump(); }
+  }
+  // WHICH CHIP?: the machine's MAME chips, not yet dumped first. Picking one fills the label with its printed name
+  // (MAME's name before the board location: epr-15781c.ic18 -> EPR-15781C) and marks the family tiles of its size.
+  // The exact part is still picked off the chip: nothing here guesses it (hard rule 6).
+  const chipLabel = r => r.name.split(".")[0].toUpperCase().replace(/[^A-Z0-9._-]/g, "-").slice(0, 40) || null;
+  async function pickChip(slug) {
+    let j, v;
+    try { [j, v] = await mameList(slug); } catch (e) { return fail(e); }
+    if (!v) return toast(j.status === "none" ? `Not in MAME: ${j.why}` : (j.why || "No MAME chip list for this machine"), "warn", 6000);
+    const roms = v.roms.filter(r => !r.dumped.length).concat(v.roms.filter(r => r.dumped.length));
+    const pick = await pickFrom(`Which chip? ${v.desc} (${v.dumped} of ${v.roms.length} dumped)`, roms.map(r => ({
+      key: r.name, title: (r.dumped.length ? "✓ " : "") + r.name, find: [r.name],
+      sub: `${KB(r.size)}${famsFor(r.size).length ? " · " + famsFor(r.size).map(f => f.label).join(" or ") : ""}`
+           + (r.dumped.length ? ` · dumped as ${r.dumped[0].label}` : "") + (r.sha1 ? "" : " · MAME has no hash")})), D.chip && D.chip.name);
+    if (!pick) return;
+    D.chip = v.roms.find(r => r.name === pick); D.chipFor = slug;
+    D.label = chipLabel(D.chip);
+    renderDump();
   }
   async function pickFamily(f) {
     let r;
@@ -1129,10 +1213,23 @@
     add(mrow, el("b", null, "FOR"), mchip, other);
     if (D.machine) {
       const back = el("button", null, "CURRENT");
-      back.addEventListener("click", () => { D.machine = null; renderDump(); });
+      back.addEventListener("click", () => { D.machine = null; D.chip = null; renderDump(); });
       mrow.appendChild(back);
     }
     p.appendChild(mrow);
+    const forSlug = D.machine || (S.st && S.st.machine);
+    if (D.chip && D.chipFor !== forSlug) {                    // another machine: that chip (and its label) isn't on it
+      if (D.label === chipLabel(D.chip)) D.label = null;
+      D.chip = null;
+    }
+    if (forSlug) {
+      const crow = el("div", "btnrow"), cb = el("button", null, D.chip ? `CHIP: ${D.chip.name}` : "WHICH CHIP? (MAME's list)");
+      crow.style.cssText = "align-items:center;margin-top:6px";
+      cb.addEventListener("click", () => pickChip(forSlug));
+      crow.appendChild(cb);
+      if (D.chip) crow.appendChild(el("span", "mut", `${KB(D.chip.size)}${famsFor(D.chip.size).length ? " · fits " + famsFor(D.chip.size).map(f => f.label).join(" or ") : ""}`));
+      p.appendChild(crow);
+    }
     add(p, el("h2", null, "1 · PART"));
     const row = el("div", "btnrow");
     row.style.alignItems = "center";
@@ -1152,7 +1249,7 @@
       const tiles = el("div", "tiles");
       tiles.style.gridTemplateColumns = "repeat(auto-fill,minmax(150px,1fr))";
       for (const f of D.fams || []) {
-        const b = el("button", "tile");
+        const b = el("button", "tile" + (D.chip && (f.bytes || []).includes(D.chip.size) ? " on" : ""));
         b.style.minHeight = "64px";
         add(b, el("b", null, f.label), el("span", "mut", f.size));
         b.addEventListener("click", () => pickFamily(f));

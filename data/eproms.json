@@ -3,22 +3,23 @@
     "title": "GATBOX: EPROM families for the dashboard's DUMP picker",
     "updated": "2026-09-28",
     "note": "Families only. The exact part names are always minipro's own (minipro -q T48 -l, generated at install into /usr/local/share/gatbox/minipro-parts-T48.txt): a family tile lists every T48 part whose name contains one of its search terms, and the owner picks the one printed on the chip. minipro's chip-ID check names the right one when a pick is wrong. A name without '@' is minipro's default package (DIP), e.g. M27C801. Every search term here matched DIP parts on 2026-09-28 (tests/test-dump.py checks it against the installed list).",
-    "size_note": "Sizes follow the part numbers' own convention (27C010 = 1 Mbit); DIP40/DIP42 parts are 16-bit wide and fit the T48's socket directly."
+    "size_note": "Sizes follow the part numbers' own convention (27C010 = 1 Mbit); DIP40/DIP42 parts are 16-bit wide and fit the T48's socket directly.",
+    "bytes_note": "bytes: a whole-chip dump's size (what MAME lists for a ROM), so a chip from the MAME checklist points at its family tiles. The 27C160 / 27C800 tile covers both sizes."
   },
   "families": [
-    {"id": "2716", "label": "2716", "size": "16 Kbit · 2 KB", "search": ["2716"]},
-    {"id": "2732", "label": "2732", "size": "32 Kbit · 4 KB", "search": ["2732"]},
-    {"id": "2764", "label": "2764 / 27C64", "size": "64 Kbit · 8 KB", "search": ["2764", "27C64"]},
-    {"id": "27128", "label": "27128 / 27C128", "size": "128 Kbit · 16 KB", "search": ["27128", "27C128"]},
-    {"id": "27256", "label": "27256 / 27C256", "size": "256 Kbit · 32 KB", "search": ["27256", "27C256"]},
-    {"id": "27512", "label": "27512 / 27C512", "size": "512 Kbit · 64 KB", "search": ["27512", "27C512"]},
-    {"id": "27C010", "label": "27C010 / 27C1001", "size": "1 Mbit · 128 KB", "search": ["27C010", "27C1001"]},
-    {"id": "27C020", "label": "27C020 / 27C2001", "size": "2 Mbit · 256 KB", "search": ["27C020", "27C2001"]},
-    {"id": "27C040", "label": "27C040 / 27C4001", "size": "4 Mbit · 512 KB", "search": ["27C040", "27C4001"]},
-    {"id": "27C080", "label": "27C080 / 27C801", "size": "8 Mbit · 1 MB", "search": ["27C080", "27C801"]},
-    {"id": "27C1024", "label": "27C1024", "size": "1 Mbit ×16 · DIP40", "search": ["27C1024"]},
-    {"id": "27C4096", "label": "27C4096 / 27C400", "size": "4 Mbit ×16 · DIP40", "search": ["27C4096", "27C400"]},
-    {"id": "27C160", "label": "27C160 / 27C800", "size": "16 / 8 Mbit ×16 · DIP42", "search": ["27C160", "27C800"]},
-    {"id": "27C322", "label": "27C322", "size": "32 Mbit ×16 · DIP42", "search": ["27C322"]}
+    {"id": "2716", "label": "2716", "size": "16 Kbit · 2 KB", "bytes": [2048], "search": ["2716"]},
+    {"id": "2732", "label": "2732", "size": "32 Kbit · 4 KB", "bytes": [4096], "search": ["2732"]},
+    {"id": "2764", "label": "2764 / 27C64", "size": "64 Kbit · 8 KB", "bytes": [8192], "search": ["2764", "27C64"]},
+    {"id": "27128", "label": "27128 / 27C128", "size": "128 Kbit · 16 KB", "bytes": [16384], "search": ["27128", "27C128"]},
+    {"id": "27256", "label": "27256 / 27C256", "size": "256 Kbit · 32 KB", "bytes": [32768], "search": ["27256", "27C256"]},
+    {"id": "27512", "label": "27512 / 27C512", "size": "512 Kbit · 64 KB", "bytes": [65536], "search": ["27512", "27C512"]},
+    {"id": "27C010", "label": "27C010 / 27C1001", "size": "1 Mbit · 128 KB", "bytes": [131072], "search": ["27C010", "27C1001"]},
+    {"id": "27C020", "label": "27C020 / 27C2001", "size": "2 Mbit · 256 KB", "bytes": [262144], "search": ["27C020", "27C2001"]},
+    {"id": "27C040", "label": "27C040 / 27C4001", "size": "4 Mbit · 512 KB", "bytes": [524288], "search": ["27C040", "27C4001"]},
+    {"id": "27C080", "label": "27C080 / 27C801", "size": "8 Mbit · 1 MB", "bytes": [1048576], "search": ["27C080", "27C801"]},
+    {"id": "27C1024", "label": "27C1024", "size": "1 Mbit ×16 · DIP40", "bytes": [131072], "search": ["27C1024"]},
+    {"id": "27C4096", "label": "27C4096 / 27C400", "size": "4 Mbit ×16 · DIP40", "bytes": [524288], "search": ["27C4096", "27C400"]},
+    {"id": "27C160", "label": "27C160 / 27C800", "size": "16 / 8 Mbit ×16 · DIP42", "bytes": [2097152, 1048576], "search": ["27C160", "27C800"]},
+    {"id": "27C322", "label": "27C322", "size": "32 Mbit ×16 · DIP42", "bytes": [4194304], "search": ["27C322"]}
   ]
 }

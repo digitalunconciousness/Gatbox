@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<!-- A cut-down `mame -listxml` for tests/fake-mame, shaped like MAME 0.276's. The three sonic (parent) program ROMs
+     carry the real hashes MAME lists (public driver data: hashes only, no ROM content); every other hash is made up. -->
+<mame build="0.276 (mame0276)" debug="no" mameconfig="10">
+	<machine name="z80" sourcefile="src/devices/cpu/z80/z80.cpp" isdevice="yes" runnable="no">
+		<description>Zilog Z80</description>
+	</machine>
+	<machine name="sonic" sourcefile="sega/segas32.cpp">
+		<description>SegaSonic The Hedgehog (Japan, rev. C)</description>
+		<year>1992</year>
+		<manufacturer>Sega</manufacturer>
+		<rom name="epr-15787c.ic17" size="131072" crc="25e3c27e" sha1="8f173cd5c7c817dcccdcad9be5781cfaa081d73e" region="mainpcb:maincpu" offset="0"/>
+		<rom name="epr-15786c.ic8" size="131072" crc="efe9524c" sha1="8020e734704a8f989919ee5ad92f70035de717f0" region="mainpcb:maincpu" offset="80000"/>
+		<rom name="epr-15781c.ic18" size="262144" crc="65b06c25" sha1="9f524012a7adbc71737f90fc556f0ce9adc2bcf8" region="mainpcb:maincpu" offset="100000"/>
+		<rom name="mpr-15790.ic36" size="2097152" status="nodump" region="mainpcb:gfx1" offset="0"/>
+		<device_ref name="z80"/>
+	</machine>
+	<machine name="sonicp" sourcefile="sega/segas32.cpp" cloneof="sonic" romof="sonic">
+		<description>SegaSonic The Hedgehog (Japan, prototype)</description>
+		<year>1992</year>
+		<manufacturer>Sega</manufacturer>
+		<rom name="sonpg0.bin" size="131072" crc="da05dcbb" sha1="c2ced1f3aee92b0e531d5cd7611d9a1e2ab6c8d6" region="mainpcb:maincpu" offset="0"/>
+		<rom name="epr-15781c.ic18" merge="epr-15781c.ic18" size="262144" crc="65b06c25" sha1="9f524012a7adbc71737f90fc556f0ce9adc2bcf8" region="mainpcb:maincpu" offset="100000"/>
+	</machine>
+	<machine name="neogeo" sourcefile="neogeo/neogeo.cpp" isbios="yes">
+		<description>Neo-Geo MV-6F</description>
+		<year>1990</year>
+		<manufacturer>SNK</manufacturer>
+		<rom name="sp-s2.sp1" bios="euro" size="131072" crc="9036d879" sha1="4f5ed7105b7128794654ce82b51723e16e389543" region="mainbios"/>
+	</machine>
+	<machine name="area51" sourcefile="atari/jaguar.cpp">
+		<description>Area 51 (R3000)</description>
+		<year>1996</year>
+		<manufacturer>Atari Games</manufacturer>
+		<rom name="area51.u11" size="524288" crc="1a2b3c4d" sha1="1111111111111111111111111111111111111111" region="maincpu"/>
+		<disk name="area51" sha1="2222222222222222222222222222222222222222" region="ide:0:hdd" index="0" writable="yes"/>
+	</machine>
+	<machine name="area51t" sourcefile="atari/jaguar.cpp" cloneof="area51" romof="area51">
+		<description>Area 51 (Time Warner license, Oct 17, 1996)</description>
+		<year>1996</year>
+		<manufacturer>Atari Games (Time Warner license)</manufacturer>
+		<rom name="a51_tw.u11" size="524288" crc="5e6f7a8b" sha1="3333333333333333333333333333333333333333" region="maincpu"/>
+		<disk name="area51t" sha1="4444444444444444444444444444444444444444" region="ide:0:hdd" index="0" writable="yes"/>
+	</machine>
+	<machine name="pacman" sourcefile="pacman/pacman.cpp">
+		<description>Pac-Man (Midway)</description>
+		<year>1980</year>
+		<manufacturer>Namco (Midway license)</manufacturer>
+		<rom name="pacman.6e" size="4096" crc="c1e6ab10" sha1="e87e059c5be45753f7e9f33dff851f16d6751181" region="maincpu"/>
+	</machine>
+</mame>

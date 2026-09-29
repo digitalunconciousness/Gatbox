@@ -48,7 +48,11 @@ The bootstrap's MANIFEST maps repo files to installed paths. `--check` (no root)
   Pi = 10.42.0.1. No barcade client Wi-Fi profile yet. The home Wi-Fi profile has a static address: site config,
   set by hand, deliberately not in the bootstrap (BRINGUP M2 notes); eth0 is DHCP.
 - minipro 0.7.4 (built from the pinned upstream tag into /usr/local; T48 via udev → plugdev) and mame 0.276 (apt,
-  for `mame -romident` only).
+  for `mame -romident` and `-listxml` only: no gameplay, no ROM sets on the Pi).
+- `gatbox-mame-roms`: each machine's ROM chips (names, sizes, CRC/SHA-1, every version MAME knows) built at install
+  from `mame -listxml` + `data/gatbox-mame-sets.json` (git-ignored like the roster: slug → parent set, `sure`/`check`/
+  none + why) into `/usr/local/share/gatbox/mame-roms.json`; rebuilt when MAME or the list changes. The dashboard's
+  MACHINE "ROM chips (MAME)" and DUMP "WHICH CHIP?" tick chips whose SHA-1 is in the dump archive (`/api/mame/<slug>`).
 - The original Phase 1 script and its payload are in `docs/history/`.
 - Installs need `sudo`, which asks for a password: the owner runs the install command herself.
 

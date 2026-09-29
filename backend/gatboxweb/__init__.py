@@ -7,8 +7,9 @@
     report.py    gatbox-rail-report runs (text, JSON, PNG; cached) and the PDF
     live.py      follows /run/gatbox/current: last reading, the live alarm, the SSE stream
     meter.py     /api/meter, the profile / machine / alarm switch state, marks, NEW
-    captures.py  capture points per machine
-    roster.py    roster entries merged with platform, critical actions and machine spec
+    captures.py  saved readings (SAVE READING) per machine
+    roster.py    roster entries merged with platform, critical actions and machine spec; machines added on the Pi
+    mame.py      each machine's ROM chips from MAME (built at install), ticked from the dump archive
     system.py    temperature, throttling, EXT5V, disk, network, clock + RTC, kiosk, versions
     devices.py   the USB devices GATBOX knows (IDs read off this Pi), from sysfs
     dump.py      the DUMP flow: requests to gatbox-dump's spool, progress back, the archive's list

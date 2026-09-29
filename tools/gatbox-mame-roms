@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""gatbox-mame-roms — each machine's ROM chips, from the Pi's own MAME: what the dashboard's checklist ticks off.
+
+The machine -> MAME set list is gatbox-mame-sets.json (git-ignored next to the roster: it's the floor list), found
+like the roster ($GATBOX_DATA, the repo's data/, /usr/local/share/gatbox). Each entry names the set's parent; every
+version MAME knows (the parent and its clones: revisions, regions) comes along, so a dump of any of them ticks.
+    "segasonic-the-hedgehog": {"set": "sonic", "status": "sure"}
+    "life-force": {"set": "salamand", "prefer": "lifefrce", "status": "sure"}         prefer: the version shown first
+    "ddr": {"set": "ddr", "status": "check", "why": "which mix? ..."}                 check: a dump settles it
+    "the-swarm": {"set": null, "why": "PC-based (hard drive): no ROM chips in MAME"}
+
+  gatbox-mame-roms --build OUT     write the checklist (JSON) from `mame -listxml`: a minute or two on the Pi, so the
+                                   bootstrap runs it at install, only when MAME or the list changed
+  gatbox-mame-roms --check OUT     exit 0 if OUT is up to date with this MAME and this list, 1 if not
+  gatbox-mame-roms SLUG            print one machine's checklist, ticked from the dump archive
+
+No ROM files are involved anywhere: MAME carries each chip's size, CRC32 and SHA-1 in its own driver list.
+"""
+import argparse
+import glob
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+import xml.etree.ElementTree as ET
+
+
+def lib_path():
+    env = os.environ.get("GATBOX_LIB")
+    if env:
+        return env
+    here = os.path.dirname(os.path.realpath(__file__))
+    repo = os.path.join(here, "..", "backend")
+    return repo if os.path.isdir(os.path.join(repo, "gatboxlib")) else "/usr/local/lib/gatbox"
+
+
+sys.path.insert(0, lib_path())
+from gatboxlib import profiles  # noqa: E402
+
+MAME = os.environ.get("GATBOX_MAME") or "/usr/games/mame"      # Debian's path; a service's PATH has no /usr/games
+SETS = "gatbox-mame-sets.json"
+ROMS = os.environ.get("GATBOX_ROMS", "/srv/gatbox/roms")        # the dump archive: <machine>/<label>_<sha1:8>.bin
+
+
+def mapping_path():
+    return os.path.join(profiles.data_dir(), SETS)
+
+
+def mame_version():
+    r = subprocess.run([MAME, "-version"], capture_output=True, text=True, timeout=60)
+    return r.stdout.strip() or None
+
+
+def key():
+    """What a checklist is built from: this MAME + this set list. None when either is missing."""
+    try:
+        with open(mapping_path(), "rb") as f:
+            m = hashlib.sha1(f.read()).hexdigest()
+        v = mame_version()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return f"{v} | {m}" if v else None
+
+
+def load_mapping():
+    with open(mapping_path(), encoding="utf-8") as f:
+        return json.load(f).get("machines", {})
+
+
+def build(out):
+    mapping = load_mapping()
+    wanted = {e["set"] for e in mapping.values() if e.get("set")}
+    found = {}                                      # parent -> [versions], parent first
+    # MAME's whole driver list (~290 MB of XML), streamed: only the mapped parents and their clones are kept
+    p = subprocess.Popen([MAME, "-listxml"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    for _, el in ET.iterparse(p.stdout, events=("end",)):
+        if el.tag != "machine":
+            continue
+        name, parent = el.get("name"), el.get("cloneof")
+        home = name if name in wanted else parent if parent in wanted else None
+        if home:
+            roms = [{k: r.get(k) for k in ("name", "size", "crc", "sha1", "region", "status", "bios") if r.get(k)}
+                    for r in el.findall("rom")]
+            for r in roms:
+                r["size"] = int(r.get("size", 0))
+            v = {"name": name, "desc": el.findtext("description") or "", "year": el.findtext("year") or "",
+                 "mfr": el.findtext("manufacturer") or "", "parent": parent is None, "roms": roms,
+                 "disks": [{k: d.get(k) for k in ("name", "sha1", "region", "status") if d.get(k)}
+                           for d in el.findall("disk")]}
+            (found.setdefault(home, []).insert(0, v) if v["parent"] else found.setdefault(home, []).append(v))
+        el.clear()
+    if p.wait() != 0 and not found:
+        sys.exit(f"{MAME} -listxml failed")
+    machines = {}
+    for slug, e in mapping.items():
+        s = e.get("set")
+        m = {"set": s, "status": e.get("status", "sure" if s else "none"), "why": e.get("why", ""),
+             "prefer": e.get("prefer") or s}
+        if s:
+            m["versions"] = found.get(s, [])
+            if not m["versions"]:
+                m["status"], m["why"] = "missing", f"MAME {mame_version()} has no set {s!r}"
+        machines[slug] = m
+    doc = {"meta": {"key": key(), "built": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "mame": mame_version(),
+                    "about": "Built by gatbox-mame-roms from `mame -listxml` and gatbox-mame-sets.json. "
+                             "Hashes only: no ROM data."}, "machines": machines}
+    tmp = out + ".tmp"
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(doc, f, separators=(",", ":"))
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, out)
+    n = sum(len(m.get("versions", [])) for m in machines.values())
+    print(f"gatbox-mame-roms: {len(machines)} machines, {sum(1 for m in machines.values() if m.get('versions'))} "
+          f"with a MAME set ({n} versions) -> {out}")
+
+
+def up_to_date(out):
+    try:
+        with open(out, encoding="utf-8") as f:
+            have = json.load(f)["meta"]["key"]
+    except (OSError, ValueError, KeyError):
+        return False
+    k = key()
+    return k is not None and have == k
+
+
+def archive_index(roms=ROMS):
+    """{sha1: [{machine, label, file, date}]} from the dump archive's sidecars."""
+    idx = {}
+    for side in glob.glob(os.path.join(roms, "*", "*.json")):
+        try:
+            with open(side, encoding="utf-8") as f:
+                j = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if j.get("sha1"):
+            idx.setdefault(j["sha1"], []).append({"machine": os.path.basename(os.path.dirname(side)),
+                                                  "label": j.get("label"), "file": os.path.basename(side)[:-5] + ".bin",
+                                                  "date": j.get("date")})
+    return idx
+
+
+def show(slug, checklist):
+    m = checklist["machines"].get(slug)
+    if m is None:
+        sys.exit(f"{slug}: not on the MAME list ({SETS})")
+    if not m.get("versions"):
+        print(f"{slug}: no MAME set. {m.get('why', '')}")
+        return
+    idx = archive_index()
+    for v in m["versions"]:
+        have = sum(1 for r in v["roms"] if r.get("sha1") in idx)
+        print(f"\n{v['name']}{'' if v['parent'] else ' (clone)'}: {v['desc']} · {v['mfr']} {v['year']} · "
+              f"{have}/{len(v['roms'])} dumped")
+        for r in v["roms"]:
+            d = idx.get(r.get("sha1"))
+            print(f"  {'✓' if d else '·'} {r['name']:<22} {r['size'] // 1024:>6} KB  {r.get('crc', '-'):8}  "
+                  f"{(r.get('sha1') or r.get('status', 'no hash'))[:12]:12}  {r.get('region', '')}"
+                  + (f"   <- {d[0]['label']} ({d[0]['machine']})" if d else ""))
+        for dk in v["disks"]:
+            print(f"  ▣ {dk['name']} (hard disk / CD image: not a T48 job)")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("slug", nargs="?", help="print this machine's checklist")
+    ap.add_argument("--build", metavar="OUT", help="build the checklist JSON")
+    ap.add_argument("--check", metavar="OUT", help="exit 0 if OUT is up to date")
+    ap.add_argument("--from", dest="src", default="/usr/local/share/gatbox/mame-roms.json",
+                    help="the checklist to print from (default: the installed one)")
+    a = ap.parse_args()
+    if a.check:
+        sys.exit(0 if up_to_date(a.check) else 1)
+    if a.build:
+        return build(a.build)
+    if a.slug:
+        with open(a.src, encoding="utf-8") as f:
+            return show(a.slug, json.load(f))
+    ap.print_help()
+
+
+if __name__ == "__main__":
+    main()

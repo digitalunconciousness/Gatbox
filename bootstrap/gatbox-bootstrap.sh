@@ -63,6 +63,7 @@ backend/gatbox-meta                             /usr/local/bin/gatbox-meta      
 tools/gatbox-replay                             /usr/local/bin/gatbox-replay                          755
 tools/gatbox-labels                             /usr/local/bin/gatbox-labels                          755
 tools/gatbox-dump                               /usr/local/bin/gatbox-dump                            755
+tools/gatbox-mame-roms                          /usr/local/bin/gatbox-mame-roms                       755
 backend/gatboxlib/__init__.py                   /usr/local/lib/gatbox/gatboxlib/__init__.py           644
 backend/gatboxlib/modes.py                      /usr/local/lib/gatbox/gatboxlib/modes.py              644
 backend/gatboxlib/profiles.py                   /usr/local/lib/gatbox/gatboxlib/profiles.py           644
@@ -80,6 +81,7 @@ backend/gatboxweb/roster.py                     /usr/local/lib/gatbox/gatboxweb/
 backend/gatboxweb/system.py                     /usr/local/lib/gatbox/gatboxweb/system.py             644
 backend/gatboxweb/devices.py                    /usr/local/lib/gatbox/gatboxweb/devices.py            644
 backend/gatboxweb/dump.py                       /usr/local/lib/gatbox/gatboxweb/dump.py               644
+backend/gatboxweb/mame.py                       /usr/local/lib/gatbox/gatboxweb/mame.py               644
 web/dash/index.html                             /usr/local/share/gatbox-web/dash/index.html           644
 web/dash/dash.css                               /usr/local/share/gatbox-web/dash/dash.css             644
 web/dash/dash.js                                /usr/local/share/gatbox-web/dash/dash.js              644
@@ -88,6 +90,7 @@ data/profiles.json                              /usr/local/share/gatbox/profiles
 data/gatbox-machine-specs.json                  /usr/local/share/gatbox/gatbox-machine-specs.json     644
 data/eproms.json                                /usr/local/share/gatbox/eproms.json                   644
 data/gatbox-barcade-roster.json                 /usr/local/share/gatbox/gatbox-barcade-roster.json    644  optional
+data/gatbox-mame-sets.json                      /usr/local/share/gatbox/gatbox-mame-sets.json         644  optional
 bootstrap/files/99-gatbox-dmm.rules             /etc/udev/rules.d/99-gatbox-dmm.rules                 644
 bootstrap/files/minipro-0.7.4/60-minipro.rules  /etc/udev/rules.d/60-minipro.rules                    644
 bootstrap/files/minipro-0.7.4/61-minipro-plugdev.rules /etc/udev/rules.d/61-minipro-plugdev.rules    644
@@ -113,6 +116,12 @@ PKGS=(sigrok-cli python3-matplotlib python3-qrcode rsync git curl util-linux-ext
 MINIPRO_TAG=0.7.4
 PARTS_LIST=/usr/local/share/gatbox/minipro-parts-T48.txt    # the dashboard's T48 part names: minipro -q T48 -l
 parts_ok() { head -n 1 "$PARTS_LIST" 2>/dev/null | grep -qxF "# minipro $(minipro_version) T48"; }
+# each machine's ROM chips (the dashboard's checklist), built from MAME's own list and gatbox-mame-sets.json (a
+# git-ignored floor list, like the roster); rebuilt when MAME or the list changes. The checkout's copy of the tool
+# answers --check, so a --check run before the first install sees the same answer.
+MAME_ROMS=/usr/local/share/gatbox/mame-roms.json
+mame_roms_wanted() { [ -f "$REPO/data/gatbox-mame-sets.json" ] && [ -x /usr/games/mame ]; }
+mame_roms_ok() { GATBOX_DATA="$REPO/data" python3 "$REPO/tools/gatbox-mame-roms" --check "$MAME_ROMS"; }
 MINIPRO_URL=https://gitlab.com/DavidGriffith/minipro.git
 MINIPRO_SRC=/usr/local/src/minipro
 # gatbox-web's fonts: Chakra Petch + Share Tech Mono (SIL OFL), the project's design-token fonts, pinned to one
@@ -226,6 +235,7 @@ if [ "${1:-}" = "--check" ]; then
     [ -d /srv/gatbox/roms ] && [ -d /var/spool/gatbox-dump ] || DIFFS+=("create     /srv/gatbox/roms + /var/spool/gatbox-dump (tmpfiles.d)")
     id -nG "$(id -un)" | grep -qw gatbox-dump || DIFFS+=("group      $(id -un) += gatbox-dump (the dump archive)")
     command -v minipro >/dev/null && ! parts_ok && DIFFS+=("generate   $PARTS_LIST")
+    mame_roms_wanted && ! mame_roms_ok && DIFFS+=("generate   $MAME_ROMS (from mame -listxml: a minute or two)")
     if ((${#DIFFS[@]})); then printf 'a run would change:\n'; printf '  %s\n' "${DIFFS[@]}"; exit 3; fi
     echo "nothing to change: this Pi matches the checkout"
     exit 0
@@ -459,6 +469,15 @@ if command -v minipro >/dev/null && ! parts_ok; then
         warn "minipro -q T48 -l gave $(wc -l < "$tmp") lines: T48 part list not updated"
     fi
     rm -f "$tmp"
+fi
+# each machine's ROM chips from MAME: the installed tool and list (just copied), MAME's own driver list. HOME in a
+# throwaway dir so MAME, run as root here, leaves nothing behind.
+if mame_roms_wanted && ! mame_roms_ok; then
+    log "building the MAME ROM checklist from mame -listxml (a minute or two)"
+    mh=$(mktemp -d)
+    HOME=$mh /usr/local/bin/gatbox-mame-roms --build "$MAME_ROMS" 2>&1 | sed 's/^/     /' || true
+    rm -rf "$mh"
+    mame_roms_ok || warn "the MAME ROM checklist didn't build: the dashboard shows machines without it"
 fi
 
 # 9 ---------------------------------------------------------------------------

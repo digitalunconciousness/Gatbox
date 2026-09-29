@@ -57,6 +57,7 @@
   function sourceText(src) {
     if (!src) return "";
     if (src.startsWith("machine:")) return "machine spec";
+    if (src.startsWith("actual:")) return "this machine's actual";
     return {profile: "profile", user: "your value"}[src] || src;
   }
   function fileStart(name) {                  // rail_YYYYmmdd_HHMMSS[_N].csv -> epoch (Pi local time)
@@ -112,6 +113,8 @@
     });
     on("scan", onScan);
     on("dump", onDump);
+    on("specs", x => { if (S.view === "manuals" && x.slug === mnSlug()) loadManuals(); });
+    on("manuals", x => { if (S.view === "manuals" && x.slug === mnSlug()) loadManuals(); });
     on("state", st => onState(st));
     on("heartbeat", () => { S.connected = true; renderHeader(); });
     es.addEventListener("resync", () => { es.close(); setTimeout(connect, 300); });
@@ -173,6 +176,7 @@
     chartDecor(); renderMeter(); renderHeader(); renderNav();
     if (S.view === "machine") loadMachine();
     if (S.view === "dump" && D.st) renderDump();          // FOR <machine> and its chip list follow the machine
+    if (S.view === "manuals" && !M.slug && M.for !== (S.st.machine || null)) { M.for = S.st.machine || null; loadManuals(); }
     if (S.savedFor !== (S.st.machine || null)) loadSaved();
   }
 
@@ -473,6 +477,7 @@
     document.querySelectorAll(".view").forEach(v => v.classList.toggle("on", v.id === "v-" + view));
     if (view === "sessions") loadSessions();
     if (view === "machine") loadMachine();
+    if (view === "manuals") loadManuals();
     if (view === "system") loadSystem();
     if (view === "devices" || view === "dump") loadDevices();
     if (view === "meter") chart.redraw();
@@ -670,9 +675,13 @@
     }
     c.appendChild(el("h3", null, "Rail specs"));
     if (e.spec && e.spec.rails) {
-      for (const [r, w] of Object.entries(e.spec.rails)) c.appendChild(el("div", null, `${r.replace("-", "−")}  ${w[0]}–${w[1]} V`));
+      for (const [r, w] of Object.entries(e.spec.rails))
+        c.appendChild(el("div", null, `${r.replace("-", "−")}  ${w[0]}–${w[1]} V` + (e.spec.sources ? ` · ${srcLabel(e.spec.sources[r])}` : "")));
       if (e.spec.source) c.appendChild(el("div", "mut", e.spec.source));
-    } else c.appendChild(el("div", "mut", "None on file (gatbox-machine-specs.json takes numbers from the machine's own manual)."));
+    } else c.appendChild(el("div", "mut", "None yet: the MANUALS tab has the machine's spec sheet (CONFIRM a limit from its manual)."));
+    const sp = el("button", null, "SPEC SHEET & MANUALS ▸");
+    sp.addEventListener("click", () => { M.slug = M.name = null; show("manuals"); });   // the card is the current machine's
+    c.appendChild(sp);
     c.appendChild(el("h3", null, "Saved readings"));
     try {
       const cp = await api("GET", "/api/captures?machine=" + encodeURIComponent(e.slug));
@@ -1007,6 +1016,365 @@
     }
     if (S.view === "dump") loadDump();
   }
+
+  // --- MANUALS: a machine's documents (fetched, dropped in, uploaded) and its spec sheet -------------------------
+  // The spec sheet keeps the manual's numbers as the manual gives them (its words, its page) and this machine's actual
+  // values from the field beside them. A manual limit reaches the logger only after CONFIRM, with its page on screen
+  // (hard rule 12); an actual only when it's given a window of its own. FOR <machine> like DUMP: reading a machine's
+  // manuals never changes the logger's machine.
+  const M = {slug: null, name: null, docs: null, sheet: null};
+  const mnSlug = () => M.slug || (S.st && S.st.machine) || null;
+  const fmtV = v => `${v < 0 ? "−" : ""}${Math.abs(v).toFixed(Math.abs(v) >= 10 ? 1 : 2)} V`;
+  const fmtW = w => w ? range(w[0], w[1], "V") : "—";
+  const srcLabel = s => !s ? "" : s === "actual" ? "this machine's actual" : s.startsWith("manual:") ? "the manual, confirmed"
+                          : s === "specs file" ? "specs file" : s;
+  const OTHER_RAILS = ["+5V", "+12V", "-5V", "+3.3V", "-12V", "+25V"];
+  async function loadManuals() {
+    const B = $("#mn-body"), slug = mnSlug();
+    const head = el("div", "card"), row = el("div", "btnrow"), other = el("button", null, "OTHER MACHINE");
+    row.style.alignItems = "center";
+    other.addEventListener("click", pickManualsMachine);
+    add(row, el("b", null, "FOR"), el("span", "chip", slug ? (M.slug ? M.name : (S.st.machine_name || slug)) || slug : "no machine"), other);
+    if (M.slug) {
+      const back = el("button", null, "CURRENT");
+      back.addEventListener("click", () => { M.slug = M.name = null; loadManuals(); });
+      row.appendChild(back);
+    }
+    head.appendChild(row);
+    if (!slug) {
+      add(clear(B), head, el("div", "card mut", "No machine set: OTHER MACHINE picks one to read (the logger's machine stays as it is)."));
+      return;
+    }
+    let d, s;
+    try {
+      [d, s] = await Promise.all([api("GET", "/api/manuals/" + encodeURIComponent(slug)), api("GET", "/api/specs/" + encodeURIComponent(slug))]);
+    } catch (e) { add(clear(B), head, el("div", "card warn", e.message)); return; }
+    if (mnSlug() !== slug) return;                 // another machine was picked meanwhile
+    M.docs = d; M.sheet = s;
+    add(clear(B), head, specCard(slug, s, d), docsCard(slug, d));
+  }
+  async function pickManualsMachine() {
+    let R, O;
+    try { [R, O] = await Promise.all([api("GET", "/api/roster"), api("GET", "/api/manuals")]); } catch (e) { return fail(e); }
+    const pick = await pickFrom("Whose manuals?", R.machines.map(m => {
+      const n = (O.machines[m.slug] || {}).docs || 0;
+      return {key: m.slug, title: m.name, find: [m.name.toLowerCase(), m.slug],
+              sub: `${m.slug} · ${n ? `${n} document${n > 1 ? "s" : ""}` : "no documents yet"}`};
+    }), mnSlug());
+    if (!pick) return;
+    M.slug = pick; M.name = (R.machines.find(m => m.slug === pick) || {}).name || pick;
+    loadManuals();
+  }
+  const pageUrl = (slug, file, page, w) => `/manual/${encodeURIComponent(slug)}/${encodeURIComponent(file)}/${page}.png?w=${w}`;
+  function specCard(slug, s, d) {
+    const c = el("div", "card"), docOf = id => d.docs.find(x => x.id === id);
+    add(c, el("h2", null, "Spec sheet"),
+        el("div", "mut", "The manual's numbers as the manual gives them (p.N opens the page), and this machine's actual values " +
+                         "from the field beside them. A manual limit sets the logger's window only once you CONFIRM it; an " +
+                         "actual only if you give it a window of its own."));
+    const cite = x => {
+      const doc = docOf(x.doc), b = el("button", "cite", `p.${x.page} ▸`);
+      b.disabled = !doc;
+      b.addEventListener("click", () => openViewer(slug, doc, x.page));
+      return b;
+    };
+    const buttons = (...bs) => { const r = el("div", "btnrow"); bs.forEach(b => b && r.appendChild(b)); return r; };
+    const btn = (label, cls, f) => { const b = el("button", "mini" + (cls ? " " + cls : ""), label); b.addEventListener("click", f); return b; };
+    if (!s.rails.length && !s.facts.length) c.appendChild(el("div", "mut", "Nothing read off the manuals yet."));
+    if (s.rails.length) {
+      const wrap = el("div"), t = el("table", "t spec-t"), hr = el("tr");
+      wrap.style.overflowX = "auto";
+      for (const h of ["RAIL", "THE MANUAL", "ACTUAL · THIS MACHINE", "WINDOW IN USE"]) hr.appendChild(el("th", null, h));
+      t.appendChild(hr);
+      for (const r of s.rails) {
+        const man = el("td"), act = el("td");
+        if (!r.manual.length && !r.file) man.appendChild(el("span", "mut", "not in the manuals"));
+        for (const m of r.manual) {
+          const line = el("div", "specline");
+          add(line, el("b", null, fmtW([m.lo, m.hi])), cite(m));
+          if (m.confirmed) add(line, el("span", "badge ok", "✓ CONFIRMED"),
+                               btn("UNDO", "", () => specCall("DELETE", `/api/specs/${encodeURIComponent(slug)}/confirm`, {rail: r.rail}, `${r.rail}: confirm taken back`)));
+          else line.appendChild(btn("CONFIRM", "primary", () => confirmLimit(slug, r, m, docOf(m.doc))));
+          man.appendChild(line);
+          if (m.quote) man.appendChild(el("div", "quote", `“${m.quote}” · ${m.title}`));
+        }
+        if (r.file) man.appendChild(el("div", "mut", `specs file: ${fmtW(r.file.window)}${r.file.source ? " · " + r.file.source : ""}`));
+        if (r.actual) add(act, el("b", null, fmtV(r.actual.value)),
+                          r.actual.window ? el("div", null, `own window ${fmtW(r.actual.window)}`) : null,
+                          r.actual.note ? el("div", "quote", r.actual.note) : null,
+                          el("div", "mut", `${r.actual.from === "meter" ? "from the meter" : "typed"} · ${(r.actual.date || "").slice(0, 10)}`));
+        act.appendChild(buttons(btn(r.actual ? "EDIT" : "SET ACTUAL", "", () => setRailActual(slug, r)),
+                                r.actual ? btn("CLEAR", "", () => specCall("DELETE", `/api/actuals/${encodeURIComponent(slug)}`, {rail: r.rail}, `${r.rail}: actual cleared`)) : null));
+        const tr = el("tr");
+        add(tr, el("td", "rail", r.rail.replace("-", "−")), man, act,
+            el("td", r.window ? "ok" : "mut", r.window ? `${fmtW(r.window)} · ${srcLabel(r.source)}` : "the profile's"));
+        t.appendChild(tr);
+      }
+      wrap.appendChild(t);
+      c.appendChild(wrap);
+    }
+    if (s.facts.length) {
+      const wrap = el("div"), t = el("table", "t spec-t"), hr = el("tr");
+      wrap.style.overflowX = "auto";
+      for (const h of ["", "THE MANUAL", "ACTUAL · THIS MACHINE"]) hr.appendChild(el("th", null, h));
+      t.appendChild(hr);
+      for (const f of s.facts) {
+        const man = el("td"), act = el("td"), tr = el("tr");
+        if (f.value != null) { add(man, el("span", null, f.value + " "), f.page ? cite(f) : null); if (f.quote) man.appendChild(el("div", "quote", `“${f.quote}”`)); }
+        else man.appendChild(el("span", "mut", "not in the manuals"));
+        if (f.actual) add(act, el("b", null, f.actual.value), f.actual.note ? el("div", "quote", f.actual.note) : null);
+        act.appendChild(buttons(btn(f.actual ? "EDIT" : "SET ACTUAL", "", () => setFactActual(slug, f.what, f.actual)),
+                                f.actual ? btn("CLEAR", "", () => specCall("DELETE", `/api/actuals/${encodeURIComponent(slug)}`, {fact: f.what}, `${f.what}: actual cleared`)) : null));
+        add(tr, el("td", "rail", f.what), man, act);
+        t.appendChild(tr);
+      }
+      wrap.appendChild(t);
+      c.appendChild(wrap);
+    }
+    const have = new Set(s.rails.map(r => r.rail));
+    c.appendChild(buttons(
+      btn("+ ACTUAL FOR A RAIL", "", async () => {
+        const rail = await pickFrom("Which rail?", OTHER_RAILS.filter(r => !have.has(r)).map(r => ({key: r, title: r.replace("-", "−"), sub: "", find: [r]})));
+        if (rail) setRailActual(slug, {rail, manual: [], actual: null, window: null});
+      }),
+      btn("+ ACTUAL FACT", "", () => setFactActual(slug, null, null))));
+    return c;
+  }
+  async function specCall(method, path, body, msg) {
+    try {
+      const r = await api(method, path, body);
+      toast(msg + (r.new_file ? " · new file started" : ""));
+      if (S.view === "manuals") loadManuals();
+    } catch (e) { fail(e); }
+  }
+  // CONFIRM: the page itself on screen, the manual's words, then the owner's say-so
+  async function confirmLimit(slug, r, m, doc) {
+    const ok = await sheet(`CONFIRM ${r.rail} ${fmtW([m.lo, m.hi])}?`, (pane, done) => {
+      pane.appendChild(el("div", null, `${m.title}, page ${m.page}: “${m.quote || ""}”. Check it on the page. Once confirmed, ` +
+                                       `it's this machine's ${r.rail} window in the logger (unless an actual of its own says otherwise).`));
+      if (doc) { const box = el("div", "pagebox"), im = el("img"); im.src = pageUrl(slug, doc.file, m.page, 1200); box.appendChild(im); pane.appendChild(box); }
+      const row = el("div", "btnrow"), y = el("button", "primary", "CONFIRM"), n = el("button", null, "CANCEL");
+      y.addEventListener("click", () => done(true)); n.addEventListener("click", () => done(false));
+      add(row, y, n);
+      pane.appendChild(row);
+    });
+    if (ok) specCall("POST", `/api/specs/${encodeURIComponent(slug)}/confirm`, {rail: r.rail, doc: m.doc, page: m.page},
+                     `${r.rail} confirmed from ${m.title} p.${m.page}`);
+  }
+  function choose(title, text, options) {           // [[key, label, primary?], ...] -> key or null
+    return sheet(title, (pane, done) => {
+      pane.appendChild(el("div", null, text));
+      const row = el("div", "btnrow");
+      for (const [k, label, primary] of options) { const b = el("button", primary ? "primary" : null, label); b.addEventListener("click", () => done(k)); row.appendChild(b); }
+      const n = el("button", null, "CANCEL");
+      n.addEventListener("click", () => done(null));
+      row.appendChild(n);
+      pane.appendChild(row);
+    });
+  }
+  // an actual value from the field: the live reading (this machine, the right rail, logging) or typed; then whether
+  // it gets a window of its own; then a note. The manual's numbers are never touched.
+  async function setRailActual(slug, r) {
+    const neg = r.rail.startsWith("-"), cur = r.actual;
+    const live = logging() && S.last && S.last.mode === "VDC" && S.last.v != null && slug === (S.st && S.st.machine) && (S.last.v < 0) === neg;
+    let v = null, from = "typed";
+    if (live) {
+      const how = await choose(`Actual ${r.rail} on this machine`, "What it really runs at, measured in the field. The manual's numbers stay as they are.",
+                               [["live", `USE THE LIVE READING ${fmtV(S.last.v)}`, true], ["type", "TYPE IT"]]);
+      if (!how) return;
+      if (how === "live") { v = S.last.v; from = "meter"; }
+    }
+    if (v == null) {
+      const t = await keypad({title: `Actual ${r.rail} on this machine, in volts`, number: true, max: 8, value: cur ? String(cur.value) : ""});
+      if (!t) return;
+      v = parseFloat(t);
+      if (!isFinite(v)) return toast("Not a number", "bad");
+    }
+    const opts = [["none", "NO OWN WINDOW", !(cur && cur.window)], ["set", "SET ITS OWN WINDOW"]];
+    if (cur && cur.window) opts.unshift(["same", `KEEP ITS OWN ${fmtW(cur.window)}`, true]);
+    const own = await choose(`${r.rail}: a window of its own?`,
+                             `Now: ${r.window ? fmtW(r.window) + " (" + srcLabel(r.source) + ")" : "the profile's window"}. Give it one of its own ` +
+                             "if it runs outside that on purpose (a boosted +5V), so it doesn't read HIGH all night.", opts);
+    if (!own) return;
+    let win = own === "same" ? cur.window : null;
+    if (own === "set") {
+      const lo = await keypad({title: `${r.rail} window for this machine: low (V)`, number: true, max: 8});
+      const hi = lo ? await keypad({title: `${r.rail} window for this machine: high (V)`, number: true, max: 8}) : null;
+      if (!lo || !hi) return;
+      win = [parseFloat(lo), parseFloat(hi)];
+    }
+    const note = await keypad({title: "Note (optional): why, what was done", max: 200, value: cur ? cur.note : ""});
+    if (note == null) return;
+    specCall("PUT", `/api/actuals/${encodeURIComponent(slug)}`, {rail: r.rail, value: v, window: win, note, from},
+             `${r.rail} actual: ${fmtV(v)}${win ? " · own window " + fmtW(win) : ""}`);
+  }
+  async function setFactActual(slug, what, cur) {
+    if (!what) { what = await keypad({title: "What is it? (e.g. MONITOR, FUSE F2, POWER SUPPLY)", max: 60}); if (!what) return; }
+    const v = await keypad({title: `${what}: what this machine actually has`, max: 120, value: cur ? cur.value : ""});
+    if (!v) return;
+    const note = await keypad({title: "Note (optional)", max: 200, value: cur ? cur.note : ""});
+    if (note == null) return;
+    specCall("PUT", `/api/actuals/${encodeURIComponent(slug)}`, {fact: what, value: v, note}, `${what}: ${v}`);
+  }
+  function docsCard(slug, d) {
+    const c = el("div", "card");
+    c.appendChild(el("h2", null, `Documents (${d.docs.length})`));
+    if (!d.docs.length) c.appendChild(el("div", "mut", d.why ? `None here: ${d.why}` : "None here yet."));
+    for (const x of d.docs) {
+      const b = el("button", "row doc");
+      add(b, el("b", null, x.title + " "), el("span", "tag cy", x.kind.toUpperCase()),
+          el("div", "mut", `${x.pages} page${x.pages === 1 ? "" : "s"} · ${(x.bytes / 1e6).toFixed(1)} MB` +
+                           (x.added === "upload" ? " · uploaded" : x.added === "folder" ? " · added by hand" : "")));
+      b.addEventListener("click", () => openViewer(slug, x, 1));
+      c.appendChild(b);
+    }
+    if (d.not_fetched.length)
+      c.appendChild(el("div", "mut", `On the list, not on the Pi yet: ${d.not_fetched.map(x => x.title).join(" · ")} (gatbox-manuals fetch)`));
+    const row = el("div", "btnrow");
+    row.style.cssText = "align-items:center;margin-top:8px";
+    if (S.local) row.appendChild(el("span", "mut", `ADD PDF: from your phone (this tab, same button), or copy it into /srv/gatbox/manuals/${slug}/ on the Pi.`));
+    else {
+      const inp = el("input"), b = el("button", null, "ADD PDF");
+      inp.type = "file"; inp.accept = "application/pdf,.pdf"; inp.className = "hide";
+      b.addEventListener("click", () => inp.click());
+      inp.addEventListener("change", () => { if (inp.files[0]) uploadPdf(slug, inp.files[0]); });
+      add(row, b, inp, el("span", "mut", `a PDF, up to ${Math.round(d.upload_max / 1048576)} MB`));
+    }
+    c.appendChild(row);
+    return c;
+  }
+  async function uploadPdf(slug, file) {
+    const title = await keypad({title: "What is it? (e.g. OPERATORS MANUAL, CPU BOARD SCHEMATIC)", max: 120, value: file.name.replace(/\.pdf$/i, "")});
+    if (title == null) return;
+    const kind = await pickFrom("What kind of document?", (M.docs.kinds || ["yours"]).map(k => ({key: k, title: k.toUpperCase(), sub: "", find: [k]})), "manual");
+    if (!kind) return;
+    toast(`Uploading ${file.name}…`, "", 120000);
+    try {
+      const r = await fetch(`/api/manuals/${encodeURIComponent(slug)}?title=${encodeURIComponent(title)}&kind=${encodeURIComponent(kind)}`,
+                            {method: "POST", headers: {"Content-Type": "application/pdf"}, body: file});
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
+      toast(`Added ${d.title} (${d.pages} pages)`);
+      loadManuals();
+    } catch (e) { fail(e); }
+  }
+
+  // the viewer: one page as an image drawn by the Pi (no PDF plugin on the kiosk), fit to width; drag pans, pinch or
+  // +/− zoom (the kiosk runs --disable-pinch, so the page does its own), a sideways swipe at fit turns the page,
+  // double tap zooms in / back to fit. The next page is fetched ahead; a sharper image comes when zoomed in.
+  const V = {slug: null, doc: null, page: 1, z: 1, tx: 0, ty: 0, ptrs: new Map(), pinch: null, drag: null, w: 0, lastTap: 0};
+  const snapW = px => [800, 1200, 1600, 2400].find(w => w >= px) || 2400;
+  function openViewer(slug, doc, page) {
+    if (!doc) return toast("That document isn't on the Pi yet", "warn");
+    Object.assign(V, {slug, doc, page: Math.max(1, Math.min(page || 1, doc.pages || 1)), z: 1, tx: 0, ty: 0, w: 0});
+    $("#vw-title").textContent = doc.title;
+    const a = $("#vw-pdf");
+    a.href = `/manual/${encodeURIComponent(slug)}/${encodeURIComponent(doc.file)}`;
+    a.classList.toggle("hide", S.local);
+    $("#vw-img").removeAttribute("src"); $("#vw-img").dataset.url = "";
+    $("#viewer").classList.remove("hide");
+    vwLoad();
+  }
+  function vwLoad() {
+    const st = $("#vw-stage"), img = $("#vw-img");
+    const w = snapW(st.clientWidth * (window.devicePixelRatio || 1) * V.z);
+    $("#vw-page").textContent = `${V.page} / ${V.doc.pages}`;
+    $("#vw-prev").disabled = V.page <= 1; $("#vw-next").disabled = V.page >= V.doc.pages;
+    if (w > V.w || img.dataset.page !== String(V.page)) {
+      V.w = Math.max(w, img.dataset.page === String(V.page) ? V.w : 0);
+      const url = pageUrl(V.slug, V.doc.file, V.page, V.w);
+      $("#vw-wait").textContent = "drawing the page…";
+      $("#vw-wait").classList.remove("hide");
+      img.onload = () => { $("#vw-wait").classList.add("hide"); vwClamp(); vwApply(); };
+      img.onerror = () => { $("#vw-wait").textContent = "couldn't draw this page"; };
+      img.dataset.url = url; img.dataset.page = String(V.page); img.src = url;
+      if (V.page < V.doc.pages) new Image().src = pageUrl(V.slug, V.doc.file, V.page + 1, V.w);
+    }
+    vwApply();
+  }
+  function vwClamp() {
+    const st = $("#vw-stage"), img = $("#vw-img"), W = st.clientWidth, H = st.clientHeight;
+    const h = (img.naturalWidth ? img.naturalHeight / img.naturalWidth * W : H) * V.z;
+    V.tx = Math.min(0, Math.max(W - W * V.z, V.tx));
+    V.ty = Math.min(0, Math.max(Math.min(0, H - h), V.ty));
+  }
+  const vwApply = () => { $("#vw-img").style.transform = `translate(${V.tx}px,${V.ty}px) scale(${V.z})`; };
+  function vwGo(p) {
+    if (!V.doc || p < 1 || p > V.doc.pages) return;
+    Object.assign(V, {page: p, z: 1, tx: 0, ty: 0, w: 0});
+    vwLoad();
+  }
+  function vwZoom(f, cx, cy) {                       // about a point on the stage
+    const z = Math.max(1, Math.min(6, V.z * f)), k = z / V.z;
+    V.tx = cx - (cx - V.tx) * k; V.ty = cy - (cy - V.ty) * k; V.z = z;
+    vwClamp(); vwApply();
+    clearTimeout(vwZoom.t); vwZoom.t = setTimeout(vwLoad, 250);    // a sharper image once the zooming stops
+  }
+  (function () {
+    const st = $("#vw-stage"), mid = () => { const p = [...V.ptrs.values()]; return [(p[0].x + p[1].x) / 2, (p[0].y + p[1].y) / 2, Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y)]; };
+    const at = e => { const r = st.getBoundingClientRect(); return {x: e.clientX - r.left, y: e.clientY - r.top}; };
+    st.addEventListener("pointerdown", e => {
+      st.setPointerCapture(e.pointerId); V.ptrs.set(e.pointerId, at(e));
+      if (V.ptrs.size === 2) { const [cx, cy, d] = mid(); V.pinch = {cx, cy, d: d || 1, z: V.z}; V.drag = null; }
+      else if (V.ptrs.size === 1) { const p = at(e); V.drag = {x: p.x, y: p.y, tx: V.tx, ty: V.ty, t: Date.now()}; }
+    });
+    st.addEventListener("pointermove", e => {
+      if (!V.ptrs.has(e.pointerId)) return;
+      V.ptrs.set(e.pointerId, at(e));
+      if (V.pinch && V.ptrs.size >= 2) { const [cx, cy, d] = mid(); vwZoom(V.pinch.z * d / V.pinch.d / V.z, cx, cy); }
+      else if (V.drag) { const p = at(e); V.tx = V.drag.tx + (V.z > 1 ? p.x - V.drag.x : 0); V.ty = V.drag.ty + p.y - V.drag.y; vwClamp(); vwApply(); }
+    });
+    const up = e => {
+      if (!V.ptrs.has(e.pointerId)) return;
+      const p = at(e), dr = V.drag;
+      V.ptrs.delete(e.pointerId);
+      if (V.ptrs.size < 2) V.pinch = null;
+      if (dr && V.ptrs.size === 0) {
+        const dx = p.x - dr.x, dy = p.y - dr.y;
+        if (V.z === 1 && Math.abs(dx) > 80 && Math.abs(dx) > 2 * Math.abs(dy) && Date.now() - dr.t < 700) vwGo(V.page + (dx < 0 ? 1 : -1));
+        else if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+          if (Date.now() - V.lastTap < 350) { if (V.z > 1) { V.z = 1; V.tx = V.ty = 0; vwApply(); } else vwZoom(2.5, p.x, p.y); V.lastTap = 0; }
+          else V.lastTap = Date.now();
+        }
+      }
+      if (V.ptrs.size === 0) V.drag = null;
+    };
+    st.addEventListener("pointerup", up); st.addEventListener("pointercancel", up);
+    st.addEventListener("wheel", e => {
+      e.preventDefault();
+      const p = at(e);
+      if (e.ctrlKey) vwZoom(e.deltaY > 0 ? 0.8 : 1.25, p.x, p.y);
+      else { V.ty -= e.deltaY; V.tx -= e.deltaX; vwClamp(); vwApply(); }
+    }, {passive: false});
+    $("#vw-prev").addEventListener("click", () => vwGo(V.page - 1));
+    $("#vw-next").addEventListener("click", () => vwGo(V.page + 1));
+    $("#vw-in").addEventListener("click", () => vwZoom(1.5, st.clientWidth / 2, st.clientHeight / 2));
+    $("#vw-out").addEventListener("click", () => vwZoom(1 / 1.5, st.clientWidth / 2, st.clientHeight / 2));
+    $("#vw-fit").addEventListener("click", () => { V.z = 1; V.tx = V.ty = 0; vwApply(); });
+    $("#vw-close").addEventListener("click", () => $("#viewer").classList.add("hide"));
+    $("#vw-page").addEventListener("click", async () => {
+      const n = await keypad({title: `Go to page (1 to ${V.doc.pages})`, number: true, max: 5});
+      if (n) vwGo(parseInt(n, 10));
+    });
+    $("#vw-search").addEventListener("click", async () => {
+      const q = await keypad({title: `Search ${V.doc.title} (e.g. VOLT, FUSE, U12)`, max: 60});
+      if (!q) return;
+      let r;
+      try { r = await api("GET", `/api/manuals/${encodeURIComponent(V.slug)}/search?file=${encodeURIComponent(V.doc.file)}&q=${encodeURIComponent(q)}`); }
+      catch (e) { return fail(e); }
+      if (!r.hits.length) return toast(r.text ? `"${q}": not in this document` : "This document has no text to search (a scan without OCR)", "warn", 6000);
+      const p = await pickFrom(`"${q}": ${r.hits.length} page${r.hits.length > 1 ? "s" : ""}`,
+                               r.hits.map(h => ({key: String(h.page), title: `p.${h.page}${h.count > 1 ? ` (${h.count}×)` : ""}`, sub: h.snippet, find: [String(h.page)]})), String(V.page));
+      if (p) vwGo(parseInt(p, 10));
+    });
+    document.addEventListener("keydown", e => {
+      if ($("#viewer").classList.contains("hide") || !$("#sheet").classList.contains("hide")) return;
+      if (e.key === "ArrowRight" || e.key === "PageDown") vwGo(V.page + 1);
+      else if (e.key === "ArrowLeft" || e.key === "PageUp") vwGo(V.page - 1);
+      else if (e.key === "Escape") $("#viewer").classList.add("hide");
+    });
+    window.addEventListener("resize", () => { if (!$("#viewer").classList.contains("hide")) { vwClamp(); vwApply(); } });
+  })();
 
   // --- ROM CHIPS (MAME): the machine's MAME set, every chip, ticked when the archive has a dump with its SHA-1 ------
   // (built at install from the Pi's own MAME: hashes only). A version switch when MAME knows several (revisions,

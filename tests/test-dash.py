@@ -130,10 +130,34 @@ def setup():
     with open(f"{T}/roms/gauntlet-legends/LEGEND15-U10_aaaaaaaa.json", "w") as f:
         json.dump({"label": "LEGEND15-U10", "part": "27C040@DIP32", "sha1": "a" * 40, "date": "2026-09-29T10:00:00-05:00",
                    "romident": {"match": True, "matches": [{"set": "gauntleg", "rom": "legend15.u10", "description": "x"}]}}, f)
+    # a made-up 3-page manual for Gauntlet Legends (the fetch tool's output: PDF + sidecar + text) and its spec sheet
+    import matplotlib
+    matplotlib.use("Agg")
+    matplotlib.rcParams["pdf.fonttype"] = 42
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_pdf import PdfPages
+    md = f"{T}/manuals/gauntlet-legends"
+    os.makedirs(md)
+    with PdfPages(f"{md}/gl-manual.pdf") as pp:
+        for text in ("GAUNTLET LEGENDS OPERATIONS MANUAL", "PRODUCT SPECIFICATIONS\n+5 VDC 4.75 to 5.25 V\nFUSE F1 5A SLO-BLO",
+                     "SELF-TEST MENU"):
+            fig = plt.figure(figsize=(8.5, 11))
+            fig.text(0.1, 0.8, text, fontsize=16)
+            pp.savefig(fig)
+            plt.close(fig)
+    subprocess.run(["pdftotext", "-layout", f"{md}/gl-manual.pdf", f"{md}/gl-manual.txt"], check=True)
+    json.dump({"id": "gl-manual", "title": "Gauntlet Legends Operations Manual", "kind": "manual", "pages": 3,
+               "added": "fetch"}, open(f"{md}/gl-manual.json", "w"))
+    json.dump({"machines": {"gauntlet-legends": {
+        "docs": [{"id": "gl-manual", "title": "Gauntlet Legends Operations Manual", "kind": "manual", "url": "https://archive.org/x"}],
+        "specs": {"rails": [{"rail": "+5V", "lo": 4.75, "hi": 5.25, "doc": "gl-manual", "page": 2, "quote": "+5 VDC 4.75 to 5.25 V"}],
+                  "sheet": [{"what": "Fuse F1", "value": "5 A slow-blow", "doc": "gl-manual", "page": 2, "quote": "FUSE F1 5A SLO-BLO"}]}}}},
+              open(f"{T}/data/gatbox-manuals.json", "w"))
     env = dict(os.environ, GATBOX_WEB_PORT=str(PORT), STATE_DIRECTORY=f"{T}/ctrl", CACHE_DIRECTORY=f"{T}/cache",
                GATBOX_LOGDIR=f"{T}/log", GATBOX_RUNDIR=f"{T}/run", GATBOX_REPORT=os.path.join(REPO, "tools/gatbox-rail-report"),
                GATBOX_DATA=f"{T}/data", MPLCONFIGDIR=f"{T}/cache/mpl", GATBOX_DUMP_SPOOL=f"{T}/spool",
-               GATBOX_ROMS=f"{T}/roms", GATBOX_MINIPRO_PARTS=f"{T}/parts.txt", GATBOX_MAME_ROMS=f"{T}/mame-roms.json")
+               GATBOX_ROMS=f"{T}/roms", GATBOX_MINIPRO_PARTS=f"{T}/parts.txt", GATBOX_MAME_ROMS=f"{T}/mame-roms.json",
+               GATBOX_MANUALS=f"{T}/manuals")
     os.environ["GATBOX_DATA"] = f"{T}/data"               # the logger's gatbox-meta reads the same data
     procs["web"] = subprocess.Popen(["python3", os.path.join(REPO, "backend/gatbox-web")], env=env,
                                     stdout=open(f"{T}/web.log", "w"), stderr=subprocess.STDOUT, start_new_session=True)
@@ -414,6 +438,54 @@ def main():
                   and "OV 3 (3 suspect)" in text("#s-list"))
             shot("16-sessions-fixture")
         stop("logger")
+
+        print("MANUALS: the spec sheet, the viewer, CONFIRM, an actual:")
+        api("PUT", "/api/machine", {"slug": "gauntlet-legends"})
+        click('[data-view="manuals"]')
+        c.wait("document.querySelector('#mn-body').textContent.includes('Documents (1)')", 15)
+        check("spec sheet: the manual's limit with its page and CONFIRM, the specs file's beside it, a fact",
+              all(s_ in text("#mn-body") for s_ in ("Spec sheet", "4.75–5.25 V", "p.2 ▸", "CONFIRM", "specs file: 4.9–5.1 V",
+                                                     "Fuse F1", "5 A slow-blow", "Gauntlet Legends Operations Manual")))
+        shot("18a-manuals")
+        q("document.querySelector('#mn-body .row.doc').click()")
+        c.wait("!document.querySelector('#viewer').classList.contains('hide') && document.querySelector('#vw-img').naturalWidth > 0", 30)
+        check("the viewer: page 1 of 3 drawn by the Pi", text("#vw-page") == "1 / 3")
+        click("#vw-next")
+        c.wait("document.querySelector('#vw-page').textContent === '2 / 3' && document.querySelector('#vw-img').complete "
+               "&& document.querySelector('#vw-img').naturalWidth > 0", 30)
+        shot("18b-viewer")
+        click("#vw-prev")
+        c.wait("document.querySelector('#vw-page').textContent === '1 / 3'", 10)
+        click("#vw-search")
+        c.wait("document.querySelector('#pane .keys')")
+        tap_keys("4.75")
+        c.wait("document.querySelectorAll('#pane .picklist .row').length === 1", 15)
+        q("document.querySelector('#pane .picklist .row').click()")
+        c.wait("document.querySelector('#vw-page').textContent === '2 / 3'", 10)
+        check("SEARCH 4.75 -> page 2", True)
+        click("#vw-close")
+        q("[...document.querySelectorAll('#mn-body button')].find(b => b.textContent === 'CONFIRM').click()")
+        c.wait("!document.querySelector('#sheet').classList.contains('hide') && document.querySelector('#pane .pagebox img')", 10)
+        c.wait("document.querySelector('#pane .pagebox img').naturalWidth > 0", 30)
+        check("CONFIRM shows the page and the manual's words first", "“+5 VDC 4.75 to 5.25 V”" in text("#pane"))
+        shot("18c-confirm")
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'CONFIRM').click()")
+        c.wait("document.querySelector('#mn-body').textContent.includes('✓ CONFIRMED')", 15)
+        check("confirmed: the window in use is the manual's, and the logger's too",
+              "4.75–5.25 V · the manual, confirmed" in text("#mn-body")
+              and api("GET", "/api/meter/profile")["profile"]["window"] == [4.75, 5.25])
+        api("PUT", "/api/actuals/gauntlet-legends", {"rail": "+5V", "value": 5.2, "window": [5.1, 5.3], "note": "boosted at the PSU"})
+        c.wait("document.querySelector('#mn-body').textContent.includes('own window')", 15)
+        check("an actual from the field beside the manual (kept, still confirmed), its own window in use",
+              all(s_ in text("#mn-body") for s_ in ("5.20 V", "own window 5.1–5.3 V", "boosted at the PSU", "4.75–5.25 V",
+                                                     "✓ CONFIRMED", "5.1–5.3 V · this machine's actual")))
+        shot("18d-actual")
+        click('[data-view="meter"]')
+        c.wait("document.querySelector('#m-window').textContent.includes(\"this machine's actual\")", 15)
+        check("the meter says whose window it is", "5.1–5.3 V · this machine's actual" in text("#m-window"))
+        api("DELETE", "/api/actuals/gauntlet-legends", {"rail": "+5V"})
+        api("DELETE", "/api/specs/gauntlet-legends/confirm", {"rail": "+5V"})
+        api("DELETE", "/api/machine")
 
         print("DUMP: which chip (MAME's list):")
         api("PUT", "/api/machine", {"slug": "gauntlet-legends"})

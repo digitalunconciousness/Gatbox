@@ -10,6 +10,7 @@
     captures.py  saved readings (SAVE READING) per machine
     roster.py    roster entries merged with platform, critical actions and machine spec; machines added on the Pi
     mame.py      each machine's ROM chips from MAME (built at install), ticked from the dump archive
+    manuals.py   each machine's documents (pages as PNGs, search, uploads) and its spec sheet: CONFIRM, actuals
     system.py    temperature, throttling, EXT5V, disk, network, clock + RTC, kiosk, versions
     devices.py   the USB devices GATBOX knows (IDs read off this Pi), from sysfs
     dump.py      the DUMP flow: requests to gatbox-dump's spool, progress back, the archive's list

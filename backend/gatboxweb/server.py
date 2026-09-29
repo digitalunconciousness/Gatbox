@@ -17,9 +17,9 @@ import threading
 import time
 import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from . import captures, config, devices, dump, mame, meter, phone, report, roster, sessions, system
+from . import captures, config, devices, dump, mame, manuals, meter, phone, report, roster, sessions, system
 from .live import LIVE
 from .meter import Bad
 
@@ -359,6 +359,96 @@ def api_mame(h, m, q):
     h.json(200, mame.checklist(m["slug"]))
 
 
+# --- manuals and the spec sheet (2026-09-29) ------------------------------------------------------------------
+def api_manuals_all(h, m, q):
+    h.json(200, {"machines": manuals.overview()})
+
+
+def api_manuals(h, m, q):
+    h.json(200, manuals.docs(m["slug"]))
+
+
+def api_manuals_search(h, m, q):
+    h.json(200, manuals.search(m["slug"], q1(q, "file") or "", q1(q, "q")))
+
+
+def api_manuals_upload(h, m, q):
+    """POST /api/manuals/<slug>?title=&kind=: the body is the PDF itself (Content-Type application/pdf: like the JSON
+    rule, a plain form on some other site can't send that)."""
+    ctype = (h.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    if ctype != "application/pdf":
+        raise Bad(415, "Content-Type must be application/pdf")
+    try:
+        n = int(h.headers.get("Content-Length") or 0)
+    except ValueError:
+        raise Bad(400, "bad Content-Length")
+    doc = manuals.upload(m["slug"], h.rfile, n, q1(q, "title"), q1(q, "kind"))
+    h.log_line(f"manuals: {m['slug']} += {doc['file']} ({doc['pages']} pages, upload)")
+    LIVE.emit("manuals", {"slug": m["slug"], "file": doc["file"], "title": doc["title"]})
+    h.json(201, doc)
+
+
+def get_manual_pdf(h, m, q):
+    """The PDF itself, streamed (a phone opens it in its own viewer)."""
+    p = manuals.path(m["slug"], unquote(m["file"]))
+    size = os.path.getsize(p)
+    h.send_response(200)
+    h.send_header("Content-Type", "application/pdf")
+    h.send_header("Content-Length", str(size))
+    h.send_header("Content-Disposition", "inline; filename*=UTF-8''" + quote(os.path.basename(p)))
+    h.send_header("Cache-Control", "no-cache")
+    h.end_headers()
+    with open(p, "rb") as f:
+        while True:
+            chunk = f.read(1 << 20)
+            if not chunk:
+                break
+            h.wfile.write(chunk)
+
+
+def get_manual_page(h, m, q):
+    png = manuals.page_png(m["slug"], unquote(m["file"]), m["page"], q1(q, "w", "1200"))
+    h.send(200, png, "image/png", cache="private, max-age=86400")
+
+
+def _spec_changed(h, slug, out, new_file):
+    LIVE.emit("specs", {"slug": slug})
+    if meter.resolved()["machine"] == slug:
+        LIVE.emit("state", meter.state(full=False))          # the window on every screen
+    h.json(200, {"slug": slug, "result": out, "new_file": new_file, "sheet": manuals.sheet(slug)})
+
+
+def api_specs(h, m, q):
+    h.json(200, manuals.sheet(m["slug"]))
+
+
+def api_specs_confirm(h, m, q):
+    b = h.body()
+    out, new_file = meter.spec_change(lambda: manuals.confirm(m["slug"], b))
+    h.log_line(f"specs: {m['slug']} {b.get('rail')} confirmed from {out['source']}")
+    _spec_changed(h, m["slug"], out, new_file)
+
+
+def api_specs_unconfirm(h, m, q):
+    b = h.body()
+    out, new_file = meter.spec_change(lambda: manuals.unconfirm(m["slug"], b))
+    h.log_line(f"specs: {m['slug']} {b.get('rail')} unconfirmed")
+    _spec_changed(h, m["slug"], out, new_file)
+
+
+def api_actuals_put(h, m, q):
+    b = h.body()
+    out, new_file = meter.spec_change(lambda: manuals.set_actual(m["slug"], b))
+    h.log_line(f"actuals: {m['slug']} {out.get('rail') or out.get('fact')} = {out['value']}")
+    _spec_changed(h, m["slug"], out, new_file)
+
+
+def api_actuals_delete(h, m, q):
+    b = h.body()
+    out, new_file = meter.spec_change(lambda: manuals.clear_actual(m["slug"], b))
+    _spec_changed(h, m["slug"], out, new_file)
+
+
 def api_roster_entry(h, m, q):
     e = roster.entry(m["slug"])
     if e is None:
@@ -408,6 +498,7 @@ def api_live(h, m, q):
         alarm      an over-voltage event opened (spike), escalated (alarm) or closed
         mark / capture / state   something done through the API (by any client)
         roster     a machine added or edited on the dashboard
+        manuals    a document uploaded; specs: a limit confirmed or an actual value changed (the machine's slug)
         heartbeat  every 15 s, even while samples flow: {"t", "logging", "age_s"}
     Event ids are sequence numbers: a client reconnecting with Last-Event-ID gets what it missed, if still kept."""
     with LIVE.cv:
@@ -512,6 +603,17 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("GET", r"/api/roster/(?P<slug>[^/]+)", api_roster_entry),
     ("PUT", r"/api/roster/(?P<slug>[^/]+)", api_roster_edit),
     ("GET", r"/api/mame/(?P<slug>[^/]+)", api_mame),
+    ("GET", r"/api/manuals", api_manuals_all),
+    ("GET", r"/api/manuals/(?P<slug>[^/]+)", api_manuals),
+    ("POST", r"/api/manuals/(?P<slug>[^/]+)", api_manuals_upload),
+    ("GET", r"/api/manuals/(?P<slug>[^/]+)/search", api_manuals_search),
+    ("GET", r"/manual/(?P<slug>[^/]+)/(?P<file>[^/]+)", get_manual_pdf),
+    ("GET", r"/manual/(?P<slug>[^/]+)/(?P<file>[^/]+)/(?P<page>\d{1,5})\.png", get_manual_page),
+    ("GET", r"/api/specs/(?P<slug>[^/]+)", api_specs),
+    ("POST", r"/api/specs/(?P<slug>[^/]+)/confirm", api_specs_confirm),
+    ("DELETE", r"/api/specs/(?P<slug>[^/]+)/confirm", api_specs_unconfirm),
+    ("PUT", r"/api/actuals/(?P<slug>[^/]+)", api_actuals_put),
+    ("DELETE", r"/api/actuals/(?P<slug>[^/]+)", api_actuals_delete),
 ]]
 
 
@@ -571,7 +673,7 @@ class H(BaseHTTPRequestHandler):
         if command is None:
             return
         if command == "GET" and not getattr(self, "failed", False) and url and \
-                url.path.startswith(("/api/", "/font/", "/kiosk/state", "/dash/")):
+                url.path.startswith(("/api/", "/font/", "/kiosk/state", "/dash/", "/manual/")):
             return
         sys.stderr.write("%s %s\n" % (self.address_string(), fmt % a))
 

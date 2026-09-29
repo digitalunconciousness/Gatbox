@@ -20,10 +20,12 @@ secrets/
 *.local.md
 data/gatbox-barcade-roster.json
 data/gatbox-mame-sets.json
+data/gatbox-manuals.json
 
-# ROM dumps are copyrighted: never in the public repo
+# ROM dumps and manuals are copyrighted: never in the public repo
 *.bin
 roms/
+*.pdf
 
 # Claude Code: local permission choices on this Pi, not project settings
 .claude/settings.local.json

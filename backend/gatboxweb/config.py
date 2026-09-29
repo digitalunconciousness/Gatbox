@@ -16,6 +16,8 @@ ROMS = os.environ.get("GATBOX_ROMS", os.path.join(SRV, "roms"))          # the d
 DUMP_SPOOL = os.environ.get("GATBOX_DUMP_SPOOL", "/var/spool/gatbox-dump")   # dump requests / progress (M7)
 MINIPRO_PARTS = os.environ.get("GATBOX_MINIPRO_PARTS", "/usr/local/share/gatbox/minipro-parts-T48.txt")
 MAME_ROMS = os.environ.get("GATBOX_MAME_ROMS", "/usr/local/share/gatbox/mame-roms.json")   # gatbox-mame-roms, at install
+MANUALS = os.environ.get("GATBOX_MANUALS", os.path.join(SRV, "manuals"))   # <slug>/<name>.pdf (+ .json sidecar, .txt)
+UPLOAD_MAX = int(os.environ.get("GATBOX_UPLOAD_MAX", str(200 * 1024 * 1024)))   # a PDF from a phone
 SCAND_STATE = os.environ.get("GATBOX_SCAND_STATE", "/run/gatbox-scand/state.json")   # gatbox-scand's (M6)
 
 FONT_FILES = {"ChakraPetch-SemiBold.ttf", "ShareTechMono-Regular.ttf"}

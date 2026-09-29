@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""gatbox-manuals — each machine's documents (manuals, schematics, parts catalogs, kit sheets, bulletins), fetched
+from the public archives into /srv/gatbox/manuals/<slug>/ for the dashboard's MANUALS tab.
+
+The list is gatbox-manuals.json (git-ignored next to the roster: it's the floor), found like the roster
+($GATBOX_DATA, the repo's data/, /usr/local/share/gatbox):
+    "gauntlet-legends": {"docs": [{"id": "gauntlet-legends-manual", "title": "...", "kind": "manual",
+                                   "url": "https://archive.org/download/...", "sha256": "...", "source": "..."}],
+                         "specs": {"rails": [...], "sheet": [...]}}          (read by gatbox-web; see manuals.py)
+
+  gatbox-manuals fetch [SLUG...]    download what's missing: https from the archives below only, a real PDF only
+                                    (%PDF- and pdfinfo reads it), the list's sha256 checked (--pin records the
+                                    ones it lacks); <id>.pdf + <id>.json (sidecar) + <id>.txt (its text)
+  gatbox-manuals list [SLUG...]     what's here, what's missing, and the sizes
+
+Run it as the owner (group gatbox-manuals: the folder is 2775). Nothing here is in git: the documents are copyrighted.
+"""
+import argparse
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from urllib.parse import urlsplit
+
+
+def lib_path():
+    env = os.environ.get("GATBOX_LIB")
+    if env:
+        return env
+    here = os.path.dirname(os.path.realpath(__file__))
+    repo = os.path.join(here, "..", "backend")
+    return repo if os.path.isdir(os.path.join(repo, "gatboxlib")) else "/usr/local/lib/gatbox"
+
+
+sys.path.insert(0, lib_path())
+from gatboxlib import profiles  # noqa: E402
+
+LIST = "gatbox-manuals.json"
+DEST = os.environ.get("GATBOX_MANUALS", "/srv/gatbox/manuals")
+# where documents may come from (https only): the manual archives the list is built from
+HOSTS = {"archive.org", "www.arcade-museum.com", "arcade-museum.com", "www.sternpinball.com", "sternpinball.com",
+         "arcade.segakore.fr", "arcarc.xmission.com", "www.ipdb.org", "ipdb.org"}       # + any *.archive.org node
+TEST_HOSTS = {h for h in os.environ.get("GATBOX_MANUAL_HOSTS", "").split(",") if h}   # tests: plain http on these
+MAX = 400 * 1024 * 1024
+UA = "gatbox-manuals/1 (a personal archive of service manuals for machines in our care)"
+ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
+
+
+def list_path():
+    return os.path.join(profiles.data_dir(), LIST)
+
+
+def load():
+    with open(list_path(), encoding="utf-8") as f:
+        return json.load(f)
+
+
+def allowed(url):
+    u = urlsplit(url)
+    host = (u.hostname or "").lower()
+    if u.scheme == "http" and host in TEST_HOSTS:
+        return True
+    return u.scheme == "https" and (host in HOSTS or host.endswith(".archive.org"))
+
+
+class Redirects(urllib.request.HTTPRedirectHandler):
+    """Follow redirects (archive.org sends each download to a storage node), but only to allowed hosts."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not allowed(newurl):
+            raise urllib.error.URLError(f"redirected off the allowed archives: {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def pdf_pages(p):
+    try:
+        r = subprocess.run(["pdfinfo", p], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    m = re.search(r"^Pages:\s+(\d+)", r.stdout, re.M)
+    return int(m.group(1)) if m else 0
+
+
+def sha256(p):
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def fetch_one(slug, doc):
+    """(state, detail): here / fetched / failed."""
+    if not ID.match(doc.get("id", "")) or not doc.get("url"):
+        return "failed", f"bad list entry {doc.get('id')!r}"
+    if not allowed(doc["url"]):
+        return "failed", f"not from an allowed archive (https: {', '.join(sorted(HOSTS))}): {doc['url']}"
+    d = os.path.join(DEST, slug)
+    pdf = os.path.join(d, doc["id"] + ".pdf")
+    if os.path.exists(pdf):
+        side = {}
+        try:
+            with open(pdf[:-4] + ".json", encoding="utf-8") as f:
+                side = json.load(f)
+        except (OSError, ValueError):
+            pass
+        if not doc.get("sha256") or side.get("sha256") == doc["sha256"]:
+            return "here", ""
+    os.makedirs(d, exist_ok=True)
+    try:
+        os.chmod(d, 0o2775)
+    except OSError:
+        pass
+    tmp = pdf + ".part"
+    try:
+        opener = urllib.request.build_opener(Redirects)
+        with opener.open(urllib.request.Request(doc["url"], headers={"User-Agent": UA}), timeout=90) as r, \
+                open(tmp, "wb") as f:
+            n = 0
+            for chunk in iter(lambda: r.read(1 << 20), b""):
+                n += len(chunk)
+                if n > MAX:
+                    raise ValueError(f"over {MAX // (1024 * 1024)} MB")
+                f.write(chunk)
+        with open(tmp, "rb") as f:
+            if f.read(5) != b"%PDF-":
+                raise ValueError("not a PDF (the archive sent something else: a web page?)")
+        pages = pdf_pages(tmp)
+        if not pages:
+            raise ValueError("pdfinfo can't read it")
+        digest = sha256(tmp)
+        if doc.get("sha256") and doc["sha256"] != digest:
+            raise ValueError(f"sha256 {digest[:12]}… isn't the list's {doc['sha256'][:12]}…: the file changed upstream")
+        os.chmod(tmp, 0o664)
+        os.replace(tmp, pdf)
+    except Exception as e:                               # noqa: BLE001  (one bad download never stops the rest)
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        return "failed", str(e)
+    side = {"id": doc["id"], "title": doc.get("title") or doc["id"], "kind": doc.get("kind", "manual"),
+            "url": doc["url"], "source": doc.get("source", ""), "sha256": digest, "pages": pages,
+            "bytes": os.path.getsize(pdf), "added": "fetch", "date": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+    with open(pdf[:-4] + ".json", "w", encoding="utf-8") as f:
+        json.dump(side, f, indent=1)
+    subprocess.run(["pdftotext", "-layout", pdf, pdf[:-4] + ".txt"], capture_output=True, timeout=300)
+    for x in (pdf[:-4] + ".json", pdf[:-4] + ".txt"):
+        if os.path.exists(x):
+            os.chmod(x, 0o664)
+    return "fetched", f"{pages} pages, {side['bytes'] // 1024} KB, sha256 {digest[:12]}…"
+
+
+def cmd_fetch(slugs, pin, pause):
+    data = load()
+    machines = data.get("machines", {})
+    todo = slugs or sorted(machines)
+    counts, pins = {"here": 0, "fetched": 0, "failed": 0}, 0
+    for slug in todo:
+        for doc in (machines.get(slug) or {}).get("docs", []):
+            state, detail = fetch_one(slug, doc)
+            counts[state] += 1
+            if state != "here":
+                print(f"{state:8} {slug}/{doc.get('id')}: {detail}", flush=True)
+            if state == "fetched":
+                if pin and not doc.get("sha256"):
+                    with open(os.path.join(DEST, slug, doc["id"] + ".json"), encoding="utf-8") as f:
+                        doc["sha256"] = json.load(f)["sha256"]
+                    pins += 1
+                time.sleep(pause)                        # one at a time, politely
+    if pins:
+        tmp = list_path() + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.replace(tmp, list_path())
+        print(f"pinned {pins} sha256 in {list_path()}")
+    print(f"gatbox-manuals: {counts['fetched']} fetched, {counts['here']} already here, {counts['failed']} failed")
+    return 1 if counts["failed"] else 0
+
+
+def cmd_list(slugs):
+    machines = load().get("machines", {})
+    total = 0
+    for slug in slugs or sorted(machines):
+        e = machines.get(slug) or {}
+        d = os.path.join(DEST, slug)
+        files = sorted(n for n in os.listdir(d) if n.endswith(".pdf")) if os.path.isdir(d) else []
+        size = sum(os.path.getsize(os.path.join(d, n)) for n in files)
+        total += size
+        listed = {x.get("id") + ".pdf" for x in e.get("docs", [])}
+        missing = sorted(listed - set(files))
+        extra = sorted(set(files) - listed)
+        print(f"{slug:36} {len(files):3} here {size / 1e6:8.1f} MB"
+              + (f"  missing: {', '.join(m[:-4] for m in missing)}" if missing else "")
+              + (f"  yours: {len(extra)}" if extra else "") + (f"  ({e['why']})" if not e.get("docs") and e.get("why") else ""))
+    print(f"total {total / 1e9:.2f} GB in {DEST}")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    f = sub.add_parser("fetch", help="download what's missing")
+    f.add_argument("slugs", nargs="*")
+    f.add_argument("--pin", action="store_true", help="write the sha256 of new downloads into the list")
+    f.add_argument("--pause", type=float, default=1.0, help="seconds between downloads (default 1)")
+    li = sub.add_parser("list", help="what's here and what's missing")
+    li.add_argument("slugs", nargs="*")
+    a = ap.parse_args()
+    os.umask(0o002)                                      # group-writable: the owner and gatbox-web share the folder
+    if a.cmd == "fetch":
+        sys.exit(cmd_fetch(a.slugs, a.pin, a.pause))
+    cmd_list(a.slugs)
+
+
+if __name__ == "__main__":
+    main()

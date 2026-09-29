@@ -97,6 +97,15 @@ def _new_file_if_live():
     return False
 
 
+def spec_change(fn):
+    """Run fn (a confirmed manual limit, an actual value) and, when that changes what the live file's header says
+    (its window), start a new file, like a profile change. Returns (fn's result, new file started)."""
+    with _lock:
+        before = profiles.header_lines(resolved())
+        out = fn()
+        return out, profiles.header_lines(resolved()) != before and _new_file_if_live()
+
+
 def _profile_state():
     try:
         with open(_path("profile.json"), encoding="utf-8") as f:

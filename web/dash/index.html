@@ -22,6 +22,7 @@
   <button data-view="meter" class="on">METER</button>
   <button data-view="sessions">SESSIONS</button>
   <button data-view="machine">MACHINE<small id="n-machine"></small></button>
+  <button data-view="manuals">MANUALS<small>specs · docs</small></button>
   <button data-view="system">SYSTEM</button>
   <button data-view="devices">DEVICES</button>
   <button data-view="dump" id="n-dump" class="dim">DUMP<small id="n-dump-s">T48 not plugged in</small></button>
@@ -76,6 +77,9 @@
     <div id="mc-body"></div>
   </section>
 
+  <!-- MANUALS: a machine's documents and its spec sheet (the manual's numbers, CONFIRM, actual values) -->
+  <section id="v-manuals" class="view scroll"><div id="mn-body"></div></section>
+
   <!-- SYSTEM: the Pi -->
   <section id="v-system" class="view scroll">
     <!-- first on the Pi's own screen: shut down before pulling power -->
@@ -102,6 +106,19 @@
   <div class="v" id="al-v"></div>
   <div id="al-sub"></div>
   <button id="al-ack">ACK</button>
+</div>
+<div id="viewer" class="hide" role="dialog">
+  <div class="vw-top">
+    <b id="vw-title"></b>
+    <button id="vw-page">1 / 1</button>
+    <button id="vw-search">SEARCH</button>
+    <button id="vw-out" aria-label="zoom out">−</button><button id="vw-in" aria-label="zoom in">+</button>
+    <button id="vw-fit">FIT</button>
+    <a id="vw-pdf" class="btnlink hide" target="_blank">OPEN PDF</a>
+    <button id="vw-close">CLOSE</button>
+  </div>
+  <div id="vw-stage"><img id="vw-img" alt="" draggable="false"><div id="vw-wait" class="mut hide">drawing the page…</div></div>
+  <div class="vw-bot"><button id="vw-prev">◀ PREV</button><button id="vw-next">NEXT ▶</button></div>
 </div>
 <div id="sheet" class="hide"><div class="pane" id="pane"></div></div>
 <div id="toast" class="hide"></div>

@@ -50,8 +50,50 @@ def profiles(dd=None):
     return d.get("meta", {}), d.get("modes", {}), {p["id"]: p for p in d.get("profiles", [])}
 
 
-def machine_specs(dd=None):
-    return (_load(os.path.join(dd or data_dir(), "gatbox-machine-specs.json")) or {}).get("machines", {})
+SPECS_CONFIRMED = "machine-specs-confirmed.json"   # state: rail limits CONFIRMed on the dashboard against a manual page
+ACTUALS = "machine-actuals.json"                   # state: the owner's own values for a machine, measured in the field
+
+
+def _state_json(name, sd=None):
+    """A gatbox-web state file as a dict ({} when missing, damaged, or not readable here)."""
+    try:
+        d = _load(os.path.join(sd or state_dir(), name))
+    except (OSError, ValueError):
+        d = None
+    return d if isinstance(d, dict) else {}
+
+
+def _window(w):
+    return (isinstance(w, list) and len(w) == 2 and all(finite(x) for x in w) and w[0] < w[1]) and [float(w[0]), float(w[1])]
+
+
+def machine_specs(dd=None, sd=None):
+    """{slug: {"rails": {rail: [lo, hi]}, "source": ..., "sources": {rail: where that window came from}}}.
+
+    Three layers, each later one winning the rails it has: the specs file (gatbox-machine-specs.json), limits the owner
+    CONFIRMed on the dashboard against a manual page, and a window of her own for a rail on that machine (set with an
+    actual value from the field). The manual's numbers are never overwritten: each layer keeps its own file, and the
+    dashboard shows them side by side."""
+    base = (_load(os.path.join(dd or data_dir(), "gatbox-machine-specs.json")) or {}).get("machines", {})
+    conf, act = _state_json(SPECS_CONFIRMED, sd), _state_json(ACTUALS, sd)
+    if not conf and not act:
+        return base
+    out = {}
+    for slug in set(base) | set(conf) | set(act):
+        b = base.get(slug) if isinstance(base.get(slug), dict) else {}
+        rails = {r: w for r, w in (b.get("rails") or {}).items() if _window(w)}
+        src = {r: "specs file" for r in rails}
+        for r, c in (conf.get(slug) or {}).items():
+            w = isinstance(c, dict) and _window([c.get("lo"), c.get("hi")])
+            if w:
+                rails[r], src[r] = w, f"manual: {c.get('source', '')}".strip()
+        for r, a in ((act.get(slug) or {}).get("rails") or {}).items():
+            w = isinstance(a, dict) and _window(a.get("window"))
+            if w:
+                rails[r], src[r] = w, "actual"
+        if rails:
+            out[slug] = dict(b, rails=rails, sources=src)
+    return out
 
 
 ROSTER_FILE = "gatbox-barcade-roster.json"
@@ -125,7 +167,9 @@ def read_state(sd=None):
 
 
 def resolve(profile_id=None, user_window=None, machine=None, dd=None):
-    """The effective profile: window + where it came from (machine spec > user > profile) and alarm_hi."""
+    """The effective profile: window + where it came from and alarm_hi. Window: the machine's own actual window
+    (source actual:<slug>) > its spec, from the specs file or a confirmed manual page (machine:<slug>) > the user's
+    value > the profile's."""
     meta, modes, P = profiles(dd)
     pid = profile_id if profile_id in P else meta.get("default", "rail-5v")
     p = P.get(pid) or {"id": pid, "label": pid, "kind": "rail", "rail": "+5V", "modes": ["VDC"],
@@ -133,9 +177,11 @@ def resolve(profile_id=None, user_window=None, machine=None, dd=None):
     window, source = p.get("window"), "profile"
     if user_window and p.get("user_window"):
         window, source = user_window, "user"
-    spec = machine_specs(dd).get(machine or "", {}).get("rails", {}).get(p.get("rail") or "")
+    ms = machine_specs(dd).get(machine or "", {})
+    spec = ms.get("rails", {}).get(p.get("rail") or "")
     if spec:
-        window, source = [float(spec[0]), float(spec[1])], f"machine:{machine}"
+        kind = "actual" if (ms.get("sources") or {}).get(p.get("rail")) == "actual" else "machine"
+        window, source = [float(spec[0]), float(spec[1])], f"{kind}:{machine}"
     alarm = p.get("alarm_hi")
     if alarm is None and p.get("kind") == "rail" and window:
         alarm = round(max(abs(window[0]), abs(window[1])) * 1.10, 3)

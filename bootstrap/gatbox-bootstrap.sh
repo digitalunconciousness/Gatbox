@@ -26,7 +26,8 @@
 #   4  power fix: PSU_MAX_CURRENT=5000 (EEPROM) + usb_max_current_enable=1 (config.txt); RTC charging guard
 #   5  files from this checkout (table below): logger, web view, RTC sync, hotspot fallback, tools, udev, journald,
 #      menu launcher
-#   6  services: the gatbox-dump user + /srv/gatbox/roms + its spool (sysusers.d, tmpfiles.d), gatbox-raillog,
+#   6  services: the gatbox-dump user + /srv/gatbox/roms + its spool, the gatbox-manuals group + /srv/gatbox/manuals
+#      (sysusers.d, tmpfiles.d), gatbox-raillog,
 #      gatbox-web (+ its fonts), gatbox-scand (the barcode scanner), gatbox-dump.path (dashboard dumps), rtc-sync.timer
 #   7  desktop (for the sudo user): the 7" kiosk autostart (gatbox-kiosk on|off), Pi OS autotouch off and its
 #      port-pinned touch line removed, so the panel works on either HDMI port with real touch events
@@ -64,6 +65,7 @@ tools/gatbox-replay                             /usr/local/bin/gatbox-replay    
 tools/gatbox-labels                             /usr/local/bin/gatbox-labels                          755
 tools/gatbox-dump                               /usr/local/bin/gatbox-dump                            755
 tools/gatbox-mame-roms                          /usr/local/bin/gatbox-mame-roms                       755
+tools/gatbox-manuals                            /usr/local/bin/gatbox-manuals                         755
 backend/gatboxlib/__init__.py                   /usr/local/lib/gatbox/gatboxlib/__init__.py           644
 backend/gatboxlib/modes.py                      /usr/local/lib/gatbox/gatboxlib/modes.py              644
 backend/gatboxlib/profiles.py                   /usr/local/lib/gatbox/gatboxlib/profiles.py           644
@@ -82,6 +84,7 @@ backend/gatboxweb/system.py                     /usr/local/lib/gatbox/gatboxweb/
 backend/gatboxweb/devices.py                    /usr/local/lib/gatbox/gatboxweb/devices.py            644
 backend/gatboxweb/dump.py                       /usr/local/lib/gatbox/gatboxweb/dump.py               644
 backend/gatboxweb/mame.py                       /usr/local/lib/gatbox/gatboxweb/mame.py               644
+backend/gatboxweb/manuals.py                    /usr/local/lib/gatbox/gatboxweb/manuals.py            644
 web/dash/index.html                             /usr/local/share/gatbox-web/dash/index.html           644
 web/dash/dash.css                               /usr/local/share/gatbox-web/dash/dash.css             644
 web/dash/dash.js                                /usr/local/share/gatbox-web/dash/dash.js              644
@@ -91,6 +94,7 @@ data/gatbox-machine-specs.json                  /usr/local/share/gatbox/gatbox-m
 data/eproms.json                                /usr/local/share/gatbox/eproms.json                   644
 data/gatbox-barcade-roster.json                 /usr/local/share/gatbox/gatbox-barcade-roster.json    644  optional
 data/gatbox-mame-sets.json                      /usr/local/share/gatbox/gatbox-mame-sets.json         644  optional
+data/gatbox-manuals.json                        /usr/local/share/gatbox/gatbox-manuals.json           644  optional
 bootstrap/files/99-gatbox-dmm.rules             /etc/udev/rules.d/99-gatbox-dmm.rules                 644
 bootstrap/files/minipro-0.7.4/60-minipro.rules  /etc/udev/rules.d/60-minipro.rules                    644
 bootstrap/files/minipro-0.7.4/61-minipro-plugdev.rules /etc/udev/rules.d/61-minipro-plugdev.rules    644
@@ -110,6 +114,7 @@ TOUCH_LINE='<touch[^>]*deviceName="WaveShare WS170120'
 PKGS=(sigrok-cli python3-matplotlib python3-qrcode rsync git curl util-linux-extra
       build-essential pkg-config libusb-1.0-0-dev zlib1g-dev       # minipro build
       libarchive-tools                                              # bsdtar: XGecu .rar -> T48 firmware (minipro's dump-alg script)
+      poppler-utils                                                 # pdftoppm / pdftotext / pdfinfo: the manuals viewer
       mame)                                                        # mame -romident only, no gameplay
 # minipro: pinned upstream release. Bump deliberately: check its T48 support and changelog, and refresh
 # bootstrap/files/minipro-<tag>/ (its udev rules, which its `make install` skips on Pi OS) at the same time.
@@ -234,6 +239,10 @@ if [ "${1:-}" = "--check" ]; then
     getent passwd gatbox-dump >/dev/null || DIFFS+=("create     user gatbox-dump (sysusers.d)")
     [ -d /srv/gatbox/roms ] && [ -d /var/spool/gatbox-dump ] || DIFFS+=("create     /srv/gatbox/roms + /var/spool/gatbox-dump (tmpfiles.d)")
     id -nG "$(id -un)" | grep -qw gatbox-dump || DIFFS+=("group      $(id -un) += gatbox-dump (the dump archive)")
+    getent group gatbox-manuals >/dev/null || DIFFS+=("create     group gatbox-manuals (sysusers.d)")
+    [ -d /srv/gatbox/manuals ] || DIFFS+=("create     /srv/gatbox/manuals (tmpfiles.d)")
+    getent group gatbox-manuals >/dev/null && ! getent group gatbox-manuals | cut -d: -f4 | tr ',' '\n' | grep -qx "$(id -un)" \
+        && DIFFS+=("group      $(id -un) += gatbox-manuals (the manuals folder)")
     command -v minipro >/dev/null && ! parts_ok && DIFFS+=("generate   $PARTS_LIST")
     mame_roms_wanted && ! mame_roms_ok && DIFFS+=("generate   $MAME_ROMS (from mame -listxml: a minute or two)")
     if ((${#DIFFS[@]})); then printf 'a run would change:\n'; printf '  %s\n' "${DIFFS[@]}"; exit 3; fi
@@ -390,14 +399,17 @@ svc() {   # <unit> <installed path glob>...: enable it; restart only if its file
     else log "$unit up to date, left running"; fi
 }
 # the dump job's user, the archive and the spool (before gatbox-web, which joins the gatbox-dump group)
-if changed /etc/sysusers.d/gatbox.conf || ! getent passwd gatbox-dump >/dev/null; then
-    systemd-sysusers /etc/sysusers.d/gatbox.conf && log "user gatbox-dump (T48 dumps, group plugdev)"
+if changed /etc/sysusers.d/gatbox.conf || ! getent passwd gatbox-dump >/dev/null || ! getent group gatbox-manuals >/dev/null; then
+    systemd-sysusers /etc/sysusers.d/gatbox.conf && log "user gatbox-dump (T48 dumps, group plugdev), group gatbox-manuals"
 fi
-if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ]; then
-    systemd-tmpfiles --create /etc/tmpfiles.d/gatbox.conf && log "/srv/gatbox/roms + /var/spool/gatbox-dump"
+if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ] || [ ! -d /srv/gatbox/manuals ]; then
+    systemd-tmpfiles --create /etc/tmpfiles.d/gatbox.conf && log "/srv/gatbox/roms + /srv/gatbox/manuals + /var/spool/gatbox-dump"
 fi
 if ! id -nG "$U" | grep -qw gatbox-dump; then
     usermod -aG gatbox-dump "$U" && log "$U += gatbox-dump (gatbox-dump from the terminal archives too; log out/in)"
+fi
+if ! id -nG "$U" | grep -qw gatbox-manuals; then
+    usermod -aG gatbox-manuals "$U" && log "$U += gatbox-manuals (gatbox-manuals fetch, PDFs copied in; log out/in)"
 fi
 svc gatbox-raillog.service /usr/local/bin/gatbox-raillog /etc/systemd/system/gatbox-raillog.service
 svc gatbox-web.service /usr/local/bin/gatbox-web /etc/systemd/system/gatbox-web.service \

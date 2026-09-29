@@ -42,8 +42,10 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
 - [ ] **Owner requests (2026-09-29)**, off-spec, one at a time with her OK on each design:
       [x] + ADD MACHINE / EDIT / EXPORT ROSTER, and CAPTURE → SAVE READING (code + tests/test-roster.sh, test-dash)
       [x] installed (d578961) [x] each machine's ROM checklist from MAME's own hash data, no ROM sets downloaded
-      (code + tests/test-mame.sh, test-dash) [ ] its install [ ] manuals, with specs cited to their page, viewable on
-      the dashboard
+      (code + tests/test-mame.sh, test-dash) [x] manuals: MANUALS tab (viewer, search, phone upload), spec sheet
+      (the manual's limits with page + words, CONFIRM, actual values from the field) (code + tests/test-manuals.sh,
+      test-dash) [ ] install both (needs OK: group gatbox-manuals, /srv/gatbox/manuals, gatbox-web.service) [ ] the
+      manuals list for the floor + fetch [ ] spec sheets read off the manuals [ ] project update + journal
 
 ### M0 notes (2026-09-28)
 - **Spec vs reality:** the handoff and the project CLAUDE.md say the logger already writes `# mode=`, a
@@ -414,6 +416,32 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
     chips, undumped first; a pick fills the label from the chip's printed name (MAME's name before the board spot)
     and lights the family tiles of its size. The exact part is still picked off the chip (hard rule 6).
   - `data/eproms.json` families carry `bytes` (a whole-chip dump's size) for that.
+- **Manuals, "pulled in with their specs", viewable on the dashboard.** Owner's choices: every document the archives
+  have (manuals, schematics, parts catalogs, kit sheets, bulletins); rails + the spec sheet; her own PDFs by folder
+  and by phone upload. Plus (her addition) actual values from the field next to the manual's.
+  - Sources, checked from the Pi: arcade-museum.com (TAMA) direct PDFs; archive.org arcademanual_* items, whose
+    `…_text.pdf` is the scan with an OCR text layer (so scans are searchable with no OCR here); Stern's own PDFs;
+    arcade.segakore.fr (Sega). `gatbox-manuals fetch` takes https from those hosts only (redirects too), a real PDF
+    only (%PDF- + pdfinfo), pins sha256 (`--pin`) and refuses a changed file, writes `<id>.pdf` + `.json` sidecar +
+    `.txt` (one page per form feed), one download at a time.
+  - `/srv/gatbox/manuals/<slug>/` (tmpfiles, 2775 root:gatbox-manuals; the owner joins the group; gatbox-web joins it
+    with ReadWritePaths for uploads only). Never in git: `*.pdf` is ignored and the pre-push guard refuses PDFs and
+    `gatbox-manuals.json` (the list: git-ignored like the roster).
+  - gatbox-web (`manuals.py`): documents per machine (sidecar titles/kinds, PDFs dropped in by hand as "yours"), the
+    PDF itself, a page as a PNG (`pdftoppm`, widths 800/1200/1600/2400, cached in its CacheDirectory, ~1 GB cap),
+    search (`pdftotext` text, made on the spot for dropped PDFs), uploads (body = the PDF, `Content-Type:
+    application/pdf`, ≤200 MB, never over a file). A file is served only if it's in that machine's folder listing.
+  - The spec sheet: rail limits read off a manual page (`{rail, lo, hi, doc, page, quote}`), the rest of the spec
+    page (`{what, value, doc, page, quote}`). CONFIRM shows the page and the manual's words; the API confirms only a
+    limit on the list, never numbers sent to it. Actual values from the field (typed or the live reading, a note,
+    optionally a window of its own) sit beside the manual's, which are never changed. State in gatbox-web's state
+    dir: `machine-specs-confirmed.json`, `machine-actuals.json`.
+  - `gatboxlib.profiles.machine_specs()` layers them: specs file < confirmed manual limit < the machine's own actual
+    window; `resolve()` names the source (`machine:<slug>` or `actual:<slug>`), so the logger's header, the meter and
+    the MACHINE card show whose window it is. A change to the current machine's window while logging starts a new
+    file (like a profile change). Confirmed specs stay on the Pi: the public repo keeps only the one it had.
+  - Dashboard: MANUALS tab (FOR <machine>, like DUMP), the spec sheet table, the documents, ADD PDF on a phone; the
+    viewer (page images, PREV/NEXT, swipe, pinch/drag/+−, double tap, page jump, SEARCH, OPEN PDF on a phone).
 
 ## Bring-up 1: bootstrap run — 2026-09-23
 

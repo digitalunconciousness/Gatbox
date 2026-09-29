@@ -26,6 +26,10 @@ DeviceAllow=/dev/vcio_gencmd r
 # reach (the private /dev above), so gatbox-dump.service does the reading.
 SupplementaryGroups=gatbox-dump
 ReadWritePaths=-/var/spool/gatbox-dump
+# Manuals (2026-09-29): a PDF uploaded from a phone goes into /srv/gatbox/manuals/<machine>/ (group gatbox-manuals,
+# setgid); everything else there it only reads.
+SupplementaryGroups=gatbox-manuals
+ReadWritePaths=-/srv/gatbox/manuals
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes

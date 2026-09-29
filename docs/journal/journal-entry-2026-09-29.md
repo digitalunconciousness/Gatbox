@@ -23,3 +23,14 @@
   Joust and Defender pinballs on the video games and a Tiger handheld on Batman. Unsure matches are marked CHECK;
   a dump from the board settles them. Machines MAME doesn't have (the PC-based gun games, Pac-Man Battle Royale,
   Retro Raccoons, most of the Sterns) say so.
+- Manuals: a new MANUALS tab. Each machine's documents (manuals, schematics, parts catalogs, kit sheets, bulletins)
+  come from the public manual archives (the Internet Archive, the Arcade Manual Archive, Stern's own site), onto the
+  Pi only: they're copyrighted, so never in the public repo. The Pi draws each page as a picture, so they read on the
+  7" and on a phone: swipe or PREV/NEXT, pinch to zoom, SEARCH ("fuse", "U12", "4.75"). Her own PDFs go in the
+  machine's folder, or up from her phone with ADD PDF.
+- The spec sheet: each rail limit the manual gives, with its page and the manual's own words. CONFIRM shows the page
+  first; only a confirmed limit becomes the logger's window for that machine.
+- DECIDED (owner's addition): actual values from the field sit beside the manual's, which are never changed. E.g.
+  the manual says +5 V and the cabinet was boosted to 5.20 V: record 5.20 V with a note, taken from the meter or typed,
+  and optionally give that machine its own window so a boosted rail doesn't read HIGH all night. The same for the
+  rest of the spec page ("fuse is 8 A slow-blow", "LCD swap").

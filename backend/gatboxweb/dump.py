@@ -95,8 +95,13 @@ def status():
     queued, running = os.path.exists(spool("request.json")), os.path.exists(spool("running.json"))
     st = _read("status.json")
     t48 = devices.snapshot()["t48"]
+    req = (_read("request.json") if queued else _read("running.json") if running else None) or {}
+    # what's queued or running (a dump, a blank check, a burn), so the progress card is titled by it at once
+    request = {k: req.get(k) for k in ("op", "part", "label", "image") if k in req} or None
+    if request is not None:
+        request.setdefault("op", "dump")
     return {"t48": t48, "busy": queued or running, "queued": queued, "running": running, "status": st,
-            "spool": os.path.isdir(config.DUMP_SPOOL)}
+            "request": request, "spool": os.path.isdir(config.DUMP_SPOOL)}
 
 
 def request(body):

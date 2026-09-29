@@ -515,12 +515,17 @@ def main():
                 while not done.is_set():
                     if os.path.exists(f"{T}/spool/request.json"):
                         time.sleep(1.5)                          # long enough to see the progress card
+                        try:                                     # blank checks and burns get the fake chip
+                            op = json.load(open(f"{T}/spool/request.json")).get("op")
+                        except (OSError, ValueError):
+                            op = None
                         subprocess.run(["python3", os.path.join(REPO, "tools/gatbox-dump"), "--job", f"{T}/spool/request.json",
                                         "--status", f"{T}/spool/status.json"], capture_output=True, timeout=60,
                                        env=dict(os.environ, GATBOX_MINIPRO=os.path.join(REPO, "tests/fake-minipro"),
                                                 GATBOX_MAME=os.path.join(REPO, "tests/fake-mame"), GATBOX_ROMS=f"{T}/roms",
                                                 GATBOX_API=B, FAKE_ROM=f"{T}/rom.bin", FAKE_ID=os.environ.get("FAKE_ID_NEXT", ""),
-                                                FAKE_MAME_MATCH="epr-15781c.ic18 sonic SegaSonic The Hedgehog (Japan, rev. C)"))
+                                                FAKE_MAME_MATCH="epr-15781c.ic18 sonic SegaSonic The Hedgehog (Japan, rev. C)",
+                                                **({"FAKE_CHIP": f"{T}/chip.bin"} if op in ("blank", "burn") else {})))
                     time.sleep(0.2)
             threading.Thread(target=runner, daemon=True).start()
             click('[data-view="dump"]')
@@ -551,6 +556,80 @@ def main():
             check("USE the suggested part: MATCH sonic / epr-15781c.ic18, archived, listed",
                   "sonic / epr-15781c.ic18" in text("#du-body") and "archived:" in text("#du-body") and "EPR-1 MATCH" in text("#du-body"))
             shot("17e-dump-match")
+
+            print("BURN (armed by a hold on the Pi's own screen):")
+            os.makedirs(f"{T}/roms/_images", exist_ok=True)
+            img = os.urandom(262144)
+            open(f"{T}/roms/_images/diag.bin", "wb").write(img)
+            open(f"{T}/chip.bin", "wb").write(b"\xff" * 262144)
+            q("[...document.querySelectorAll('#du-body .seg button')].find(b => b.textContent === 'BURN').click()")
+            c.wait("document.querySelector('#du-body').textContent.includes('1 · IMAGE')", 10)
+            q("[...document.querySelectorAll('#du-body button')].find(b => b.textContent.startsWith('PICK AN IMAGE')).click()")
+            c.wait("document.querySelectorAll('#pane .picklist .row').length >= 2", 10)
+            check("images: the archive's and _images/", "diag.bin" in text("#pane") and "EPR-1" in text("#pane"))
+            q("[...document.querySelectorAll('#pane .picklist .row')].find(r => r.textContent.includes('diag.bin')).click()")
+            c.wait("document.querySelector('#du-body').textContent.includes('IMAGE: diag.bin')", 10)
+            check("the 256 KB family tiles lit for the image", q("[...document.querySelectorAll('#du-body .tile.on')].map(t => "
+                                                                "t.firstChild.textContent).join('|')") == "27C020 / 27C2001")
+            q("[...document.querySelectorAll('#du-body button')].find(b => b.textContent === 'CHANGE') && "
+              "[...document.querySelectorAll('#du-body button')].find(b => b.textContent === 'CHANGE').click()")
+            c.wait("document.querySelectorAll('#du-body .tile').length === 14", 10)
+            q("[...document.querySelectorAll('#du-body .tile')].find(t => t.textContent.startsWith('27C020')).click()")
+            c.wait("!document.querySelector('#sheet').classList.contains('hide') && "
+                   "[...document.querySelectorAll('#pane .picklist .row')].some(r => r.textContent === '27C020@DIP32')", 10)
+            q("[...document.querySelectorAll('#pane .picklist .row')].find(r => r.textContent === '27C020@DIP32').click()")
+            c.wait("[...document.querySelectorAll('#du-body button')].some(b => b.textContent === 'BLANK CHECK')", 10)
+            check("no burn button before a blank check", not q("[...document.querySelectorAll('#du-body button')].some("
+                                                                "b => b.textContent.startsWith('HOLD'))"))
+            shot("19a-burn-pick")
+            q("[...document.querySelectorAll('#du-body button')].find(b => b.textContent === 'BLANK CHECK').click()")
+            c.wait("[...document.querySelectorAll('#du-body button')].some(b => b.textContent.startsWith('HOLD 3 S TO BURN'))", 30)
+            check("blank: BLANK, and the hold to burn appears on the Pi's own screen", "BLANK" in text("#du-body")
+                  and "diag.bin → 27C020@DIP32" in text("#du-body"))
+            shot("19b-burn-armable")
+            q("(() => { const b = [...document.querySelectorAll('#du-body button')].find(b => b.textContent.startsWith('HOLD 3 S')); "
+              "b.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true})); })()")
+            time.sleep(1.0)
+            q("(() => { const b = [...document.querySelectorAll('#du-body button')].find(b => b.classList.contains('arm')); "
+              "b && b.dispatchEvent(new PointerEvent('pointerup', {bubbles: true})); })()")
+            time.sleep(1.0)
+            check("let go early: nothing armed, nothing sent", not os.path.exists(f"{T}/spool/request.json")
+                  and open(f"{T}/chip.bin", "rb").read() == b"\xff" * 262144)
+            q("(() => { const b = [...document.querySelectorAll('#du-body button')].find(b => b.textContent.startsWith('HOLD 3 S')); "
+              "b.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true})); })()")
+            c.wait("document.querySelector('#du-body').textContent.includes('BURNING')", 15)
+            shot("19c-burning")
+            c.wait("document.querySelector('#du-body').textContent.includes('VERIFIED')", 40)
+            check("held 3 s: BURNING, then VERIFIED; the chip holds the image", open(f"{T}/chip.bin", "rb").read() == img
+                  and "2 read-backs identical to the image" in text("#du-body"))
+            shot("19d-burn-verified")
+            lan = next((a for a in subprocess.run(["hostname", "-I"], capture_output=True, text=True).stdout.split() if "." in a), None)
+            if lan:
+                open(f"{T}/chip.bin", "wb").write(b"\xff" * 262144)
+                api("POST", "/api/burn/blank", {"image": "_images/diag.bin", "part": "27C020@DIP32"})
+                c.wait("document.querySelector('#du-body').textContent.includes('HOLD 3 S TO BURN')", 30)
+                c.open(f"http://{lan}:{PORT}/dash/", 1024, 600)
+                c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
+                click('[data-view="dump"]')
+                c.wait("document.querySelectorAll('#du-body .seg button').length === 2", 15)
+                q("[...document.querySelectorAll('#du-body .seg button')].find(b => b.textContent === 'BURN').click()")
+                c.wait("document.querySelector('#du-body').textContent.includes('1 · IMAGE')", 10)
+                q("[...document.querySelectorAll('#du-body button')].find(b => b.textContent.startsWith('PICK AN IMAGE')).click()")
+                c.wait("[...document.querySelectorAll('#pane .picklist .row')].some(r => r.textContent.includes('diag.bin'))", 10)
+                q("[...document.querySelectorAll('#pane .picklist .row')].find(r => r.textContent.includes('diag.bin')).click()")
+                c.wait("document.querySelectorAll('#du-body .tile').length === 14", 10)
+                q("[...document.querySelectorAll('#du-body .tile')].find(t => t.textContent.startsWith('27C020')).click()")
+                c.wait("!document.querySelector('#sheet').classList.contains('hide') && "
+                       "[...document.querySelectorAll('#pane .picklist .row')].some(r => r.textContent === '27C020@DIP32')", 10)
+                q("[...document.querySelectorAll('#pane .picklist .row')].find(r => r.textContent === '27C020@DIP32').click()")
+                c.wait("document.querySelector('#du-body').textContent.includes('4 · BURN')", 10)
+                time.sleep(0.5)
+                shot("19e-burn-phone")
+                check("from a phone (not the Pi): no hold to burn, it says to arm at the Pi",
+                      not q("[...document.querySelectorAll('#du-body button')].some(b => b.textContent.startsWith('HOLD'))")
+                      and "arm it at the Pi" in text("#du-body"))
+                c.open(B + "/dash/", 1024, 600)
+                c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
             done.set()
         else:
             print("  skip  (the T48 isn't plugged in)")

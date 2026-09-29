@@ -1549,17 +1549,19 @@
     }
   }
   function renderDump() {
+    if (D.holding) { D.pending = true; return; }       // a hold to burn is under a finger: redraw when it ends
     const B = clear($("#du-body")), st = D.st || {}, t48 = (st.t48 || {}).present;
     const head = el("div", "card");
     add(head, el("div", "big " + (t48 ? "ok" : "mut"), t48 ? "T48 READY" : "T48 NOT PLUGGED IN"),
         el("div", "mut", (t48 ? `USB ${st.t48.usb_id} · ` : "Plug the XGecu T48 into the Pi (USB a466:0a53). ") +
-                         "reads only: nothing here writes a chip"));
+                         "READ a chip, or BURN one (a blank chip, armed by a hold on the Pi's own screen)"));
     if (!st.spool) head.appendChild(el("div", "warn", "The dump service isn't installed yet (no spool)."));
     B.appendChild(head);
     const s = st.status;
     if (st.busy || (s && s.state === "running")) {
       const c = el("div", "card");
-      add(c, el("h2", null, `DUMPING ${(s && s.part) || D.part || ""}`));
+      const r = st.request || s || {};                 // the job queued or running, else the last one's status
+      add(c, el("h2", null, `${{blank: "BLANK CHECK", burn: "BURNING"}[r.op] || "DUMPING"} ${r.part || D.part || ""}`));
       const bar = el("div"); bar.style.cssText = "height:10px;border-radius:5px;background:var(--line);overflow:hidden;margin:6px 0";
       const fill = el("div"); fill.style.cssText = `height:100%;width:${Math.round(((s && s.progress) || 0.02) * 100)}%;background:var(--cyan)`;
       bar.appendChild(fill); c.appendChild(bar);
@@ -1586,6 +1588,15 @@
       mrow.appendChild(back);
     }
     p.appendChild(mrow);
+    const seg = el("div", "seg");
+    seg.style.margin = "8px 0";
+    for (const [k, t] of [["read", "READ"], ["burn", "BURN"]]) {
+      const b = el("button", (D.mode || "read") === k ? "on" : null, t);
+      b.addEventListener("click", () => { D.mode = k; renderDump(); });
+      seg.appendChild(b);
+    }
+    p.appendChild(seg);
+    if (D.mode === "burn") { burnPicker(p, st, t48); B.appendChild(p); return; }
     const forSlug = D.machine || (S.st && S.st.machine);
     if (D.chip && D.chipFor !== forSlug) {                    // another machine: that chip (and its label) isn't on it
       if (D.label === chipLabel(D.chip)) D.label = null;
@@ -1600,32 +1611,7 @@
       p.appendChild(crow);
     }
     add(p, el("h2", null, "1 · PART"));
-    const row = el("div", "btnrow");
-    row.style.alignItems = "center";
-    if (D.part) {                                  // picked: the tiles fold away so LABEL and DUMP stay on screen
-      const cur = el("span", "chip", D.part);
-      cur.style.fontSize = "18px";
-      const change = el("button", null, "CHANGE");
-      change.addEventListener("click", () => { D.part = null; renderDump(); });
-      add(row, cur, change);
-      if (!isDip(D.part)) row.appendChild(el("span", "warn", "not DIP: only with a socket adapter"));
-    }
-    const srch = el("button", null, "SEARCH");
-    srch.addEventListener("click", searchParts);
-    row.appendChild(srch);
-    p.appendChild(row);
-    if (!D.part) {
-      const tiles = el("div", "tiles");
-      tiles.style.gridTemplateColumns = "repeat(auto-fill,minmax(150px,1fr))";
-      for (const f of D.fams || []) {
-        const b = el("button", "tile" + (D.chip && (f.bytes || []).includes(D.chip.size) ? " on" : ""));
-        b.style.minHeight = "64px";
-        add(b, el("b", null, f.label), el("span", "mut", f.size));
-        b.addEventListener("click", () => pickFamily(f));
-        tiles.appendChild(b);
-      }
-      p.appendChild(tiles);
-    }
+    partSection(p, D.chip && D.chip.size);
     add(p, el("h2", null, "2 · LABEL"));
     const lb = el("button", null, D.label ? "LABEL: " + D.label : "TYPE THE CHIP'S LABEL");
     lb.addEventListener("click", async () => {
@@ -1646,7 +1632,125 @@
     api("GET", "/api/dumps" + (D.machine ? "?machine=" + encodeURIComponent(D.machine) : ""))
       .then(r => dumpList(L, r.dumps)).catch(() => {});
   }
+  // the part: family tiles (lit for a size: the MAME chip's, or the image's) → minipro's exact names; or SEARCH
+  function partSection(p, size) {
+    const row = el("div", "btnrow");
+    row.style.alignItems = "center";
+    if (D.part) {                                  // picked: the tiles fold away so the next steps stay on screen
+      const cur = el("span", "chip", D.part);
+      cur.style.fontSize = "18px";
+      const change = el("button", null, "CHANGE");
+      change.addEventListener("click", () => { D.part = null; renderDump(); });
+      add(row, cur, change);
+      if (!isDip(D.part)) row.appendChild(el("span", "warn", "not DIP: only with a socket adapter"));
+    }
+    const srch = el("button", null, "SEARCH");
+    srch.addEventListener("click", searchParts);
+    row.appendChild(srch);
+    p.appendChild(row);
+    if (!D.part) {
+      const tiles = el("div", "tiles");
+      tiles.style.gridTemplateColumns = "repeat(auto-fill,minmax(150px,1fr))";
+      for (const f of D.fams || []) {
+        const b = el("button", "tile" + (size && (f.bytes || []).includes(size) ? " on" : ""));
+        b.style.minHeight = "64px";
+        add(b, el("b", null, f.label), el("span", "mut", f.size));
+        b.addEventListener("click", () => pickFamily(f));
+        tiles.appendChild(b);
+      }
+      p.appendChild(tiles);
+    }
+  }
+
+  // BURN (2026-09-29, the owner's decision): an image from the archive into a blank chip. BLANK CHECK first; then, on
+  // the Pi's own screen only, a 3 s hold arms the burn (it stands in for the physical ARM button to come: the server
+  // refuses a burn from anywhere else). gatbox-dump.service writes, minipro verifies, and two read-backs are compared
+  // with the image. A phone sees everything but the hold.
+  function burnPicker(p, st, t48) {
+    add(p, el("h2", null, "1 · IMAGE"));
+    const ir = el("div", "btnrow");
+    ir.style.alignItems = "center";
+    if (D.bimage) add(ir, el("span", "chip", "IMAGE: " + D.bimage.name),
+                      el("span", "mut", `${KB(D.bimage.size)} · ${D.bimage.matches[0] || (D.bimage.match === false ? "NO MATCH" : "not identified")} · SHA-1 ${D.bimage.sha1.slice(0, 8)}`));
+    const pick = el("button", null, D.bimage ? "OTHER IMAGE" : "PICK AN IMAGE (the archive, _images/)");
+    pick.addEventListener("click", pickBurnImage);
+    ir.appendChild(pick);
+    p.appendChild(ir);
+    add(p, el("h2", null, "2 · PART"));
+    partSection(p, D.bimage && D.bimage.size);
+    add(p, el("h2", null, "3 · BLANK CHECK"));
+    const bc = el("button", null, "BLANK CHECK");
+    bc.disabled = !(t48 && D.bimage && D.part && !st.busy && st.spool);
+    bc.addEventListener("click", () => burnReq("/api/burn/blank"));
+    add(p, bc, el("span", "mut", "  the part's size against the image, the pin check, minipro's blank check"));
+    add(p, el("h2", null, "4 · BURN"));
+    const s = st.status || {}, now = (Date.now() + S.offset) / 1000;
+    const ready = D.bimage && D.part && !st.busy && s.op === "blank" && s.state === "done" && s.blank_ok === true
+                  && s.part === D.part && (s.image || "").endsWith("/" + D.bimage.image) && now - (s.finished_at || 0) < 300;
+    if (!ready) p.appendChild(el("div", "mut", "after a BLANK CHECK of this image and part that passed (good for 5 minutes)"));
+    else if (!S.local) p.appendChild(el("div", "warn", "BLANK · arm it at the Pi: the hold to burn is on the Pi's own screen"));
+    else p.appendChild(holdButton(`HOLD 3 S TO BURN ${D.bimage.name} → ${D.part}`, 3000, () => burnReq("/api/burn")));
+  }
+  async function pickBurnImage() {
+    let r;
+    try { r = await api("GET", "/api/burn/images"); } catch (e) { return fail(e); }
+    if (!r.images.length) return toast("No images yet: dump a chip first, or copy a .bin into /srv/gatbox/roms/_images", "warn", 6000);
+    const pick = await pickFrom("Which image goes into the chip?", r.images.map(x => ({
+      key: x.image, title: x.label || x.name, find: [x.image.toLowerCase(), (x.label || "").toLowerCase()],
+      sub: `${x.folder} · ${x.name} · ${KB(x.size)} · ${x.matches[0] || (x.match === false ? "NO MATCH" : "not identified")}`})),
+      D.bimage && D.bimage.image);
+    if (!pick) return;
+    D.bimage = r.images.find(x => x.image === pick); D.part = null; D.byes = false;   // a new image: pick its part next
+    renderDump();
+  }
+  function burnReq(path) {
+    const body = Object.assign({image: D.bimage.image, part: D.part}, D.machine ? {machine: D.machine} : {}, D.byes ? {yes: true} : {});
+    return api("POST", path, body)
+      .then(() => toast(path.endsWith("/blank") ? `BLANK CHECK queued: ${D.part}` : `BURN armed: ${D.bimage.name} → ${D.part}`))
+      .catch(fail);
+  }
+  // hold to act (like SHUT DOWN): letting go early does nothing; while it's held, the tab doesn't redraw under it
+  function holdButton(label, ms, fire) {
+    const b = el("button", "hold bad", label);
+    b.style.cssText = "min-height:72px;font-size:20px;width:100%";
+    b.style.setProperty("--ms", ms + "ms");
+    let t = null;
+    const end = () => { D.holding = false; if (D.pending) { D.pending = false; setTimeout(renderDump, 0); } };
+    const stop = () => {
+      if (b.dataset.done) return;
+      clearTimeout(t); b.classList.remove("arm"); b.textContent = label;
+      if (D.holding) end();
+    };
+    b.addEventListener("pointerdown", e => {
+      e.preventDefault(); D.holding = true; b.classList.add("arm"); b.textContent = "KEEP HOLDING…";
+      t = setTimeout(() => { b.dataset.done = 1; b.textContent = "ARMED: STARTING…"; end(); fire(); }, ms);
+    });
+    ["pointerup", "pointerleave", "pointercancel"].forEach(k => b.addEventListener(k, stop));
+    return b;
+  }
+  function burnResult(s) {
+    const c = el("div", "card"), img = (s.image || "").split("/").pop();
+    if (s.op === "blank" && s.state === "done") {
+      add(c, el("div", "big ok", "BLANK"), el("div", "mut", `${s.part} · ${KB(s.size || 0)} · pin check ${s.pin_check || "?"} · ready for ${img}`));
+    } else if (s.op === "burn" && s.state === "done" && s.verified) {
+      add(c, el("div", "big ok", "VERIFIED"), el("div", null, `${s.part} now holds ${img}`),
+          el("div", "mut", `SHA-1 ${s.sha1} · ${KB(s.size || 0)} · VPP ${s.vpp || "?"}`),
+          el("div", "mut", "minipro's verify OK · 2 read-backs identical to the image"));
+    } else {
+      const big = s.op === "blank" ? (s.blank_ok === false ? "NOT BLANK" : "STOPPED")
+                : /write failed|read-backs/.test(s.error || "") ? "FAILED" : "NOT BURNED";
+      add(c, el("div", "big bad", big), el("div", null, s.error || ""), s.hint ? el("div", "mut", "→ " + s.hint) : null);
+      const again = el("div", "btnrow");
+      const btn = (t, f) => { const b = el("button", null, t); b.addEventListener("click", f); again.appendChild(b); };
+      const m = /again with -p (\S+)/.exec(s.hint || "");
+      if (m) btn("USE " + m[1], () => { D.part = m[1]; renderDump(); });
+      if (/--yes/.test(s.hint || "") && D.bimage) btn("I CHECKED: BLANK CHECK AGAIN", () => { D.byes = true; burnReq("/api/burn/blank"); });
+      if (again.childNodes.length) c.appendChild(again);
+    }
+    return c;
+  }
   function resultCard(s) {
+    if (s.op === "blank" || s.op === "burn") return burnResult(s);
     const c = el("div", "card");
     if (s.state === "done") {
       const ri = s.romident || {}, a = s.archived || {};

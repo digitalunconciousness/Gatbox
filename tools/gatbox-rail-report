@@ -420,7 +420,7 @@ def main():
     if marks:
         say(f"MARKS ({len(marks)}):")
         for m in marks:
-            say(f"  {m.iso}  {m.source:<10} {m.label}" + ("   (before this file started)" if m.before_start else ""))
+            say(f"  {m.iso}  {m.source:<10} {m.label or '(no label)'}" + ("   (before this file started)" if m.before_start else ""))
         say()
 
     # --- plot: one panel per meter mode -------------------------------------------
@@ -537,7 +537,7 @@ def draw(plt, args, rows, labels, count, base, steps, window, alarm, in_w, is_of
                 continue
             ax.axvline(mx, color=MAG, lw=0.9, ls="-", alpha=0.9)
             if pi == 0:
-                ax.annotate(m.label[:24], (mx, 1), xycoords=("data", "axes fraction"), textcoords="offset points",
+                ax.annotate((m.label or f"MARK ({m.source})")[:24], (mx, 1), xycoords=("data", "axes fraction"), textcoords="offset points",
                             xytext=(3, -10), color=MAG, fontsize=6.5, family="monospace", rotation=0)
         if l == "Continuity":
             ax.set_ylim(-0.15, 1.15)

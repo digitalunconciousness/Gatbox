@@ -35,6 +35,10 @@ The bootstrap's MANIFEST maps repo files to installed paths. `--check` (no root)
   `server.py`). Fonts in `/usr/local/share/gatbox-web/fonts`. Stdlib, DynamicUser, `video` group + a private /dev
   holding only /dev/vcio_gencmd (vcgencmd). No D-Bus from inside it: /api/system reads the kernel, sysfs, /proc, iw.
 - The dashboard (M5) at `/dash/` (static files in `/usr/local/share/gatbox-web/dash`), which the 7" kiosk opens.
+- `gatbox-scand` + `gatbox-scand.service` (M6): grabs the EY-H2 (USB af99:8002) and posts each code to gatbox-web
+  (`POST /api/scan`, loopback): roster slug → machine, `GATBOX:MARK` → mark, `GATBOX:NEW` → new file.
+  DynamicUser + input group, input devices only, localhost only. `gatbox-labels` / `/labels.pdf`: QR sheet (the owner
+  makes labels in her Katasymbol app from the dashboard's MACHINE → LABEL LIST).
 - udev `/etc/udev/rules.d/99-gatbox-dmm.rules`, persistent journal, menu entry "GATBOX Rail Monitor"
 - EEPROM `PSU_MAX_CURRENT=5000`, config.txt `usb_max_current_enable=1`
 - Fallback hotspot NM profile `gatbox-ap`, **SSID GATBOX**, up only if no known network appears ~60 s after boot.

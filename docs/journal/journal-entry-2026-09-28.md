@@ -131,3 +131,12 @@
     A printable PDF sheet is the fallback.
 - DECIDED: labels come from the owner's Katasymbol label maker, typed or pasted into its app (no CSV import).
   GATBOX doesn't drive the printer.
+- ⏸ M6 PASSED with labels from the Katasymbol app:
+  - The DDR cabinet label read (DDR was already the machine, so nothing changed, as designed).
+  - GATBOX:NEW started a new file, still tagged DDR.
+  - GATBOX:MARK put a mark in the live log, and it shows on the morning report's plot as "MARK (scan)".
+  - Scans no longer type into the kiosk: the scanner service holds the scanner. **M6 done.**
+- DECIDED: the wired MARK push button waits for an enclosure. The pin plan is kept: GPIO17 on pin 11, ground on
+  pin 9.
+- NEXT: M7, the T48: pick the chip, label it, read it twice and compare, identify it with MAME, archive it under
+  the machine. The DUMP tab lights up when the T48 is plugged in.

@@ -568,7 +568,7 @@
           ov.map(o => [clock(o.start), vtxt(o.peak), String(o.samples), o.suspect ? tag("suspect", "warn") : tag("real", "bad")]));
     table("Excursions", ["from", "for", "worst", "readings"], exc.map(x => [clock(x.start), durS(x.duration_s), vtxt(x.worst), String(x.samples)]));
     table("Power cycles", ["off at", "back at", "down for"], pc.map(p => [clock(p.off_at), p.back_at ? clock(p.back_at) : "end of log", durS(p.duration_s)]));
-    table("Marks", ["at", "from", "label"], mk.map(m => [clock(m.iso), m.source, m.label + (m.before_start ? " (before the file)" : "")]));
+    table("Marks", ["at", "from", "label"], mk.map(m => [clock(m.iso), m.source, (m.label || "(no label)") + (m.before_start ? " (before the file)" : "")]));
     table("Open input (OL)", ["at", "for", "mode"], (J.ol_events || []).map(o => [clock(o.at), durS(o.duration_s), o.mode]));
     table("Warnings", ["flag", "readings", "first"], (J.warnings || []).map(x => [x.flag, String(x.samples), clock(x.first)]));
     table("Dial turns", ["at", "from", "to"], (J.mode_changes || []).map(x => [clock(x.at), x.from, x.to]));

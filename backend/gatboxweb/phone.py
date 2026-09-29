@@ -307,7 +307,7 @@ def report_cards(J):
     table("Power cycles", ["off at", "back at", "down for"],
           [[t(p["off_at"]), t(p["back_at"]) if p.get("back_at") else "end of log", e(_dur(p["duration_s"]))] for p in pc])
     table("Marks", ["at", "from", "label"],
-          [[t(m["iso"]), e(m["source"]), e(m["label"]) + (' <span class="mut">(before the file)</span>'
+          [[t(m["iso"]), e(m["source"]), e(m["label"] or "(no label)") + (' <span class="mut">(before the file)</span>'
                                                           if m.get("before_start") else "")] for m in mk])
     table("Open input (OL)", ["at", "for", "mode"],
           [[t(o["at"]), e(_dur(o["duration_s"])), e(o["mode"])] for o in J.get("ol_events") or []])

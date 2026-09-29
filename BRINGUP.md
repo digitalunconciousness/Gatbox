@@ -27,9 +27,11 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       chart with tap/zoom, alarm takeover, keypad), screenshot tests (tests/test-dash.sh, looked at), installed 20:22
       and 20:40 (reboot), ⏸ on the real panel **passed** (owner: "everything looks rad"; she picked a profile and
       started logging from the 7" at 20:49)
-- [ ] **M6 2E scanner**: [x] EY-H2 USB ID read (af99:8002) [x] gatbox-scand + POST /api/scan + dashboard (toasts,
-      DEVICES, LABEL LIST) + gatbox-labels (tests/test-scan.sh) [ ] install (needs OK: the new gatbox-scand unit,
-      package python3-qrcode) [ ] ⏸ the owner scans a slug, MARK, NEW
+- [x] **M6 2E scanner** (2026-09-28): EY-H2 USB ID read (af99:8002); gatbox-scand + POST /api/scan + dashboard
+      (toasts, DEVICES, LABEL LIST) + gatbox-labels (tests/test-scan.sh); installed 21:17 (owner OK'd the unit +
+      python3-qrcode); ⏸ Katasymbol labels **passed**: slug `DDR` (same machine, already picked), GATBOX:NEW → new
+      file still `machine=ddr`, GATBOX:MARK → `# mark=…,scan,` in the live file and on the report plot. GPIO MARK
+      button deferred (no enclosure yet). The overnight exit test (scan a cabinet, MARK at a crash) is real-world use.
 - [ ] **M7 2F T48 dump**: gatbox-dump; dashboard flow; ⏸ real board dump
 - [ ] **M8 2G stretch**: ask first
 

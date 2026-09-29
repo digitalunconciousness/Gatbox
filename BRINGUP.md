@@ -286,6 +286,16 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   works on plain http). `gatbox-labels` / `/labels.pdf` is the printable fallback: command card + 20 machines a
   page, 33 mm QRs.
 - **Not driven from the Pi:** the label maker's Bluetooth protocol isn't documented, and its app does the job.
+- **GPIO MARK button: DEFERRED (owner, 2026-09-28: she has a momentary button, but it waits until there's an
+  enclosure to mount it in).** Ready for then, read off this Pi with pinctrl:
+  - **The pin:** GPIO17 = physical pin 11, with GND on physical pin 9 (the pin next to it, same column: a 2-pin
+    Dupont plug fits).
+  - **Why it's free:** GPIO17 is unused (input). I²C (2/3) and SPI0 (7–11) are on, so those stay free, as do UART
+    (14/15), SPI1 (16–21) and the reserved GPIO3/26.
+  - **Software:** gpiozero 2.0.1 + python3-lgpio are installed. gpiozero opens /dev/gpiochip4, a symlink to
+    gpiochip0 (the 40-pin header, root:gpio).
+  - **Plan:** a small separate service (gpiozero Button, internal pull-up, 50 ms debounce, 2 s hold-off) that posts
+    a mark with source `button`. Only the button's two leads touch the header; no external voltage.
 
 ## Bring-up 1: bootstrap run — 2026-09-23
 

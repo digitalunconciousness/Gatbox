@@ -22,6 +22,10 @@ SupplementaryGroups=video
 PrivateDevices=yes
 BindReadOnlyPaths=-/dev/vcio_gencmd
 DeviceAllow=/dev/vcio_gencmd r
+# M7: dashboard dump requests go to gatbox-dump's spool (group gatbox-dump, setgid); the T48 itself stays out of
+# reach (the private /dev above), so gatbox-dump.service does the reading.
+SupplementaryGroups=gatbox-dump
+ReadWritePaths=-/var/spool/gatbox-dump
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes

@@ -1,0 +1,9 @@
+[Unit]
+Description=GATBOX: run a T48 dump when the dashboard asks for one (a request in /var/spool/gatbox-dump)
+
+[Path]
+PathExists=/var/spool/gatbox-dump/request.json
+Unit=gatbox-dump.service
+
+[Install]
+WantedBy=multi-user.target

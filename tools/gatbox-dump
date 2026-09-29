@@ -227,6 +227,48 @@ def current_machine():
     return (m or {}).get("slug") or "unassigned"
 
 
+def run_job(request, status):
+    """The dashboard's dump (gatbox-dump.service, started by gatbox-dump.path when gatbox-web drops request.json in
+    the spool). Claims the request (rename → running.json, so the path unit doesn't fire again), dumps, writes the
+    outcome to the status file, removes running.json. A stopped dump is a normal outcome: exit 0."""
+    running = os.path.join(os.path.dirname(request), "running.json")
+    try:
+        os.replace(request, running)
+    except FileNotFoundError:
+        return 0
+    try:
+        req = json.load(open(running))
+        part, label, machine = str(req.get("part", "")), str(req.get("label", "")), str(req.get("machine") or "unassigned")
+        d = Dump(part, label, machine, bool(req.get("ignore_id")), bool(req.get("keep_blank")), status,
+                 say=lambda m: print("gatbox-dump:" + m, flush=True))
+        d.info.update(non_jedec_ok=bool(req.get("yes")), job=req.get("id"), requested_at=req.get("at"))
+        try:
+            if not LABEL.match(label) or (machine != "unassigned" and not SLUG.match(machine)):
+                raise Stop("bad request: label or machine", "gatbox-web validates these; this shouldn't happen")
+            if part not in parts(part):
+                raise Stop(f"{part!r} isn't a T48 part name in minipro")
+            d.step("starting", f"{part} · {label} · {machine}", progress=0.02)
+            data = d.go()
+            d.archive(data, ROMS)
+            d.info["state"] = "done"
+        except Stop as s:
+            d.info.update(state="stopped", error=s.what, hint=s.hint)
+        except Exception as e:                      # a crash still ends as a result the dashboard can show
+            d.info.update(state="stopped", error=f"gatbox-dump failed: {e!r}", hint="see journalctl -u gatbox-dump")
+        d.info["finished_at"] = round(time.time(), 3)
+        tmp = status + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(d.info, f)
+        os.replace(tmp, status)
+        print(f"gatbox-dump: {d.info['state']}: {d.info.get('error') or d.info.get('archived', {}).get('path')}", flush=True)
+        return 0
+    finally:
+        try:
+            os.remove(running)
+        except FileNotFoundError:
+            pass
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--search", metavar="TEXT", help="list the T48 part names containing TEXT")
@@ -238,7 +280,14 @@ def main():
     ap.add_argument("--yes", action="store_true", help="confirm a non-JEDEC part (27C1000, 27C301)")
     ap.add_argument("--json", action="store_true", help="print the result as JSON")
     ap.add_argument("--status", help=argparse.SUPPRESS)          # the dashboard job's progress file
+    ap.add_argument("--job", help=argparse.SUPPRESS)             # the dashboard job's request file (gatbox-dump.service)
     args = ap.parse_args()
+    # the archive is shared by the owner (terminal) and gatbox-dump.service (the dashboard), both in group
+    # gatbox-dump, and /srv/gatbox/roms is setgid: a machine folder either one creates must stay writable by the other
+    os.umask(0o002)
+
+    if args.job:
+        return run_job(args.job, args.status or os.path.join(os.path.dirname(args.job), "status.json"))
 
     if args.search is not None:
         found = parts(args.search)

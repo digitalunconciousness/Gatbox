@@ -32,7 +32,11 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       python3-qrcode); ⏸ Katasymbol labels **passed**: slug `DDR` (same machine, already picked), GATBOX:NEW → new
       file still `machine=ddr`, GATBOX:MARK → `# mark=…,scan,` in the live file and on the report plot. GPIO MARK
       button deferred (no enclosure yet). The overnight exit test (scan a cabinet, MARK at a crash) is real-world use.
-- [ ] **M7 2F T48 dump**: gatbox-dump; dashboard flow; ⏸ real board dump
+- [ ] **M7 2F T48 dump**: [x] T48 firmware 01.1.32 (owner flashed it, self-test passed) [x] gatbox-dump CLI (real
+      chip: MATCH sonic/epr-15781c.ic18) [x] dashboard DUMP flow + gatbox-dump.path/.service + archive + part list
+      (tests/test-dump.sh, test-dash) [ ] install (needs OK: user gatbox-dump, /srv/gatbox/roms + spool, the two
+      units, gatbox-web joins group gatbox-dump) [ ] ⏸ dump a known EPROM from the dashboard [ ] burn (owner wants
+      it: CLI per the spec; dashboard burn is her call on hard rule 6)
 - [ ] **M8 2G stretch**: ask first
 
 ### M0 notes (2026-09-28)
@@ -323,6 +327,25 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   - `-p TMS27C020@DIP32`: pin check not supported for this part (noted), two reads identical (262,144 bytes), SHA-1
     `9f524012…` (the same as the M2 dump, so the firmware update changed nothing), MATCH `sonic/epr-15781c.ic18`.
     Archived with its sidecar. 14 s in all.
+- **The dashboard flow (why a path unit):**
+  - gatbox-web can't see the T48 (private /dev), and it shouldn't: it's the always-on web server. So it only
+    validates a request and drops `request.json` in `/var/spool/gatbox-dump` (group gatbox-dump, setgid 2770;
+    gatbox-web joins that group).
+  - `gatbox-dump.path` (PathExists) starts `gatbox-dump.service`, a oneshot running as the system user
+    `gatbox-dump`:
+    - it can write only `/srv/gatbox/roms` and the spool;
+    - of /dev, only USB device nodes (DevicePolicy=closed + char-usb_device; only the T48's is group plugdev);
+    - it talks only to localhost.
+  - The job claims the request (rename → running.json) and writes progress and the outcome to `status.json`, which
+    gatbox-web relays over SSE ("dump" events).
+  - This mirrors the logger's flag-file pattern. systemd gives the job its own identity, sandbox, journal and
+    20-minute timeout. A oneshot can't run twice, so it's one dump at a time, and gatbox-web also refuses (409)
+    while one is queued or running. A crash in a dump can't take the web server down.
+  - Picker: 14 family tiles (data/eproms.json: families only) → the exact names from minipro's own list, which the
+    bootstrap writes at install (`minipro -q T48 -l`, regenerated when minipro changes). A name without `@` is the
+    DIP package (e.g. `M27C801`).
+  - A stop offers the one-tap fix: USE <the part minipro names>, READ ANYWAY (ignore the ID), ARCHIVE ANYWAY
+    (blank), I CHECKED (non-JEDEC), TRY AGAIN (reseat).
 - **Part names (minipro -q T48 -l, 32,361 entries):** generic names repeat (two `27C010@DIP32` entries), next to
   manufacturer-prefixed ones (AM27C010, M27C1001, TMS27C010…). The M2 dump showed why the exact part matters: generic
   `27C020@DIP32` refused a TI chip, "Invalid Chip ID: expected 0x8934, got 0x9732 (TMS27C020@DIP32)", and it read as

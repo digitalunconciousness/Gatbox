@@ -92,14 +92,17 @@ def setup():
         raise SystemExit(f"port {PORT} is already in use: stop whatever runs there first")
     except OSError:
         pass
-    for d in ("log", "run", "ctrl", "cache", "data", "led"):
+    for d in ("log", "run", "ctrl", "cache", "data", "led", "spool", "roms"):
         os.makedirs(os.path.join(T, d))
     with open(f"{T}/led/trigger", "w") as f:
         f.write("[mmc0] none\n")
     open(f"{T}/led/brightness", "w").close()
     open(f"{T}/port", "w").close()
-    for f in ("profiles.json", "gatbox-machine-specs.json"):
+    for f in ("profiles.json", "gatbox-machine-specs.json", "eproms.json"):
         shutil.copy(os.path.join(REPO, "data", f), f"{T}/data/")
+    names = subprocess.run([os.path.join(REPO, "tests/fake-minipro"), "-q", "T48", "-l"], capture_output=True, text=True).stdout
+    open(f"{T}/parts.txt", "w").write("# minipro 0.7.4 T48\n" + names)
+    open(f"{T}/rom.bin", "wb").write(os.urandom(262144))
     with open(f"{T}/data/gatbox-barcade-roster.json", "w") as f:
         json.dump({"meta": {"platforms": {"test_hdd": {"desc": "Test platform with a hard drive", "faults": ["drive failure"],
                                                        "parts": ["CF adapter"], "pm": "image the drive"}},
@@ -114,7 +117,8 @@ def setup():
         shutil.copy(FX, f"{T}/log/")
     env = dict(os.environ, GATBOX_WEB_PORT=str(PORT), STATE_DIRECTORY=f"{T}/ctrl", CACHE_DIRECTORY=f"{T}/cache",
                GATBOX_LOGDIR=f"{T}/log", GATBOX_RUNDIR=f"{T}/run", GATBOX_REPORT=os.path.join(REPO, "tools/gatbox-rail-report"),
-               GATBOX_DATA=f"{T}/data", MPLCONFIGDIR=f"{T}/cache/mpl")
+               GATBOX_DATA=f"{T}/data", MPLCONFIGDIR=f"{T}/cache/mpl", GATBOX_DUMP_SPOOL=f"{T}/spool",
+               GATBOX_ROMS=f"{T}/roms", GATBOX_MINIPRO_PARTS=f"{T}/parts.txt")
     os.environ["GATBOX_DATA"] = f"{T}/data"               # the logger's gatbox-meta reads the same data
     procs["web"] = subprocess.Popen(["python3", os.path.join(REPO, "backend/gatbox-web")], env=env,
                                     stdout=open(f"{T}/web.log", "w"), stderr=subprocess.STDOUT, start_new_session=True)
@@ -321,6 +325,55 @@ def main():
                   and "OV 3 (3 suspect)" in text("#s-list"))
             shot("16-sessions-fixture")
         stop("logger")
+
+        print("DUMP (M7; a runner stands in for gatbox-dump.path):")
+        if any(open(p_).read().strip() == "a466" for p_ in __import__("glob").glob("/sys/bus/usb/devices/*/idVendor")):
+            import threading
+            done = threading.Event()
+
+            def runner():
+                while not done.is_set():
+                    if os.path.exists(f"{T}/spool/request.json"):
+                        time.sleep(1.5)                          # long enough to see the progress card
+                        subprocess.run(["python3", os.path.join(REPO, "tools/gatbox-dump"), "--job", f"{T}/spool/request.json",
+                                        "--status", f"{T}/spool/status.json"], capture_output=True, timeout=60,
+                                       env=dict(os.environ, GATBOX_MINIPRO=os.path.join(REPO, "tests/fake-minipro"),
+                                                GATBOX_MAME=os.path.join(REPO, "tests/fake-mame"), GATBOX_ROMS=f"{T}/roms",
+                                                GATBOX_API=B, FAKE_ROM=f"{T}/rom.bin", FAKE_ID=os.environ.get("FAKE_ID_NEXT", ""),
+                                                FAKE_MAME_MATCH="epr-15781c.ic18 sonic SegaSonic The Hedgehog (Japan, rev. C)"))
+                    time.sleep(0.2)
+            threading.Thread(target=runner, daemon=True).start()
+            click('[data-view="dump"]')
+            c.wait("document.querySelectorAll('#du-body .tile').length === 14", 15)
+            check("DUMP: T48 READY, 14 family tiles", "T48 READY" in text("#du-body"))
+            shot("17a-dump-pick")
+            q("[...document.querySelectorAll('#du-body .tile')].find(t => t.textContent.startsWith('27C020')).click()")
+            c.wait("document.querySelectorAll('#pane .picklist .row').length >= 2", 10)
+            shot("17b-dump-family")
+            q("[...document.querySelectorAll('#pane .picklist .row')].find(r => r.textContent === '27C020@DIP32').click()")
+            c.wait("document.querySelector('#du-body').textContent.includes('27C020@DIP32')", 10)
+            q("[...document.querySelectorAll('#du-body button')].find(b => b.textContent.startsWith('TYPE THE CHIP')).click()")
+            c.wait("document.querySelector('#pane .kp-field')")
+            tap_keys("EPR-1")
+            c.wait("document.querySelector('#du-body').textContent.includes('LABEL: EPR-1')", 10)
+            os.environ["FAKE_ID_NEXT"] = "mismatch"                   # the generic name: minipro's chip-ID stop
+            q("[...document.querySelectorAll('#du-body button')].find(b => b.textContent === 'DUMP').click()")
+            c.wait("document.querySelector('#du-body').textContent.includes('DUMPING')", 10)
+            shot("17c-dump-running")
+            c.wait("document.querySelector('#du-body').textContent.includes('STOPPED')", 30)
+            check("a wrong part: STOPPED with minipro's words and a USE <part> button",
+                  "Invalid Chip ID" in text("#du-body") and q("[...document.querySelectorAll('#du-body button')].some(b => b.textContent === 'USE TMS27C020@DIP32')"))
+            shot("17d-dump-stopped")
+            os.environ["FAKE_ID_NEXT"] = ""
+            q("[...document.querySelectorAll('#du-body button')].find(b => b.textContent === 'USE TMS27C020@DIP32').click()")
+            c.wait("document.querySelector('#du-body').textContent.includes('MATCH')", 30)
+            time.sleep(1.5)
+            check("USE the suggested part: MATCH sonic / epr-15781c.ic18, archived, listed",
+                  "sonic / epr-15781c.ic18" in text("#du-body") and "archived:" in text("#du-body") and "EPR-1 MATCH" in text("#du-body"))
+            shot("17e-dump-match")
+            done.set()
+        else:
+            print("  skip  (the T48 isn't plugged in)")
 
         for v in ("system", "devices", "dump"):
             click(f'[data-view="{v}"]')

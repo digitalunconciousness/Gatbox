@@ -1,0 +1,29 @@
+[Unit]
+Description=GATBOX T48 dump job (the dashboard's DUMP; gatbox-dump.path starts it)
+After=gatbox-web.service
+
+[Service]
+# One job per request: gatbox-dump claims request.json (renames it to running.json), reads the chip twice,
+# identifies it with MAME, archives it, and writes status.json for the dashboard. Reads only: it never writes a chip.
+Type=oneshot
+ExecStart=/usr/local/bin/gatbox-dump --job /var/spool/gatbox-dump/request.json --status /var/spool/gatbox-dump/status.json
+TimeoutStartSec=20min
+# Its own narrow identity: the T48 (a USB device node, group plugdev) and nothing else in /dev; writes only the
+# archive and its spool; talks only to gatbox-web on this Pi (for the clock source in the sidecar).
+User=gatbox-dump
+Group=gatbox-dump
+SupplementaryGroups=plugdev
+UMask=0007
+Environment=HOME=/tmp
+DevicePolicy=closed
+DeviceAllow=char-usb_device rw
+ProtectSystem=strict
+ReadWritePaths=/srv/gatbox/roms /var/spool/gatbox-dump
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+IPAddressAllow=localhost
+IPAddressDeny=any
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+ProtectKernelTunables=yes
+ProtectControlGroups=yes

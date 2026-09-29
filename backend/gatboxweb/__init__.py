@@ -11,6 +11,7 @@
     roster.py    roster entries merged with platform, critical actions and machine spec
     system.py    temperature, throttling, EXT5V, disk, network, clock + RTC, kiosk, versions
     devices.py   the USB devices GATBOX knows (IDs read off this Pi), from sysfs
+    dump.py      the DUMP flow: requests to gatbox-dump's spool, progress back, the archive's list
 
 Stdlib only. Installed to /usr/local/lib/gatbox/gatboxweb next to gatboxlib; /usr/local/bin/gatbox-web starts it.
 """

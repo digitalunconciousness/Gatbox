@@ -101,6 +101,7 @@
                       toast(`MARK ${hms(m.epoch, true)}${m.label ? " · " + m.label : ""}${m.pending ? " (goes into the next file)" : ""}`); });
     on("capture", c => toast(`CAPTURED ${c.label}: ${c.display} → ${c.machine}`));
     on("scan", onScan);
+    on("dump", onDump);
     on("state", st => onState(st));
     on("heartbeat", () => { S.connected = true; renderHeader(); });
     es.addEventListener("resync", () => { es.close(); setTimeout(connect, 300); });
@@ -438,7 +439,7 @@
     $("#n-machine").textContent = (S.st && (S.st.machine_name || S.st.machine)) || "none";
     const t48 = S.dev && S.dev.t48 && S.dev.t48.present;
     $("#n-dump").classList.toggle("dim", !t48);
-    $("#n-dump-s").textContent = t48 ? "T48 ready (M7)" : "T48 not plugged in";
+    $("#n-dump-s").textContent = t48 ? "T48 ready" : "T48 not plugged in";
   }
 
   // --- SESSIONS -----------------------------------------------------------------------------
@@ -627,7 +628,9 @@
       for (const k of cp.captures.slice(-30).reverse())
         c.appendChild(el("div", null, `${k.iso.replace("T", " ")}  ${k.label}  ${k.value} ${k.unit}  (${modeLabel(k.mode)}${k.flags ? ", " + k.flags : ""})`));
     } catch (x) { c.appendChild(el("div", "bad", String(x.message))); }
-    add(c, el("h3", null, "Dumps"), el("div", "mut", "The T48 dump archive arrives in M7."));
+    c.appendChild(el("h3", null, "Dumps"));
+    try { dumpList(c, (await api("GET", "/api/dumps?machine=" + encodeURIComponent(e.slug))).dumps); }
+    catch (x) { c.appendChild(el("div", "mut", "No dump archive on this Pi yet.")); }
     B.appendChild(c);
   }
   // LABEL LIST: what to type into a label maker's QR text (Katasymbol and the like). Tap COPY, paste in the app.
@@ -826,15 +829,159 @@
                               ["BOARD POWER", "not fitted: GATBOX never powers a board"]])
         card(t, [[why, "mut"]], "notfit");
     }
-    if (S.view === "dump") {
-      const B = clear($("#du-body")), c = el("div", "card");
-      if (d.t48.present) add(c, el("div", "big ok", "T48 CONNECTED"), el("div", "mut", "USB " + d.t48.usb_id),
-        el("p", null, "The dump workflow arrives in M7: pick the part (names exactly as minipro lists them, never guessed), " +
-                      "label the chip, read it twice and compare, identify it with MAME, archive it under this machine."),
-        el("p", "mut", "Reads only: nothing on this screen will ever write to a chip."));
-      else add(c, el("div", "big mut", "T48 NOT PLUGGED IN"),
-        el("p", null, "Plug the XGecu T48 into the Pi. This screen lights up when it's seen (USB a466:0a53)."));
+    if (S.view === "dump") loadDump();
+  }
+
+  // --- DUMP (M7): part → label → DUMP → result. gatbox-web queues it; gatbox-dump.service does the reading. -----
+  // Reads only: nothing on this screen writes to a chip (hard rule 6).
+  const D = {part: null, label: null, family: null, parts: null, fams: null, st: null};
+  async function loadDump() {
+    try {
+      const [st, pl] = await Promise.all([api("GET", "/api/dump"), D.fams ? null : api("GET", "/api/dump/parts")]);
+      D.st = st;
+      if (pl) D.fams = pl.families;
+    } catch (e) { return fail(e); }
+    renderDump();
+  }
+  function onDump(st) { D.st = st; if (S.view === "dump") renderDump(); }
+  function dumpReq(extra) {
+    return api("POST", "/api/dump", Object.assign({part: D.part, label: D.label}, extra || {}))
+      .then(() => toast(`DUMP queued: ${D.part} · ${D.label}`)).catch(fail);
+  }
+  async function pickFamily(f) {
+    let r;
+    try { r = await api("GET", "/api/dump/parts?family=" + encodeURIComponent(f.id)); } catch (e) { return fail(e); }
+    const pick = await sheet(`${f.label}: which one is printed on the chip?`, (pane, done) => {
+      pane.appendChild(el("div", "mut", "minipro's own names. The maker's prefix matters (TMS, AM, M, MBM…): the chip-ID check " +
+                                        "stops a wrong pick and names the right one. Names without @ are DIP."));
+      const list = el("div", "picklist");
+      for (const n of r.parts) {
+        const b = el("button", "row", n);
+        b.addEventListener("click", () => done(n));
+        list.appendChild(b);
+      }
+      pane.appendChild(list);
+    });
+    if (pick) { D.part = pick; renderDump(); }
+  }
+  async function searchParts() {
+    const q = await keypad({title: "Search minipro's part names (e.g. 27C020, MBM27, 2764)", max: 30});
+    if (!q) return;
+    let r;
+    try { r = await api("GET", "/api/dump/parts?q=" + encodeURIComponent(q)); } catch (e) { return fail(e); }
+    const pick = await sheet(`"${q}": ${r.parts.length}${r.more ? "+" : ""} parts`, (pane, done) => {
+      const list = el("div", "picklist");
+      if (!r.parts.length) pane.appendChild(el("div", "mut", "Nothing matches. Try fewer characters."));
+      for (const n of r.parts) { const b = el("button", "row", n); b.addEventListener("click", () => done(n)); list.appendChild(b); }
+      pane.appendChild(list);
+    });
+    if (pick) { D.part = pick; renderDump(); }
+  }
+  function renderDump() {
+    const B = clear($("#du-body")), st = D.st || {}, t48 = (st.t48 || {}).present;
+    const head = el("div", "card");
+    add(head, el("div", "big " + (t48 ? "ok" : "mut"), t48 ? "T48 READY" : "T48 NOT PLUGGED IN"),
+        el("div", "mut", (t48 ? `USB ${st.t48.usb_id} · ` : "Plug the XGecu T48 into the Pi (USB a466:0a53). ") +
+                         `machine: ${(S.st && (S.st.machine_name || S.st.machine)) || "none (dumps go to 'unassigned')"} · reads only`));
+    if (!st.spool) head.appendChild(el("div", "warn", "The dump service isn't installed yet (no spool)."));
+    B.appendChild(head);
+    const s = st.status;
+    if (st.busy || (s && s.state === "running")) {
+      const c = el("div", "card");
+      add(c, el("h2", null, `DUMPING ${(s && s.part) || D.part || ""}`));
+      const bar = el("div"); bar.style.cssText = "height:10px;border-radius:5px;background:var(--line);overflow:hidden;margin:6px 0";
+      const fill = el("div"); fill.style.cssText = `height:100%;width:${Math.round(((s && s.progress) || 0.02) * 100)}%;background:var(--cyan)`;
+      bar.appendChild(fill); c.appendChild(bar);
+      for (const x of (s && s.steps) || []) c.appendChild(el("div", "mut", `${x.step}${x.detail ? ": " + x.detail : ""}`));
+      c.appendChild(el("div", "mut", st.queued ? "queued: starting…" : "keep the chip in the socket until it's done"));
       B.appendChild(c);
+    } else if (s && s.state) {
+      B.appendChild(resultCard(s));
+    }
+    // the picker
+    const p = el("div", "card");
+    add(p, el("h2", null, "1 · PART"));
+    const row = el("div", "btnrow");
+    row.style.alignItems = "center";
+    if (D.part) {                                  // picked: the tiles fold away so LABEL and DUMP stay on screen
+      const cur = el("span", "chip", D.part);
+      cur.style.fontSize = "18px";
+      const change = el("button", null, "CHANGE");
+      change.addEventListener("click", () => { D.part = null; renderDump(); });
+      add(row, cur, change);
+    }
+    const srch = el("button", null, "SEARCH");
+    srch.addEventListener("click", searchParts);
+    row.appendChild(srch);
+    p.appendChild(row);
+    if (!D.part) {
+      const tiles = el("div", "tiles");
+      tiles.style.gridTemplateColumns = "repeat(auto-fill,minmax(150px,1fr))";
+      for (const f of D.fams || []) {
+        const b = el("button", "tile");
+        b.style.minHeight = "64px";
+        add(b, el("b", null, f.label), el("span", "mut", f.size));
+        b.addEventListener("click", () => pickFamily(f));
+        tiles.appendChild(b);
+      }
+      p.appendChild(tiles);
+    }
+    add(p, el("h2", null, "2 · LABEL"));
+    const lb = el("button", null, D.label ? "LABEL: " + D.label : "TYPE THE CHIP'S LABEL");
+    lb.addEventListener("click", async () => {
+      const v = await keypad({title: "The chip's label (e.g. EPR-15781C, LG-U12)", max: 40, value: D.label || ""});
+      if (v != null) { D.label = v.replace(/ /g, "-") || null; renderDump(); }
+    });
+    p.appendChild(lb);
+    add(p, el("h2", null, "3 · DUMP"));
+    const go = el("button", null, "DUMP");
+    go.style.cssText = "min-height:72px;min-width:220px;font-size:24px;border-color:var(--mag)";
+    go.disabled = !(t48 && D.part && D.label && !st.busy && st.spool);
+    go.addEventListener("click", () => dumpReq());
+    add(p, go, el("span", "mut", "  reads the chip twice, compares, asks MAME, archives it"));
+    B.appendChild(p);
+    const L = el("div", "card");
+    L.appendChild(el("h2", null, "Dumps for this machine"));
+    B.appendChild(L);
+    api("GET", "/api/dumps").then(r => dumpList(L, r.dumps)).catch(() => {});
+  }
+  function resultCard(s) {
+    const c = el("div", "card");
+    if (s.state === "done") {
+      const ri = s.romident || {}, a = s.archived || {};
+      if (ri.match) {
+        add(c, el("div", "big ok", "MATCH"));
+        for (const m of ri.matches) c.appendChild(el("div", null, `${m.set} / ${m.rom} · ${m.description}`));
+      } else if (ri.match === false) {
+        add(c, el("div", "big warn", "NO MATCH"),
+            el("div", "mut", "MAME doesn't know this ROM: a revision, a modified dump, or a bad read. Compare with the chip's sticker."));
+      } else add(c, el("div", "big warn", "NOT IDENTIFIED"), el("div", "mut", "MAME couldn't run"));
+      add(c, el("div", "mut", `${s.part} · ${s.label} · ${(s.size || 0).toLocaleString("en-US")} bytes · 2 reads identical`),
+          el("div", "mut", `SHA-1 ${s.sha1} · CRC32 ${s.crc32}`),
+          el("div", "mut", (a.new ? "archived: " : "already archived: ") + (a.path || "")));
+      if (s.blank) c.appendChild(el("div", "warn", "archived although it reads " + s.blank));
+    } else {
+      add(c, el("div", "big bad", "STOPPED"), el("div", null, s.error || ""), s.hint ? el("div", "mut", "→ " + s.hint) : null);
+      const again = el("div", "btnrow"), same = {part: s.part, label: s.label};
+      const m = /dump again with -p (\S+)/.exec(s.hint || "");
+      const btn = (t, f) => { const b = el("button", null, t); b.addEventListener("click", f); again.appendChild(b); };
+      if (m) btn("USE " + m[1], () => { D.part = m[1]; D.label = s.label; dumpReq(); });
+      if (/--ignore-id/.test(s.hint || "")) btn("READ ANYWAY (ignore the ID)", () => { Object.assign(D, same); dumpReq({ignore_id: true}); });
+      if (/--keep-blank/.test(s.hint || "")) btn("ARCHIVE ANYWAY", () => { Object.assign(D, same); dumpReq({keep_blank: true}); });
+      if (/--yes/.test(s.hint || "")) btn("I CHECKED: DUMP", () => { Object.assign(D, same); dumpReq({yes: true}); });
+      if (/reseat|differ|seated|lever/.test((s.hint || "") + (s.error || ""))) btn("TRY AGAIN", () => { Object.assign(D, same); dumpReq(); });
+      if (again.childNodes.length) c.appendChild(again);
+    }
+    return c;
+  }
+  function dumpList(box, list) {
+    if (!list.length) { box.appendChild(el("div", "mut", "None yet.")); return; }
+    for (const d of list.slice(0, 20)) {
+      const r = el("div");
+      r.style.margin = "4px 0";
+      add(r, el("b", null, d.label + " "), el("span", d.match ? "tag ok" : "tag warn", d.match ? "MATCH" : "NO MATCH"),
+          el("div", "mut", `${(d.matches[0] && d.matches[0].set + "/" + d.matches[0].rom) || ""} ${d.part} · ${(d.date || "").slice(0, 16).replace("T", " ")} · ${d.sha1.slice(0, 8)}`));
+      box.appendChild(r);
     }
   }
 

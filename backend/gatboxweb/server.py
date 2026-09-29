@@ -18,7 +18,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from . import captures, config, devices, meter, phone, report, roster, sessions, system
+from . import captures, config, devices, dump, meter, phone, report, roster, sessions, system
 from .live import LIVE
 from .meter import Bad
 
@@ -274,6 +274,26 @@ def api_captures_post(h, m, q):
     h.json(201, c)
 
 
+def api_dump_get(h, m, q):
+    h.json(200, dump.status())
+
+
+def api_dump_post(h, m, q):
+    req = dump.request(h.body())
+    h.log_line(f"dump: {req['part']} {req['label']} -> {req['machine']}")
+    LIVE.emit("dump", dump.status())
+    h.json(202, req)
+
+
+def api_dump_parts(h, m, q):
+    h.json(200, dump.search(q1(q, "q"), q1(q, "family")))
+
+
+def api_dumps(h, m, q):
+    slug = q1(q, "machine") or meter.resolved()["machine"] or "unassigned"
+    h.json(200, {"machine": slug, "dumps": dump.dumps(slug)})
+
+
 def api_devices(h, m, q):
     d = devices.snapshot()
     with _scans_lock:
@@ -430,6 +450,10 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("GET", r"/api/captures", api_captures_get),
     ("POST", r"/api/captures", api_captures_post),
     ("GET", r"/api/devices", api_devices),
+    ("GET", r"/api/dump", api_dump_get),
+    ("POST", r"/api/dump", api_dump_post),
+    ("GET", r"/api/dump/parts", api_dump_parts),
+    ("GET", r"/api/dumps", api_dumps),
     ("GET", r"/api/roster", api_roster),
     ("GET", r"/api/roster/(?P<slug>[^/]+)", api_roster_entry),
 ]]
@@ -558,6 +582,7 @@ def main():
     except OSError:
         pass
     LIVE.start()
+    dump.watch()
     threading.Thread(target=_warm, name="warm", daemon=True).start()
     ThreadingHTTPServer.allow_reuse_address = True
     ThreadingHTTPServer.daemon_threads = True

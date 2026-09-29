@@ -26,10 +26,11 @@
 #   4  power fix: PSU_MAX_CURRENT=5000 (EEPROM) + usb_max_current_enable=1 (config.txt); RTC charging guard
 #   5  files from this checkout (table below): logger, web view, RTC sync, hotspot fallback, tools, udev, journald,
 #      menu launcher
-#   6  services: gatbox-raillog, gatbox-web (+ its fonts), gatbox-scand (the barcode scanner), gatbox-rtc-sync.timer
+#   6  services: the gatbox-dump user + /srv/gatbox/roms + its spool (sysusers.d, tmpfiles.d), gatbox-raillog,
+#      gatbox-web (+ its fonts), gatbox-scand (the barcode scanner), gatbox-dump.path (dashboard dumps), rtc-sync.timer
 #   7  desktop (for the sudo user): the 7" kiosk autostart (gatbox-kiosk on|off), Pi OS autotouch off and its
 #      port-pinned touch line removed, so the panel works on either HDMI port with real touch events
-#   8  minipro (XGecu T48), built from a pinned upstream tag
+#   8  minipro (XGecu T48), built from a pinned upstream tag; its T48 part-name list for the dashboard
 #   9  optional hotspot fallback
 
 set -euo pipefail
@@ -45,6 +46,10 @@ backend/gatbox-web                              /usr/local/bin/gatbox-web       
 backend/gatbox-web.service                      /etc/systemd/system/gatbox-web.service                644
 backend/gatbox-scand                            /usr/local/bin/gatbox-scand                           755
 backend/gatbox-scand.service                    /etc/systemd/system/gatbox-scand.service              644
+backend/gatbox-dump.service                     /etc/systemd/system/gatbox-dump.service               644
+backend/gatbox-dump.path                        /etc/systemd/system/gatbox-dump.path                  644
+bootstrap/files/sysusers-gatbox.conf            /etc/sysusers.d/gatbox.conf                           644
+bootstrap/files/tmpfiles-gatbox.conf            /etc/tmpfiles.d/gatbox.conf                           644
 backend/gatbox-rtc-sync                         /usr/local/sbin/gatbox-rtc-sync                       755
 backend/gatbox-rtc-sync.service                 /etc/systemd/system/gatbox-rtc-sync.service           644
 backend/gatbox-rtc-sync.timer                   /etc/systemd/system/gatbox-rtc-sync.timer             644
@@ -57,6 +62,7 @@ backend/gatbox-kiosk-launch                     /usr/local/bin/gatbox-kiosk-laun
 backend/gatbox-meta                             /usr/local/bin/gatbox-meta                            755
 tools/gatbox-replay                             /usr/local/bin/gatbox-replay                          755
 tools/gatbox-labels                             /usr/local/bin/gatbox-labels                          755
+tools/gatbox-dump                               /usr/local/bin/gatbox-dump                            755
 backend/gatboxlib/__init__.py                   /usr/local/lib/gatbox/gatboxlib/__init__.py           644
 backend/gatboxlib/modes.py                      /usr/local/lib/gatbox/gatboxlib/modes.py              644
 backend/gatboxlib/profiles.py                   /usr/local/lib/gatbox/gatboxlib/profiles.py           644
@@ -73,12 +79,14 @@ backend/gatboxweb/captures.py                   /usr/local/lib/gatbox/gatboxweb/
 backend/gatboxweb/roster.py                     /usr/local/lib/gatbox/gatboxweb/roster.py             644
 backend/gatboxweb/system.py                     /usr/local/lib/gatbox/gatboxweb/system.py             644
 backend/gatboxweb/devices.py                    /usr/local/lib/gatbox/gatboxweb/devices.py            644
+backend/gatboxweb/dump.py                       /usr/local/lib/gatbox/gatboxweb/dump.py               644
 web/dash/index.html                             /usr/local/share/gatbox-web/dash/index.html           644
 web/dash/dash.css                               /usr/local/share/gatbox-web/dash/dash.css             644
 web/dash/dash.js                                /usr/local/share/gatbox-web/dash/dash.js              644
 web/dash/chart.js                               /usr/local/share/gatbox-web/dash/chart.js             644
 data/profiles.json                              /usr/local/share/gatbox/profiles.json                 644
 data/gatbox-machine-specs.json                  /usr/local/share/gatbox/gatbox-machine-specs.json     644
+data/eproms.json                                /usr/local/share/gatbox/eproms.json                   644
 data/gatbox-barcade-roster.json                 /usr/local/share/gatbox/gatbox-barcade-roster.json    644  optional
 bootstrap/files/99-gatbox-dmm.rules             /etc/udev/rules.d/99-gatbox-dmm.rules                 644
 bootstrap/files/minipro-0.7.4/60-minipro.rules  /etc/udev/rules.d/60-minipro.rules                    644
@@ -103,6 +111,8 @@ PKGS=(sigrok-cli python3-matplotlib python3-qrcode rsync git curl util-linux-ext
 # minipro: pinned upstream release. Bump deliberately: check its T48 support and changelog, and refresh
 # bootstrap/files/minipro-<tag>/ (its udev rules, which its `make install` skips on Pi OS) at the same time.
 MINIPRO_TAG=0.7.4
+PARTS_LIST=/usr/local/share/gatbox/minipro-parts-T48.txt    # the dashboard's T48 part names: minipro -q T48 -l
+parts_ok() { head -n 1 "$PARTS_LIST" 2>/dev/null | grep -qxF "# minipro $(minipro_version) T48"; }
 MINIPRO_URL=https://gitlab.com/DavidGriffith/minipro.git
 MINIPRO_SRC=/usr/local/src/minipro
 # gatbox-web's fonts: Chakra Petch + Share Tech Mono (SIL OFL), the project's design-token fonts, pinned to one
@@ -210,8 +220,12 @@ if [ "${1:-}" = "--check" ]; then
     while read -r _ name sum; do font_ok "$name" "$sum" || DIFFS+=("fetch      font $name"); done < <(grep -v '^$' <<<"$FONTS")
     for l in usb_max_current_enable=1; do grep -qxF "$l" /boot/firmware/config.txt || DIFFS+=("config.txt += $l"); done
     grep -qE '^[^#]*rtc_bbat_vchg' /boot/firmware/config.txt && [ -z "$RTC_CHARGE" ] && DIFFS+=("config.txt: comment out rtc_bbat_vchg (RTC CHARGING IS ON)")
-    for u in gatbox-raillog.service gatbox-web.service gatbox-scand.service gatbox-rtc-sync.timer; do
+    for u in gatbox-raillog.service gatbox-web.service gatbox-scand.service gatbox-dump.path gatbox-rtc-sync.timer; do
         systemctl -q is-enabled "$u" 2>/dev/null || DIFFS+=("enable     $u"); done
+    getent passwd gatbox-dump >/dev/null || DIFFS+=("create     user gatbox-dump (sysusers.d)")
+    [ -d /srv/gatbox/roms ] && [ -d /var/spool/gatbox-dump ] || DIFFS+=("create     /srv/gatbox/roms + /var/spool/gatbox-dump (tmpfiles.d)")
+    id -nG "$(id -un)" | grep -qw gatbox-dump || DIFFS+=("group      $(id -un) += gatbox-dump (the dump archive)")
+    command -v minipro >/dev/null && ! parts_ok && DIFFS+=("generate   $PARTS_LIST")
     if ((${#DIFFS[@]})); then printf 'a run would change:\n'; printf '  %s\n' "${DIFFS[@]}"; exit 3; fi
     echo "nothing to change: this Pi matches the checkout"
     exit 0
@@ -365,10 +379,21 @@ svc() {   # <unit> <installed path glob>...: enable it; restart only if its file
     elif ! systemctl -q is-active "$unit"; then systemctl start "$unit"; log "$unit started"
     else log "$unit up to date, left running"; fi
 }
+# the dump job's user, the archive and the spool (before gatbox-web, which joins the gatbox-dump group)
+if changed /etc/sysusers.d/gatbox.conf || ! getent passwd gatbox-dump >/dev/null; then
+    systemd-sysusers /etc/sysusers.d/gatbox.conf && log "user gatbox-dump (T48 dumps, group plugdev)"
+fi
+if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ]; then
+    systemd-tmpfiles --create /etc/tmpfiles.d/gatbox.conf && log "/srv/gatbox/roms + /var/spool/gatbox-dump"
+fi
+if ! id -nG "$U" | grep -qw gatbox-dump; then
+    usermod -aG gatbox-dump "$U" && log "$U += gatbox-dump (gatbox-dump from the terminal archives too; log out/in)"
+fi
 svc gatbox-raillog.service /usr/local/bin/gatbox-raillog /etc/systemd/system/gatbox-raillog.service
 svc gatbox-web.service /usr/local/bin/gatbox-web /etc/systemd/system/gatbox-web.service \
     '/usr/local/lib/gatbox/gatboxweb/*' '/usr/local/lib/gatbox/gatboxlib/*'   # its package and the shared lib
 svc gatbox-scand.service /usr/local/bin/gatbox-scand /etc/systemd/system/gatbox-scand.service   # after gatbox-web
+svc gatbox-dump.path /etc/systemd/system/gatbox-dump.path /etc/systemd/system/gatbox-dump.service   # dashboard dumps
 fetch_font() {   # <path in google/fonts> <local name> <sha256>
     local f="$FONTDIR/$2"
     echo "$3  $f" | sha256sum -c --status 2>/dev/null && return 0
@@ -424,6 +449,17 @@ else
     fi
 fi
 grep -q 'T48' <<<"$(minipro_info)" && log "T48 is in minipro's supported programmers (udev: plugdev group)"
+# the dashboard's part names: minipro's own list for the T48, regenerated whenever minipro changes
+if command -v minipro >/dev/null && ! parts_ok; then
+    tmp=$(mktemp)
+    { echo "# minipro $(minipro_version) T48"; minipro -q T48 -l 2>/dev/null; } > "$tmp"
+    if [ "$(wc -l < "$tmp")" -gt 1000 ]; then
+        install -D -m 644 "$tmp" "$PARTS_LIST" && log "T48 part list: $(($(wc -l < "$PARTS_LIST") - 1)) names ($PARTS_LIST)"
+    else
+        warn "minipro -q T48 -l gave $(wc -l < "$tmp") lines: T48 part list not updated"
+    fi
+    rm -f "$tmp"
+fi
 
 # 9 ---------------------------------------------------------------------------
 step "9/9 optional: fallback hotspot"

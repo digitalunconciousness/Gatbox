@@ -144,3 +144,11 @@
   release that minipro's own script names, and was checked against its checksum before flashing. The T48's
   self-test passed on every pin afterwards. This also brings the T48's own chip-programming routines up to date for
   M7.
+- M7 code (not installed yet): the dashboard's DUMP tab.
+  - Pick the EPROM family, then the exact name printed on the chip, type its label, and tap DUMP.
+  - A separate locked-down service does the reading. The result card says MATCH (with the MAME set and ROM) or NO
+    MATCH, and the dump is archived under the machine.
+  - If the chip's maker doesn't match the name picked, it stops and offers a one-tap retry with the name minipro
+    suggests.
+  - The command line `gatbox-dump` already works on the real T48: the SegaSonic chip came back MATCH
+    `sonic/epr-15781c.ic18`.

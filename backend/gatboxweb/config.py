@@ -12,6 +12,9 @@ LABELS = os.environ.get("GATBOX_LABELS", "/usr/local/bin/gatbox-labels")    # th
 FONTS = os.environ.get("GATBOX_WEB_FONTS", "/usr/local/share/gatbox-web/fonts")   # fetched by gatbox-bootstrap.sh
 SYSSTATE = os.environ.get("GATBOX_SYSSTATE", "/var/lib/gatbox")          # root's: the RTC stamp
 SRV = os.environ.get("GATBOX_SRV", "/srv/gatbox")                        # dumps (M7)
+ROMS = os.environ.get("GATBOX_ROMS", os.path.join(SRV, "roms"))          # the dump archive: <machine>/<label>_<sha1:8>.bin
+DUMP_SPOOL = os.environ.get("GATBOX_DUMP_SPOOL", "/var/spool/gatbox-dump")   # dump requests / progress (M7)
+MINIPRO_PARTS = os.environ.get("GATBOX_MINIPRO_PARTS", "/usr/local/share/gatbox/minipro-parts-T48.txt")
 SCAND_STATE = os.environ.get("GATBOX_SCAND_STATE", "/run/gatbox-scand/state.json")   # gatbox-scand's (M6)
 
 FONT_FILES = {"ChakraPetch-SemiBold.ttf", "ShareTechMono-Regular.ttf"}

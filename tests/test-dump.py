@@ -117,6 +117,38 @@ def main():
     j = json.loads(out.strip().splitlines()[-1])
     check("... and for a stop: state stopped, error, hint", code == 2 and j["state"] == "stopped" and "differ" in j["error"] and j["hint"])
 
+    print("job mode (gatbox-dump.service):")
+    sp = f"{T}/spool"
+    os.makedirs(sp)
+    json.dump({"id": "j1", "part": "TMS27C020@DIP32", "label": "JOB-1", "machine": "m10"}, open(f"{sp}/request.json", "w"))
+    code, out = dump("--job", f"{sp}/request.json", "--status", f"{sp}/status.json", FAKE_MAME_MATCH="epr-x.ic1 sonic SegaSonic")
+    st = json.load(open(f"{sp}/status.json"))
+    check("the request is claimed and gone; status done, MATCH, archived",
+          code == 0 and not os.path.exists(f"{sp}/request.json") and not os.path.exists(f"{sp}/running.json")
+          and st["state"] == "done" and st["romident"]["match"] and st["job"] == "j1" and len(files("m10")) == 2)
+    json.dump({"id": "j2", "part": "27C020@DIP32", "label": "JOB-2", "machine": "m10"}, open(f"{sp}/request.json", "w"))
+    code, out = dump("--job", f"{sp}/request.json", "--status", f"{sp}/status.json", FAKE_ID="mismatch")
+    st = json.load(open(f"{sp}/status.json"))
+    check("a stop is a result (exit 0): state stopped, error, the suggested part",
+          code == 0 and st["state"] == "stopped" and "Invalid Chip ID" in st["error"] and "TMS27C020@DIP32" in st["hint"])
+    json.dump({"id": "j3", "part": "27C020@DIP32", "label": "../x", "machine": "m10"}, open(f"{sp}/request.json", "w"))
+    code, out = dump("--job", f"{sp}/request.json", "--status", f"{sp}/status.json")
+    check("a bad request (label) never reaches the programmer", code == 0 and json.load(open(f"{sp}/status.json"))["state"] == "stopped")
+    code, out = dump("--job", f"{sp}/request.json")
+    check("no request: nothing to do", code == 0)
+
+    web_side()
+
+    print("data/eproms.json vs the real minipro:")
+    if shutil.which("minipro"):
+        real = subprocess.run(["minipro", "-q", "T48", "-l"], capture_output=True, text=True, timeout=60).stdout.split()
+        fams = json.load(open(os.path.join(REPO, "data/eproms.json")))["families"]
+        empty = [t for f in fams for t in f["search"]
+                 if not any(t.lower() in n.lower() and ("@" not in n or "@DIP" in n.upper()) for n in real)]
+        check(f"every family's search terms match DIP parts ({sum(len(f['search']) for f in fams)} terms)", empty == [])
+    else:
+        print("  skip  (minipro not installed)")
+
     print("real MAME:")
     if shutil.which("mame"):
         sys.path.insert(0, os.path.join(REPO, "tools"))
@@ -132,6 +164,101 @@ def main():
     else:
         print("  skip  (mame not installed)")
     print(f"dump: {passed} passed, {failed} failed")
+
+
+def t48_present():
+    import glob as g
+    return any(open(p).read().strip() == "a466" for p in g.glob("/sys/bus/usb/devices/*/idVendor"))
+
+
+def web_side():
+    """gatbox-web's DUMP API with a runner thread standing in for gatbox-dump.path + .service."""
+    import socket
+    import threading
+    import time
+    import urllib.error
+    import urllib.request
+    print("gatbox-web's DUMP API:")
+    port, B = 8099, "http://127.0.0.1:8099"
+    with socket.socket() as so:
+        if so.connect_ex(("127.0.0.1", port)) == 0:
+            raise SystemExit(f"port {port} is in use")
+    w = f"{T}/web"
+    for d in ("log", "run", "ctrl", "cache", "data", "spool", "roms"):
+        os.makedirs(f"{w}/{d}")
+    for f in ("profiles.json", "gatbox-machine-specs.json", "eproms.json"):
+        shutil.copy(os.path.join(REPO, "data", f), f"{w}/data/")
+    json.dump({"meta": {}, "video_games": [{"slug": "segasonic-the-hedgehog", "name": "SegaSonic The Hedgehog", "platform": "x"}],
+               "pinball": []}, open(f"{w}/data/gatbox-barcade-roster.json", "w"))
+    fake = dict(os.environ, FAKE_PARTS="27C020@DIP32,TMS27C020@DIP32,AM27C020@DIP32,M27C801,M27C801@PLCC32")
+    names = subprocess.run([os.path.join(REPO, "tests/fake-minipro"), "-q", "T48", "-l"], capture_output=True, text=True, env=fake).stdout
+    open(f"{w}/parts.txt", "w").write("# minipro 0.7.4 T48\n" + names)
+    env = dict(os.environ, GATBOX_WEB_PORT=str(port), STATE_DIRECTORY=f"{w}/ctrl", CACHE_DIRECTORY=f"{w}/cache",
+               GATBOX_LOGDIR=f"{w}/log", GATBOX_RUNDIR=f"{w}/run", GATBOX_DATA=f"{w}/data", GATBOX_DUMP_SPOOL=f"{w}/spool",
+               GATBOX_ROMS=f"{w}/roms", GATBOX_MINIPRO_PARTS=f"{w}/parts.txt", MPLCONFIGDIR=f"{w}/cache/mpl")
+    web = subprocess.Popen(["python3", os.path.join(REPO, "backend/gatbox-web")], env=env, stdout=open(f"{w}/web.log", "w"),
+                           stderr=subprocess.STDOUT)
+    stop = threading.Event()
+
+    def runner():                                   # gatbox-dump.path: a request appears → gatbox-dump --job
+        while not stop.is_set():
+            if os.path.exists(f"{w}/spool/request.json"):
+                subprocess.run(["python3", DUMP, "--job", f"{w}/spool/request.json", "--status", f"{w}/spool/status.json"],
+                               env=dict(fake, GATBOX_MINIPRO=os.path.join(REPO, "tests/fake-minipro"),
+                                        GATBOX_MAME=os.path.join(REPO, "tests/fake-mame"), GATBOX_ROMS=f"{w}/roms",
+                                        GATBOX_API=B, FAKE_ROM=f"{T}/rom.bin", FAKE_MAME_MATCH="epr-15781c.ic18 sonic SegaSonic"),
+                               capture_output=True, timeout=60)
+            time.sleep(0.2)
+    threading.Thread(target=runner, daemon=True).start()
+
+    def call(method, path, body=None):
+        req = urllib.request.Request(B + path, method=method, data=json.dumps(body).encode() if body is not None else None,
+                                     headers={"Content-Type": "application/json"} if body is not None else {})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read() or b"null")
+    try:
+        for _ in range(50):
+            try:
+                call("GET", "/kiosk/state")
+                break
+            except OSError:
+                time.sleep(0.1)
+        code, r = call("GET", "/api/dump/parts")
+        check("families from data/eproms.json (14)", code == 200 and len(r["families"]) == 14 and r["installed"])
+        code, r = call("GET", "/api/dump/parts?family=27C080")
+        check("a family lists minipro's names, DIP first (M27C801 has no @)", r["parts"] == ["M27C801", "M27C801@PLCC32"])
+        code, r = call("GET", "/api/dump/parts?q=tms27")
+        check("free search", r["parts"] == ["TMS27C020@DIP32"])
+        bad = [call("POST", "/api/dump", b)[0] for b in (
+            {"part": "27C999@DIP32", "label": "X"}, {"part": "TMS27C020@DIP32", "label": "../x"},
+            {"part": "TMS27C020@DIP32", "label": "X", "machine": "nope"})]
+        check("bad part / label / machine -> 400 / 400 / 404", bad == [400, 400, 404])
+        if t48_present():
+            code, r = call("POST", "/api/dump", {"part": "TMS27C020@DIP32", "label": "EPR-15781C", "machine": "segasonic-the-hedgehog"})
+            check("a good request -> 202, queued", code == 202 and r["part"] == "TMS27C020@DIP32")
+            for _ in range(100):
+                code, st = call("GET", "/api/dump")
+                if not st["busy"] and st["status"] and st["status"].get("state") in ("done", "stopped"):
+                    break
+                time.sleep(0.2)
+            check("the job ran: GET /api/dump says done, MATCH", st["status"]["state"] == "done" and st["status"]["romident"]["match"])
+            code, r = call("GET", "/api/dumps?machine=segasonic-the-hedgehog")
+            check("GET /api/dumps lists it", code == 200 and len(r["dumps"]) == 1 and r["dumps"][0]["match"]
+                  and r["dumps"][0]["label"] == "EPR-15781C")
+            open(f"{w}/spool/running.json", "w").write("{}")
+            code, r = call("POST", "/api/dump", {"part": "TMS27C020@DIP32", "label": "X2"})
+            check("one at a time: 409 while a dump runs", code == 409)
+            os.remove(f"{w}/spool/running.json")
+        else:
+            print("  skip  (the T48 isn't plugged in: requests are refused without it)")
+        check("server log: no errors", "Traceback" not in open(f"{w}/web.log").read())
+    finally:
+        stop.set()
+        web.terminate()
+        web.wait(10)
 
 
 try:

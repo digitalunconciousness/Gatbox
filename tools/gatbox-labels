@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""gatbox-labels — printable QR labels for the Eyoyo EY-H2: one per roster machine, plus a command card.
+
+    gatbox-labels [-o gatbox-labels.pdf] [--only SLUG,SLUG] [--no-commands]
+
+Letter-size PDF (cut on the dashed lines):
+  * page 1: the command card, GATBOX:MARK ("it just crashed") and GATBOX:NEW (start a new file), big
+  * then 20 machines a page (4 x 5), sorted by name: video_games + pinball from the roster, not retired.
+    Each QR encodes the machine's roster slug and nothing else (the maintenance app's QR codes are the same
+    slugs); the name and slug are printed under it.
+
+A machine QR is 33 mm across (about 1 mm a module for a slug), comfortable for the EY-H2 at ~20 cm. Error correction
+level M, so a scuffed label still reads. QR from python3-qrcode (apt), drawing from python3-matplotlib (apt).
+The roster is found the same way as everywhere else ($GATBOX_DATA, the repo's data/, /usr/local/share/gatbox).
+"""
+import argparse
+import os
+import sys
+import textwrap
+
+
+def lib_path():
+    env = os.environ.get("GATBOX_LIB")
+    if env:
+        return env
+    here = os.path.dirname(os.path.realpath(__file__))
+    repo = os.path.join(here, "..", "backend")
+    return repo if os.path.isdir(os.path.join(repo, "gatboxlib")) else "/usr/local/lib/gatbox"
+
+
+sys.path.insert(0, lib_path())
+from gatboxlib import profiles  # noqa: E402
+
+COMMANDS = [("GATBOX:MARK", "MARK", "it just crashed: a mark in the live log"),
+            ("GATBOX:NEW", "NEW FILE", "end this session, start a fresh file")]
+PAGE_W, PAGE_H = 8.5, 11.0                  # inches, Letter
+COLS, ROWS = 4, 5
+QR_IN = 1.3                                 # 33 mm
+
+
+def matrix(text):
+    import qrcode
+    from qrcode.constants import ERROR_CORRECT_M
+    q = qrcode.QRCode(error_correction=ERROR_CORRECT_M, border=0)
+    q.add_data(text)
+    q.make(fit=True)
+    return q.get_matrix()
+
+
+def draw_qr(fig, text, x, y, size):
+    """A QR with its bottom-left corner at (x, y) inches, size inches square: dark modules as merged rectangles
+    (crisp in any PDF viewer, unlike an image)."""
+    from matplotlib.patches import Rectangle
+    from matplotlib.collections import PatchCollection
+    m = matrix(text)
+    n, mod = len(m), size / len(m)
+    rects = []
+    for r, row in enumerate(m):
+        c = 0
+        while c < n:
+            if row[c]:
+                start = c
+                while c < n and row[c]:
+                    c += 1
+                rects.append(Rectangle((x + start * mod, y + (n - 1 - r) * mod), (c - start) * mod, mod))
+            else:
+                c += 1
+    fig.add_artist(PatchCollection(rects, facecolor="black", edgecolor="none", linewidth=0,
+                                   transform=fig.dpi_scale_trans))
+
+
+def text(fig, x, y, s, **kw):
+    fig.text(x / PAGE_W, y / PAGE_H, s, **kw)
+
+
+def cut(fig, x0, y0, x1, y1):
+    from matplotlib.lines import Line2D
+    fig.add_artist(Line2D([x0, x1], [y0, y1], transform=fig.dpi_scale_trans, color="0.7", linewidth=0.5,
+                          linestyle=(0, (4, 4))))
+
+
+def machines(only=None):
+    r = profiles.roster()
+    if r is None:
+        sys.exit("no roster (gatbox-barcade-roster.json) found: nothing to label")
+    out = [e for k in ("video_games", "pinball") for e in r.get(k, []) if isinstance(e, dict) and e.get("slug")]
+    if only:
+        want = set(only)
+        missing = want - {e["slug"] for e in out}
+        if missing:
+            sys.exit("not in the roster: " + ", ".join(sorted(missing)))
+        out = [e for e in out if e["slug"] in want]
+    return sorted(out, key=lambda e: (e.get("name") or e["slug"]).lower())
+
+
+def command_page(fig):
+    text(fig, 0.75, 10.35, "GATBOX // scanner commands", fontsize=18, weight="bold")
+    text(fig, 0.75, 10.05, "Scan with the Eyoyo EY-H2 from about 20 cm. Cut out and keep with the box.", fontsize=10,
+         color="0.35")
+    for i, (code, title, what) in enumerate(COMMANDS):
+        y = 6.2 - i * 4.4
+        cut(fig, 0.5, y - 0.6, 8.0, y - 0.6)
+        draw_qr(fig, code, 0.9, y, 2.6)
+        text(fig, 3.9, y + 1.9, title, fontsize=30, weight="bold")
+        text(fig, 3.9, y + 1.35, what, fontsize=12)
+        text(fig, 3.9, y + 0.95, code, fontsize=11, family="monospace", color="0.35")
+
+
+def machine_page(fig, batch):
+    cw, ch = PAGE_W / COLS, (PAGE_H - 0.6) / ROWS
+    top = PAGE_H - 0.3
+    for i, e in enumerate(batch):
+        col, row = i % COLS, i // COLS
+        x0, y1 = col * cw, top - row * ch
+        draw_qr(fig, e["slug"], x0 + (cw - QR_IN) / 2, y1 - 0.25 - QR_IN, QR_IN)
+        name = textwrap.wrap(e.get("name") or e["slug"], 22)[:2]
+        for j, line in enumerate(name):
+            text(fig, x0 + cw / 2, y1 - 0.45 - QR_IN - 0.17 * j, line, fontsize=9, weight="bold", ha="center")
+        text(fig, x0 + cw / 2, y1 - 0.45 - QR_IN - 0.17 * len(name), e["slug"], fontsize=6.5, ha="center",
+             family="monospace", color="0.4")
+    for c in range(1, COLS):
+        cut(fig, c * cw, 0.3, c * cw, top)
+    for r in range(ROWS + 1):
+        cut(fig, 0.1, top - r * ch, PAGE_W - 0.1, top - r * ch)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("-o", "--out", default="gatbox-labels.pdf")
+    ap.add_argument("--only", help="comma-separated roster slugs (default: every machine on the floor)")
+    ap.add_argument("--no-commands", action="store_true", help="leave out the MARK / NEW command card")
+    args = ap.parse_args()
+    try:
+        import qrcode  # noqa: F401
+    except ImportError:
+        sys.exit("python3-qrcode is missing: sudo apt install python3-qrcode (gatbox-bootstrap.sh installs it)")
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_pdf import PdfPages
+    ms = machines(args.only.split(",") if args.only else None)
+    pages = 0
+    with PdfPages(args.out, metadata={"Title": "GATBOX scanner labels", "Creator": "gatbox-labels"}) as pdf:
+        if not args.no_commands:
+            fig = Figure(figsize=(PAGE_W, PAGE_H))
+            command_page(fig)
+            pdf.savefig(fig)
+            pages += 1
+        per = COLS * ROWS
+        for i in range(0, len(ms), per):
+            fig = Figure(figsize=(PAGE_W, PAGE_H))
+            machine_page(fig, ms[i:i + per])
+            text(fig, PAGE_W - 0.3, 0.12, f"GATBOX machine labels · page {i // per + 1}", fontsize=7, color="0.5", ha="right")
+            pdf.savefig(fig)
+            pages += 1
+    print(f"{args.out}: {len(ms)} machines, {pages} page{'s' if pages != 1 else ''}")
+
+
+if __name__ == "__main__":
+    main()

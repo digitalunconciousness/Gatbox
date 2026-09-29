@@ -232,6 +232,34 @@ def add_mark(body):
             "source": src, "label": lab, "file": LIVE.name if live else None, "pending": not live}
 
 
+SCAN_MAX = 200
+SCAN_MARK, SCAN_NEW = "GATBOX:MARK", "GATBOX:NEW"
+
+
+def scan(code):
+    """POST /api/scan (from gatbox-scand): what a scanned code means. Returns {"action", "code", …}:
+    machine / same-machine (a roster slug), mark (GATBOX:MARK), new (GATBOX:NEW), unknown (anything else)."""
+    if not isinstance(code, str):
+        raise Bad(400, 'expected {"code": "<text>"}')
+    code = code.strip()
+    if not code or len(code) > SCAN_MAX or not code.isprintable():
+        raise Bad(400, f"code: 1 to {SCAN_MAX} printable characters")
+    up = code.upper()
+    if up == SCAN_MARK:
+        return {"action": "mark", "code": code, "mark": add_mark({"source": "scan"})}
+    if up == SCAN_NEW:
+        request_start()
+        return {"action": "new", "code": code, "logging": LIVE.logging()}
+    slug = code.lower()
+    known = roster.slugs()
+    if known and slug in known:
+        changed, new_file = set_machine(slug)
+        return {"action": "machine" if changed else "same-machine", "code": code, "slug": slug,
+                "name": roster.name(slug), "new_file": new_file}
+    return {"action": "unknown", "code": code,
+            "detail": "no roster installed" if known is None else "not a roster slug or a GATBOX: command"}
+
+
 def pending_marks():
     """Spool lines the logger hasn't taken yet (no live session): they go into the next file as mark-before-start."""
     try:

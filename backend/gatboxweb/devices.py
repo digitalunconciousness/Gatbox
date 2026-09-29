@@ -5,17 +5,21 @@ USB IDs read off this Pi with lsusb (2026-09-28), not guessed:
                              (the CableCreation PL-2303 reads 067b:23a3)
     T48           a466:0a53  XGecu T48 (lsusb calls it TL866II Plus; minipro -L sees a T48)
     touch         0eef:0005  Waveshare 7" (C) capacitive panel, D-WAV Scientific
-    scanner       not read yet: the Eyoyo EY-H2 gets its ID when it's first plugged in (M6)
+    scanner       af99:8002  Eyoyo EY-H2 ("Totinfo TOT2D PRODUCT HID KBW", a keyboard wedge; confirmed with a test
+                             scan 2026-09-28)
 """
 import glob
+import json
 import os
 
+from . import config
 from .live import LIVE
 
 USB = "/sys/bus/usb/devices"
 DMM_VID = "067b"
 T48 = ("a466", "0a53")
 TOUCH = ("0eef", "0005")
+SCANNER = ("af99", "8002")
 
 
 def _read(path):
@@ -44,6 +48,19 @@ def _tty(dev):
     return None
 
 
+def scanner(devs):
+    """The EY-H2: plugged in (sysfs) and held by gatbox-scand (its state file: grabbed = scans can't type into windows)."""
+    d = next((d for d in devs if (d["vid"], d["pid"]) == SCANNER), None)
+    try:
+        with open(config.SCAND_STATE) as f:
+            st = json.load(f)
+    except (OSError, ValueError):
+        st = None
+    return {"present": bool(d), "usb_id": d and d["id"], "product": d and d["product"],
+            "daemon": st is not None, "grabbed": bool(st and st.get("grabbed") and d),
+            "scans": st.get("scans") if st else None, "last": st.get("last") if st else None}
+
+
 def snapshot():
     devs = usb()
     adapter = next((d for d in devs if d["vid"] == DMM_VID), None)
@@ -58,7 +75,7 @@ def snapshot():
                              "file": LIVE.name if flowing else None},
                 "chain": "UT61E → UT-D02 → PL-2303 → /dev/gatbox-dmm (19200 7O1, sigrok uni-t-ut61e-ser)"},
         "t48": {"present": bool(t48), "usb_id": t48 and t48["id"], "product": t48 and t48["product"]},
-        "scanner": {"present": None, "grabbed": None, "note": "Eyoyo EY-H2: USB ID not read yet (M6)"},
+        "scanner": scanner(devs),
         "touch": {"present": bool(touch), "usb_id": touch and touch["id"], "product": touch and touch["product"]},
         "usb": devs,
     }

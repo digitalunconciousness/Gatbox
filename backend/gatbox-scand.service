@@ -1,0 +1,29 @@
+[Unit]
+Description=GATBOX barcode scanner (Eyoyo EY-H2) -> gatbox-web
+After=gatbox-web.service
+Wants=gatbox-web.service
+
+[Service]
+ExecStart=/usr/local/bin/gatbox-scand
+Restart=always
+RestartSec=3
+# A throwaway user in the input group: it can open /dev/input/* and nothing else in /dev (DevicePolicy), grabs the
+# scanner so scans never type into the kiosk, and only ever talks to gatbox-web on this Pi (IPAddressDeny).
+DynamicUser=yes
+SupplementaryGroups=input
+DevicePolicy=closed
+DeviceAllow=char-input rw
+IPAddressAllow=localhost
+IPAddressDeny=any
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# /run/gatbox-scand/state.json: attached, grabbed, last scan (gatbox-web's DEVICES panel reads it)
+RuntimeDirectory=gatbox-scand
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target

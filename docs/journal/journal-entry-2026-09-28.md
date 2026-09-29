@@ -118,3 +118,16 @@
   tap away, and the PDF still has all of it. The session list no longer says "left the window" just because the
   board was switched off; it shows the report's verdict.
 - NEXT: install M5, the owner tries it on the 7" (⏸), then M6 (scanner).
+- ⏸ M5 PASSED on the real panel after a reboot: the 7" opened the dashboard, the owner picked a profile and started
+  logging from it ("everything looks rad"). **M5 done.**
+- M6 (scanner) started. The EY-H2 reads as USB af99:8002 ("Totinfo TOT2D PRODUCT HID KBW"), a plain keyboard. Test
+  scans from a product barcode and from a small Katasymbol label (`GATBOX:MARK`, 4–5 inches away) decoded exactly.
+- M6 code (not installed yet):
+  - `gatbox-scand` takes the scanner over so scans never type into the kiosk, and hands each code to the web server.
+  - Scanning a cabinet sets the machine, GATBOX:MARK drops a mark, GATBOX:NEW starts a new file, anything else pops
+    up as UNKNOWN CODE.
+  - DEVICES shows whether the scanner is held.
+  - MACHINE → LABEL LIST shows the text for every label with a COPY button, for making them in the Katasymbol app.
+    A printable PDF sheet is the fallback.
+- DECIDED: labels come from the owner's Katasymbol label maker, typed or pasted into its app (no CSV import).
+  GATBOX doesn't drive the printer.

@@ -23,10 +23,13 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       glitches, marks, --json) [x] 4d JSON API + SSE (gatbox-web → package + routes table; 80 API tests)
       4a–c + kiosk SHUT DOWN installed 2026-09-28 (reboot 17:44, `--check` clean). 4d installed 19:32 (owner OK'd
       the unit: `video` + a private /dev with only /dev/vcio_gencmd); vcgencmd works inside it
-- [ ] **M5 2D dashboard** at `/dash/`: [x] code (web/dash: METER/SESSIONS/MACHINE/SYSTEM/DEVICES/DUMP, live chart with
-      tap/zoom, alarm takeover, keypad) [x] screenshot tests (tests/test-dash.sh, 27 checks, looked at) [ ] install
-      [ ] ⏸ the owner tries it on the real panel
-- [ ] **M6 2E scanner**: gatbox-scand; labels; ⏸ scan slug / MARK / NEW
+- [x] **M5 2D dashboard** (2026-09-28) at `/dash/`: code (web/dash: METER/SESSIONS/MACHINE/SYSTEM/DEVICES/DUMP, live
+      chart with tap/zoom, alarm takeover, keypad), screenshot tests (tests/test-dash.sh, looked at), installed 20:22
+      and 20:40 (reboot), ⏸ on the real panel **passed** (owner: "everything looks rad"; she picked a profile and
+      started logging from the 7" at 20:49)
+- [ ] **M6 2E scanner**: [x] EY-H2 USB ID read (af99:8002) [x] gatbox-scand + POST /api/scan + dashboard (toasts,
+      DEVICES, LABEL LIST) + gatbox-labels (tests/test-scan.sh) [ ] install (needs OK: the new gatbox-scand unit,
+      package python3-qrcode) [ ] ⏸ the owner scans a slug, MARK, NEW
 - [ ] **M7 2F T48 dump**: gatbox-dump; dashboard flow; ⏸ real board dump
 - [ ] **M8 2G stretch**: ask first
 
@@ -256,6 +259,33 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   - mark labels clipped at the right edge;
   - "NO READINGS" flashed while a new file started;
   - disk usage keyed by long paths.
+
+### M6 notes
+- **The EY-H2 on this Pi (2026-09-28, read with lsusb and a read-only listener on its event node):**
+  - USB `af99:8002` "Totinfo TOT2D PRODUCT HID KBW", a plain USB keyboard (EV_KEY; `/dev/input/event5` at the
+    time), sending Enter after each code.
+  - Scans decoded right on a US layout: a product barcode (digits), and `GATBOX:MARK` from a small Katasymbol
+    label, capitals and colon (Shift) included. It read that label from 4–5 inches.
+- **gatbox-scand is stdlib, not python3-evdev as the spec suggests.** The grab is one ioctl (EVIOCGRAB) and an
+  event is a 24-byte struct. So there's no extra package, and the daemon is testable before an install; key events
+  from a file stand in for the device (GATBOX_SCAN_FAKE).
+  - It finds the scanner by USB ID in sysfs (it never opens the other input devices) and re-finds it after
+    unplug/replug.
+  - A code ends at Enter / keypad Enter / Tab / LF, or 0.5 s of no keys (a scanner set to send no suffix).
+  - It posts every code to gatbox-web: `POST /api/scan`, loopback only.
+- **gatbox-web decides what a code means,** and stays the only writer:
+  - a roster slug (video_games + pinball, not retired; case doesn't matter) sets the machine;
+  - `GATBOX:MARK` makes a mark with source `scan`;
+  - `GATBOX:NEW` = NEW;
+  - anything else shows as UNKNOWN CODE on the dashboard.
+- **The unit:** DynamicUser + `input` group, `DevicePolicy=closed` + `DeviceAllow=char-input` (input devices only),
+  `IPAddressDeny=any` except localhost. Its state (attached, grabbed, last scan) goes in
+  `/run/gatbox-scand/state.json`, which feeds DEVICES.
+- **Labels (owner, 2026-09-28):** she has a Katasymbol label maker (phone app: long batches, no CSV import). The
+  dashboard's MACHINE → LABEL LIST shows the exact QR text for the two commands and every machine, with COPY (it
+  works on plain http). `gatbox-labels` / `/labels.pdf` is the printable fallback: command card + 20 machines a
+  page, 33 mm QRs.
+- **Not driven from the Pi:** the label maker's Bluetooth protocol isn't documented, and its app does the job.
 
 ## Bring-up 1: bootstrap run — 2026-09-23
 

@@ -12,6 +12,7 @@ import math
 import os
 import re
 import sys
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -80,6 +81,32 @@ def get_csv(h, m, q):
         return h.not_found()
     with open(p, "rb") as f:
         h.send(200, f.read(), "text/csv", [("Content-Disposition", f'attachment; filename="{m["name"]}"')])
+
+
+_labels_lock = threading.Lock()
+
+
+def get_labels(h, m, q):
+    """The QR label sheet (gatbox-labels) as a PDF: the command card + every machine on the floor. Rebuilt when the
+    roster or the tool changes."""
+    from gatboxlib import profiles
+    rp = os.path.join(profiles.data_dir(), "gatbox-barcade-roster.json")
+    try:
+        key = f"{int(os.stat(rp).st_mtime)}_{int(os.stat(config.LABELS).st_mtime)}"
+    except OSError:
+        return h.send(503, phone.page("No labels", "<h1>No roster or no gatbox-labels on this Pi</h1>"))
+    out = os.path.join(config.CACHE, f"labels_{key}.pdf")
+    with _labels_lock:
+        if not os.path.exists(out):
+            os.makedirs(config.CACHE, exist_ok=True)
+            for old in os.listdir(config.CACHE):
+                if old.startswith("labels_"):
+                    os.remove(os.path.join(config.CACHE, old))
+            r = subprocess.run([config.LABELS, "-o", out], capture_output=True, text=True, timeout=300)
+            if r.returncode or not os.path.exists(out):
+                return h.send(500, phone.page("Labels failed", f"<pre>{html.escape(r.stderr or r.stdout)}</pre>"))
+    with open(out, "rb") as f:
+        h.send(200, f.read(), "application/pdf", [("Content-Disposition", 'inline; filename="gatbox-labels.pdf"')])
 
 
 def get_font(h, m, q):
@@ -197,6 +224,29 @@ def api_mark(h, m, q):
     h.json(201, mark)
 
 
+_scans, _scans_lock = [], threading.Lock()      # the last few scans, for the DEVICES panel
+
+
+def api_scan(h, m, q):
+    """POST /api/scan {"code"}: gatbox-scand's codes. Loopback only: a scan means someone is at the box."""
+    if not h.is_local():
+        raise Bad(403, "scans come from gatbox-scand on the Pi itself")
+    b = h.body()
+    r = meter.scan(b.get("code") if isinstance(b, dict) else None)
+    if r["action"] == "mark":
+        LIVE.emit("mark", r["mark"])
+    elif r["action"] in ("machine", "new"):
+        LIVE.emit("state", meter.state(full=False))
+    ev = {k: v for k, v in r.items() if k != "mark"}
+    ev["at"] = round(time.time(), 3)
+    with _scans_lock:
+        _scans.append(ev)
+        del _scans[:-10]
+    LIVE.emit("scan", ev)
+    h.log_line(f"scan: {r['code'][:80]!r} -> {r['action']}")
+    h.json(200, r)
+
+
 def api_session_new(h, m, q):
     h.body()                                            # checks the content type; the body itself is ignored
     meter.request_start()
@@ -225,7 +275,10 @@ def api_captures_post(h, m, q):
 
 
 def api_devices(h, m, q):
-    h.json(200, devices.snapshot())
+    d = devices.snapshot()
+    with _scans_lock:
+        d["scanner"]["recent"] = list(reversed(_scans))
+    h.json(200, d)
 
 
 def api_roster(h, m, q):
@@ -350,6 +403,7 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("GET", r"/pdf/(?P<name>[^/]+)", get_pdf),
     ("GET", r"/csv/(?P<name>[^/]+)", get_csv),
     ("GET", r"/font/(?P<file>[^/]+)", get_font),
+    ("GET", r"/labels\.pdf", get_labels),
     ("POST", r"/control", post_control),
     ("GET", r"/kiosk/state", get_kiosk_state),
     ("POST", r"/kiosk/(?P<what>exit|shutdown)", post_kiosk),
@@ -372,6 +426,7 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("POST", r"/api/mark", api_mark),
     ("POST", r"/api/session/new", api_session_new),
     ("POST", r"/api/session/stop", api_session_stop),
+    ("POST", r"/api/scan", api_scan),
     ("GET", r"/api/captures", api_captures_get),
     ("POST", r"/api/captures", api_captures_post),
     ("GET", r"/api/devices", api_devices),

@@ -100,11 +100,19 @@
     on("mark", m => { if (m.pending) S.pending.push(m); else S.marks.push(m); chartDecor();
                       toast(`MARK ${hms(m.epoch, true)}${m.label ? " · " + m.label : ""}${m.pending ? " (goes into the next file)" : ""}`); });
     on("capture", c => toast(`CAPTURED ${c.label}: ${c.display} → ${c.machine}`));
+    on("scan", onScan);
     on("state", st => onState(st));
     on("heartbeat", () => { S.connected = true; renderHeader(); });
     es.addEventListener("resync", () => { es.close(); setTimeout(connect, 300); });
     es.onopen = () => { S.connected = true; renderHeader(); };
     es.onerror = () => { S.connected = false; renderHeader(); };   // EventSource reconnects on its own
+  }
+  function onScan(s) {                        // gatbox-scand: a code from the EY-H2 (a mark has its own toast)
+    if (s.action === "machine") toast(`SCANNED ${s.name}${s.new_file ? " · new file started" : ""}`);
+    else if (s.action === "same-machine") toast(`SCANNED ${s.name} (already the machine)`);
+    else if (s.action === "new") toast("SCANNED NEW FILE");
+    else if (s.action === "unknown") toast(`UNKNOWN CODE: ${s.code}`, "warn", 8000);
+    if (S.view === "devices") loadDevices();
   }
   function onHello(m) {
     S.connected = true;
@@ -622,6 +630,50 @@
     add(c, el("h3", null, "Dumps"), el("div", "mut", "The T48 dump archive arrives in M7."));
     B.appendChild(c);
   }
+  // LABEL LIST: what to type into a label maker's QR text (Katasymbol and the like). Tap COPY, paste in the app.
+  function copyText(t) {
+    if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(t);
+    const ta = el("textarea");                     // plain http on the LAN: the old way still works
+    ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok ? Promise.resolve() : Promise.reject(new Error("copy blocked: long-press the code instead"));
+  }
+  $("#mc-labels").addEventListener("click", async () => {
+    let R;
+    try { R = await api("GET", "/api/roster"); } catch (e) { return fail(e); }
+    await sheet("Label list: the text for each QR", (pane, done) => {
+      const note = el("div", "mut", "Each QR holds just this text. Tap COPY, then paste it as the QR text in the label app.");
+      const filter = el("input");
+      filter.placeholder = "filter"; filter.className = "kp-field"; filter.style.fontSize = "18px";
+      const list = el("div", "scroll");
+      list.style.cssText = "overflow:auto;min-height:0;flex:1";
+      const row = (name, code) => {
+        const r = el("div", "row card");
+        r.style.cssText = "display:flex;align-items:center;gap:10px";
+        const txt = el("div");
+        txt.style.flex = "1";
+        add(txt, el("b", null, name), el("div", "cy", code));
+        txt.lastChild.style.userSelect = "all";
+        const b = el("button", null, "COPY");
+        b.addEventListener("click", () => copyText(code).then(() => toast("Copied " + code)).catch(fail));
+        add(r, txt, b);
+        return r;
+      };
+      const draw = () => {
+        clear(list);
+        const Q = filter.value.trim().toLowerCase();
+        if (!Q) { list.appendChild(row("MARK (it just crashed)", "GATBOX:MARK")); list.appendChild(row("NEW FILE", "GATBOX:NEW")); }
+        for (const m of R.machines.slice().sort((a, b) => a.name.localeCompare(b.name)))
+          if (!Q || m.name.toLowerCase().includes(Q) || m.slug.includes(Q)) list.appendChild(row(m.name, m.slug));
+      };
+      filter.addEventListener("input", draw);
+      add(pane, note, filter, list);
+      if (!S.local) { const a = el("a", null, "Or a printable sheet of all of them (PDF) →"); a.href = "/labels.pdf"; a.target = "_blank"; pane.appendChild(a); }
+      draw();
+    });
+  });
   $("#mc-clear").addEventListener("click", async () => {
     if (!await confirmBox("CLEAR MACHINE?", "New files won't carry a machine (a live session starts a new file).", "CLEAR")) return;
     api("DELETE", "/api/machine").then(() => loadMachine()).catch(fail);
@@ -761,7 +813,14 @@
         [rd.flowing ? `readings flowing · ${modeLabel(rd.mode)}` : "no readings (meter off, or D02 head off the IR window)", rd.flowing ? "ok" : "warn"]]);
       card("T48 programmer", [[d.t48.present ? `connected · USB ${d.t48.usb_id}` : "not plugged in", d.t48.present ? "ok" : "mut"],
                               ["reads only from here; the dump workflow is M7", "mut"]]);
-      card("Barcode scanner", [["Eyoyo EY-H2: set up in M6 (its USB ID hasn't been read on this Pi yet)", "mut"]]);
+      const sc = d.scanner;
+      card("Barcode scanner", [
+        [sc.present ? `Eyoyo EY-H2 · USB ${sc.usb_id}` : "Eyoyo EY-H2 not plugged in", sc.present ? "ok" : "mut"],
+        [!sc.daemon ? "gatbox-scand isn't running: scans type into the focused window"
+                    : sc.grabbed ? "held by gatbox-scand: scans go to GATBOX, not into windows" : "gatbox-scand waiting for it",
+         sc.grabbed ? "ok" : "warn"],
+        ...(sc.recent || []).slice(0, 3).map(r => [`${hms(r.at, true)}  ${r.action === "unknown" ? "unknown code " + r.code
+                                                     : r.action === "mark" ? "MARK" : r.action === "new" ? "NEW FILE" : r.name || r.code}`, "mut"])]);
       card("Touch panel", [[d.touch.present ? `Waveshare 7" (C) · USB ${d.touch.usb_id}` : "not found", d.touch.present ? "ok" : "warn"]]);
       for (const [t, why] of [["M2K SCOPE", "ADALM2000: not fitted"], ["HUB ARM", "UUGear MEGA4 / uhubctl: not fitted"],
                               ["BOARD POWER", "not fitted: GATBOX never powers a board"]])

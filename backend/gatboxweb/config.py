@@ -8,9 +8,11 @@ CACHE = os.environ.get("CACHE_DIRECTORY", "/tmp/gatbox-web")
 CTRL = os.environ.get("STATE_DIRECTORY", "/var/lib/gatbox-web")          # flags, profile, machine, marks, captures
 PORT = int(os.environ.get("GATBOX_WEB_PORT", "80"))
 REPORT = os.environ.get("GATBOX_REPORT", "/usr/local/bin/gatbox-rail-report")
+LABELS = os.environ.get("GATBOX_LABELS", "/usr/local/bin/gatbox-labels")    # the scanner's QR label sheet (M6)
 FONTS = os.environ.get("GATBOX_WEB_FONTS", "/usr/local/share/gatbox-web/fonts")   # fetched by gatbox-bootstrap.sh
 SYSSTATE = os.environ.get("GATBOX_SYSSTATE", "/var/lib/gatbox")          # root's: the RTC stamp
 SRV = os.environ.get("GATBOX_SRV", "/srv/gatbox")                        # dumps (M7)
+SCAND_STATE = os.environ.get("GATBOX_SCAND_STATE", "/run/gatbox-scand/state.json")   # gatbox-scand's (M6)
 
 FONT_FILES = {"ChakraPetch-SemiBold.ttf", "ShareTechMono-Regular.ttf"}
 

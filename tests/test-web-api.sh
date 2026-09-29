@@ -174,7 +174,9 @@ check "alarm switch: bad body -> 400"         '[ "$(api PUT /api/meter/alarm "{\
 check "another profile turns it back on"      '[ "$(api PUT /api/meter/profile "{\"id\":\"rail-12v\"}")" = 200 ] && [ "$(js "d[\"alarm\"][\"on\"]")" = True ]'
 api PUT /api/meter/profile '{"id":"rail-5v"}' >/dev/null
 check "machine: unknown slug -> 404"          '[ "$(api PUT /api/machine "{\"slug\":\"../../etc\"}")" = 404 ]'
-waitfor 'api GET /api/meter >/dev/null && [ "$(js "d[\"logging\"]")" = True ]'
+# settle after the profile changes above: the logger is on the rail-5v file and no new-file request is pending (a PUT
+# landing in the gap between files rightly says new_file=false: the next file gets the machine anyway)
+waitfor 'api GET /api/meter >/dev/null && [ "$(js "d[\"logging\"]")" = True ] && [ "$(js "d[\"file\"]")" = "$(newest)" ] && grep -qx "# profile=rail-5v" "$T/log/$(newest)" && ! [ "$T/ctrl/start-request" -nt "$T/run/session-ref" ]' 150
 n0=$(nfiles)
 check "PUT machine -> changed, new file"      '[ "$(api PUT /api/machine "{\"slug\":\"gauntlet-legends\"}")" = 200 ] && [ "$(js "d[\"changed\"], d[\"new_file\"], d[\"entry\"][\"name\"]")" = "True True Gauntlet Legends" ]'
 waitfor '[ "$(nfiles)" -gt $n0 ] && grep -q "^# machine=" "$T/log/$(newest)"'; F=$T/log/$(newest)

@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""gatbox-scand — the Eyoyo EY-H2 barcode scanner → gatbox-web.
+
+The EY-H2 is a USB keyboard wedge: a scan arrives as key presses. This daemon finds it by USB ID, grabs it
+exclusively (EVIOCGRAB) so scans never type into the kiosk or any other window, turns the keys back into text
+(US layout, shift), and posts each code to gatbox-web (POST /api/scan on loopback), which decides what it means:
+
+    a roster slug   → the current machine            GATBOX:MARK → a mark (source=scan)
+    GATBOX:NEW      → a new session file               anything else → "unknown code" on the dashboard
+
+gatbox-web stays the only writer of the state; this daemon holds no state beyond /run/gatbox-scand/state.json
+(attached / grabbed / last scan, for the DEVICES panel). A code ends at Enter (also keypad Enter, LF or Tab); a
+scanner set to send no suffix is tolerated too: a code with no key for IDLE_S counts as finished.
+
+USB ID read off this Pi (2026-09-28, lsusb + a test scan): af99:8002 "Totinfo TOT2D PRODUCT HID KBW" (the EY-H2),
+event node /dev/input/event5 at the time, a plain keyboard (EV_KEY), Enter after each code.
+
+Stdlib only: the grab is one ioctl and an input event is a 24-byte struct.
+
+Environment (the unit sets none; tests set the GATBOX_SCAN_* ones):
+  GATBOX_SCAN_IDS    vendor:product list, comma-separated (default af99:8002)
+  GATBOX_SCAN_API    where codes go (default http://127.0.0.1/api/scan)
+  GATBOX_SCAN_FAKE   tests only: read input events from this file/FIFO instead of a grabbed device
+  RUNTIME_DIRECTORY  for state.json (systemd sets it: /run/gatbox-scand)
+"""
+import errno
+import fcntl
+import glob
+import json
+import os
+import select
+import signal
+import struct
+import sys
+import time
+import urllib.error
+import urllib.request
+
+IDS = {tuple(x.strip().lower().split(":")) for x in os.environ.get("GATBOX_SCAN_IDS", "af99:8002").split(",") if ":" in x}
+API = os.environ.get("GATBOX_SCAN_API", "http://127.0.0.1/api/scan")
+FAKE = os.environ.get("GATBOX_SCAN_FAKE")
+STATE = os.path.join(os.environ.get("RUNTIME_DIRECTORY", "/run/gatbox-scand"), "state.json")
+
+# Linux input: struct input_event on 64-bit = struct timeval (2 x long) + __u16 type + __u16 code + __s32 value
+EVENT = struct.Struct("llHHi")
+EV_KEY = 1
+EVIOCGRAB = 0x40044590                      # _IOW('E', 0x90, int): 1 = exclusive, 0 = release
+IDLE_S = 0.5                                # no key for this long = the code is finished (scanner with no suffix)
+MAX_LEN = 512                               # longer = not a scan: drop it
+
+# key code → (plain, with shift), US layout (linux/input-event-codes.h)
+KEYMAP = {2: "1!", 3: "2@", 4: "3#", 5: "4$", 6: "5%", 7: "6^", 8: "7&", 9: "8*", 10: "9(", 11: "0)", 12: "-_", 13: "=+",
+          16: "qQ", 17: "wW", 18: "eE", 19: "rR", 20: "tT", 21: "yY", 22: "uU", 23: "iI", 24: "oO", 25: "pP", 26: "[{",
+          27: "]}", 30: "aA", 31: "sS", 32: "dD", 33: "fF", 34: "gG", 35: "hH", 36: "jJ", 37: "kK", 38: "lL", 39: ";:",
+          40: "'\"", 41: "`~", 43: "\\|", 44: "zZ", 45: "xX", 46: "cC", 47: "vV", 48: "bB", 49: "nN", 50: "mM", 51: ",<",
+          52: ".>", 53: "/?", 57: "  ",
+          # keypad (some scanners send digits this way)
+          71: "77", 72: "88", 73: "99", 74: "--", 75: "44", 76: "55", 77: "66", 78: "++", 79: "11", 80: "22", 81: "33",
+          82: "00", 83: "..", 98: "//", 55: "**"}
+SHIFT = {42, 54}                            # left, right shift
+CAPS = 58
+ENDS = {28, 96, 15, 101}                    # Enter, keypad Enter, Tab, LF
+
+
+def log(msg):
+    print(f"gatbox-scand: {msg}", flush=True)
+
+
+class Decoder:
+    """Key events → finished codes. feed() returns a code when one ends, else None."""
+
+    def __init__(self):
+        self.buf, self.shift, self.caps, self.last = [], set(), False, 0.0
+
+    def feed(self, code, value, now=None):
+        now = time.monotonic() if now is None else now
+        if code in SHIFT:
+            (self.shift.add if value else self.shift.discard)(code)
+            return None
+        if value != 1:                                   # key up / autorepeat
+            return None
+        if code == CAPS:
+            self.caps = not self.caps
+            return None
+        self.last = now
+        if code in ENDS:
+            return self.flush()
+        ch = KEYMAP.get(code)
+        if ch is None:
+            return None                                  # a key with no text (F-keys, arrows): ignore it
+        c = ch[1 if self.shift else 0]
+        if self.caps and c.isalpha():
+            c = c.swapcase()
+        self.buf.append(c)
+        if len(self.buf) > MAX_LEN:
+            self.buf = []
+        return None
+
+    def flush(self):
+        text, self.buf = "".join(self.buf).strip(), []
+        return text or None
+
+    def idle(self, now=None):
+        """A code left without a suffix: finished once no key came for IDLE_S."""
+        now = time.monotonic() if now is None else now
+        if self.buf and now - self.last >= IDLE_S:
+            return self.flush()
+        return None
+
+
+def find():
+    """Event nodes of the scanner(s): matched by USB ID in sysfs (no other input device is opened)."""
+    out = []
+    for ev in sorted(glob.glob("/sys/class/input/event*")):
+        try:
+            with open(os.path.join(ev, "device/id/vendor")) as f:
+                vid = f.read().strip().lower()
+            with open(os.path.join(ev, "device/id/product")) as f:
+                pid = f.read().strip().lower()
+            with open(os.path.join(ev, "device/capabilities/ev")) as f:
+                evbits = int(f.read().strip(), 16)
+        except (OSError, ValueError):
+            continue
+        if (vid, pid) in IDS and evbits & (1 << EV_KEY):
+            out.append("/dev/input/" + os.path.basename(ev))
+    return out
+
+
+def write_state(**st):
+    try:
+        os.makedirs(os.path.dirname(STATE), exist_ok=True)
+        tmp = STATE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(dict(st, at=round(time.time(), 3)), f)
+        os.replace(tmp, STATE)
+    except OSError:
+        pass
+
+
+def post(code):
+    """The code → gatbox-web. Returns its answer, or {"error": …}."""
+    req = urllib.request.Request(API, data=json.dumps({"code": code}).encode(), method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read() or b"{}")
+        except ValueError:
+            return {"error": f"HTTP {e.code}"}
+    except (OSError, ValueError) as e:
+        return {"error": repr(e)}
+
+
+class Scand:
+    def __init__(self):
+        self.fds, self.dec, self.scans, self.last = {}, {}, 0, None
+
+    def state(self, attached):
+        write_state(attached=attached, grabbed=attached and not FAKE, devices=list(self.fds.values()),
+                    scans=self.scans, last=self.last)
+
+    def handle(self, code):
+        self.scans += 1
+        r = post(code)
+        action = r.get("action") or "error"
+        self.last = {"code": code[:80], "action": action, "at": round(time.time(), 3)}
+        log(f"scan {code[:80]!r}: {action}" + (f" ({r.get('detail') or r.get('error')})" if r.get("detail") or r.get("error") else ""))
+        self.state(True)
+
+    def attach(self):
+        paths = [FAKE] if FAKE else find()
+        for p in paths:
+            try:
+                fd = os.open(p, os.O_RDONLY | os.O_NONBLOCK)
+            except OSError as e:
+                log(f"can't open {p}: {e.strerror}")
+                continue
+            if not FAKE:
+                try:
+                    fcntl.ioctl(fd, EVIOCGRAB, 1)     # exclusive: the desktop stops seeing these keys
+                except OSError as e:
+                    log(f"can't grab {p}: {e.strerror} (another program has it?)")
+                    os.close(fd)
+                    continue
+            self.fds[fd] = p
+            self.dec[fd] = Decoder()
+        if self.fds:
+            log("scanner " + ", ".join(self.fds.values()) + (" (test input)" if FAKE else " grabbed"))
+        self.state(bool(self.fds))
+        return bool(self.fds)
+
+    def detach(self, fd):
+        p = self.fds.pop(fd, None)
+        self.dec.pop(fd, None)
+        try:
+            os.close(fd)                             # closing also releases the grab
+        except OSError:
+            pass
+        log(f"scanner gone ({p})")
+        self.state(bool(self.fds))
+
+    def run(self):
+        waiting = False
+        while True:
+            if not self.fds:
+                if not self.attach():
+                    if not waiting:
+                        log("waiting for the scanner (USB " + ", ".join(":".join(i) for i in sorted(IDS)) + ")")
+                        waiting = True
+                    time.sleep(2)                    # hot-plug: look again
+                    continue
+                waiting = False
+            ready = select.select(list(self.fds), [], [], 0.25)[0]
+            for fd in ready:
+                try:
+                    data = os.read(fd, EVENT.size * 64)
+                except OSError as e:
+                    if e.errno in (errno.EAGAIN, errno.EINTR):
+                        continue
+                    self.detach(fd)                  # ENODEV: unplugged
+                    continue
+                if not data:
+                    if FAKE:                         # the test's writer closed the FIFO: done
+                        code = self.dec[fd].flush()
+                        if code:
+                            self.handle(code)
+                        return
+                    self.detach(fd)
+                    continue
+                for off in range(0, len(data) - EVENT.size + 1, EVENT.size):
+                    _, _, typ, key, val = EVENT.unpack_from(data, off)
+                    if typ == EV_KEY:
+                        code = self.dec[fd].feed(key, val)
+                        if code:
+                            self.handle(code)
+            for fd, d in list(self.dec.items()):
+                code = d.idle()
+                if code:
+                    self.handle(code)
+
+
+def main():
+    signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
+    log(f"sending codes to {API}")
+    try:
+        Scand().run()
+    finally:
+        write_state(attached=False, grabbed=False, devices=[], scans=0, last=None)
+
+
+if __name__ == "__main__":
+    main()

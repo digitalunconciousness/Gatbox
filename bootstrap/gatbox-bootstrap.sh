@@ -19,14 +19,14 @@
 # anything else is refused. GATBOX_RTC_BATTERY was removed on 2026-09-28 and is refused too.
 #
 # What it does:
-#   1  packages: sigrok-cli, python3-matplotlib, rsync, git, curl, util-linux-extra (hwclock), the minipro build
+#   1  packages: sigrok-cli, python3-matplotlib, python3-qrcode (scanner labels), rsync, git, curl, util-linux-extra (hwclock), the minipro build
 #      deps, mame (for `mame -romident` only). apt is skipped entirely when they're all present.
 #   2  removes ModemManager (hijacks ttyUSB0) and brltty (grabs USB-serial adapters)
 #   3  groups (dialout, plugdev, gpio, i2c, spi, video) for your user; I2C + SPI on; hostname catbox/raspberrypi -> gatbox
 #   4  power fix: PSU_MAX_CURRENT=5000 (EEPROM) + usb_max_current_enable=1 (config.txt); RTC charging guard
 #   5  files from this checkout (table below): logger, web view, RTC sync, hotspot fallback, tools, udev, journald,
 #      menu launcher
-#   6  services: gatbox-raillog, gatbox-web (+ its fonts), gatbox-rtc-sync.timer
+#   6  services: gatbox-raillog, gatbox-web (+ its fonts), gatbox-scand (the barcode scanner), gatbox-rtc-sync.timer
 #   7  desktop (for the sudo user): the 7" kiosk autostart (gatbox-kiosk on|off), Pi OS autotouch off and its
 #      port-pinned touch line removed, so the panel works on either HDMI port with real touch events
 #   8  minipro (XGecu T48), built from a pinned upstream tag
@@ -43,6 +43,8 @@ backend/gatbox-raillog                          /usr/local/bin/gatbox-raillog   
 backend/gatbox-raillog.service                  /etc/systemd/system/gatbox-raillog.service            644
 backend/gatbox-web                              /usr/local/bin/gatbox-web                             755
 backend/gatbox-web.service                      /etc/systemd/system/gatbox-web.service                644
+backend/gatbox-scand                            /usr/local/bin/gatbox-scand                           755
+backend/gatbox-scand.service                    /etc/systemd/system/gatbox-scand.service              644
 backend/gatbox-rtc-sync                         /usr/local/sbin/gatbox-rtc-sync                       755
 backend/gatbox-rtc-sync.service                 /etc/systemd/system/gatbox-rtc-sync.service           644
 backend/gatbox-rtc-sync.timer                   /etc/systemd/system/gatbox-rtc-sync.timer             644
@@ -54,6 +56,7 @@ tools/gatbox-kiosk                              /usr/local/bin/gatbox-kiosk     
 backend/gatbox-kiosk-launch                     /usr/local/bin/gatbox-kiosk-launch                    755
 backend/gatbox-meta                             /usr/local/bin/gatbox-meta                            755
 tools/gatbox-replay                             /usr/local/bin/gatbox-replay                          755
+tools/gatbox-labels                             /usr/local/bin/gatbox-labels                          755
 backend/gatboxlib/__init__.py                   /usr/local/lib/gatbox/gatboxlib/__init__.py           644
 backend/gatboxlib/modes.py                      /usr/local/lib/gatbox/gatboxlib/modes.py              644
 backend/gatboxlib/profiles.py                   /usr/local/lib/gatbox/gatboxlib/profiles.py           644
@@ -93,7 +96,7 @@ bootstrap/files/user/autotouch-off.desktop      .config/autostart/autotouch.desk
 # the line autotouch wrote into ~/.config/labwc/rc.xml for the Waveshare: removed, so touch stays unmapped (either
 # HDMI port, any USB port) and sends real touch events (no mouse emulation) for the dashboard's gestures
 TOUCH_LINE='<touch[^>]*deviceName="WaveShare WS170120'
-PKGS=(sigrok-cli python3-matplotlib rsync git curl util-linux-extra
+PKGS=(sigrok-cli python3-matplotlib python3-qrcode rsync git curl util-linux-extra
       build-essential pkg-config libusb-1.0-0-dev zlib1g-dev       # minipro build
       mame)                                                        # mame -romident only, no gameplay
 # minipro: pinned upstream release. Bump deliberately: check its T48 support and changelog, and refresh
@@ -206,7 +209,7 @@ if [ "${1:-}" = "--check" ]; then
     while read -r _ name sum; do font_ok "$name" "$sum" || DIFFS+=("fetch      font $name"); done < <(grep -v '^$' <<<"$FONTS")
     for l in usb_max_current_enable=1; do grep -qxF "$l" /boot/firmware/config.txt || DIFFS+=("config.txt += $l"); done
     grep -qE '^[^#]*rtc_bbat_vchg' /boot/firmware/config.txt && [ -z "$RTC_CHARGE" ] && DIFFS+=("config.txt: comment out rtc_bbat_vchg (RTC CHARGING IS ON)")
-    for u in gatbox-raillog.service gatbox-web.service gatbox-rtc-sync.timer; do
+    for u in gatbox-raillog.service gatbox-web.service gatbox-scand.service gatbox-rtc-sync.timer; do
         systemctl -q is-enabled "$u" 2>/dev/null || DIFFS+=("enable     $u"); done
     if ((${#DIFFS[@]})); then printf 'a run would change:\n'; printf '  %s\n' "${DIFFS[@]}"; exit 3; fi
     echo "nothing to change: this Pi matches the checkout"
@@ -364,6 +367,7 @@ svc() {   # <unit> <installed path glob>...: enable it; restart only if its file
 svc gatbox-raillog.service /usr/local/bin/gatbox-raillog /etc/systemd/system/gatbox-raillog.service
 svc gatbox-web.service /usr/local/bin/gatbox-web /etc/systemd/system/gatbox-web.service \
     '/usr/local/lib/gatbox/gatboxweb/*' '/usr/local/lib/gatbox/gatboxlib/*'   # its package and the shared lib
+svc gatbox-scand.service /usr/local/bin/gatbox-scand /etc/systemd/system/gatbox-scand.service   # after gatbox-web
 fetch_font() {   # <path in google/fonts> <local name> <sha256>
     local f="$FONTDIR/$2"
     echo "$3  $f" | sha256sum -c --status 2>/dev/null && return 0

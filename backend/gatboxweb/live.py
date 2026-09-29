@@ -53,6 +53,35 @@ def header_dict(h):
             "alarm_hi": None if h.alarm_none else h.alarm_hi, "machine": h.machine, "mode_change": h.mode_change}
 
 
+def limits(h):
+    """alarm_hi and the dial modes it applies to, from a file's header (older files: the default profile)."""
+    if h.profile is None and not h.alarm_none and h.alarm_hi is None:
+        res = profiles.resolve(None)
+        return res["alarm_hi"], set(res["modes"])
+    _, _, P = profiles.profiles()
+    p = P.get(h.profile) or {}
+    return (None if h.alarm_none else h.alarm_hi), set(p.get("modes") or ["VDC"])
+
+
+def alarm_states(rows, limit, modes):
+    """The live rule over a finished list of rows (for past sessions): per row None (rule doesn't apply), "ok",
+    "spike" (a lone over-limit reading) or "alarm" (every reading of a run of 2+)."""
+    out, run = [], 0
+    for r in rows:
+        if limit is None or r.mode.key not in modes:
+            out.append(None)
+            run = 0
+        elif math.isfinite(r.v) and abs(r.v) > limit:
+            run += 1
+            out.append("spike" if run == 1 else "alarm")
+            if run == 2:
+                out[-2] = "alarm"                 # the run's first reading was part of an alarm after all
+        else:
+            out.append("ok")
+            run = 0
+    return out
+
+
 class Live:
     def __init__(self):
         self.cv = threading.Condition()
@@ -182,16 +211,6 @@ class Live:
                 self._announce()
             self._sample(line.split(","))
 
-    def _limits(self):
-        """alarm_hi and the dial modes it applies to, from the file's header (older files: the default profile)."""
-        h = self.h
-        if h.profile is None and not h.alarm_none and h.alarm_hi is None:
-            res = profiles.resolve(None)
-            return res["alarm_hi"], set(res["modes"])
-        _, _, P = profiles.profiles()
-        p = P.get(h.profile) or {}
-        return (None if h.alarm_none else h.alarm_hi), set(p.get("modes") or ["VDC"])
-
     def _sample(self, p):
         if len(p) < 5:
             return
@@ -212,7 +231,7 @@ class Live:
         fin = math.isfinite(v)
         with self.cv:
             if not self.ring and not self.run:
-                self.limit, self.modes = self._limits()
+                self.limit, self.modes = limits(self.h)
             state, change = None, None
             if self.limit is not None and m.key in self.modes:
                 if fin and abs(v) > self.limit:

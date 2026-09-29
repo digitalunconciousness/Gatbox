@@ -4,6 +4,7 @@ import os
 import threading
 import time
 
+from gatboxlib import csvlog
 from gatboxlib.modes import mode
 
 from . import config
@@ -92,7 +93,8 @@ def api_list(limit=100):
         s = summary(name)
         if not s["first"]:
             continue
-        live = is_live(s, now)
+        from .live import LIVE
+        live = name == LIVE.name and LIVE.logging()             # the file being written now, not just a recent one
         J = report.summary(name, live=live)
         ov = J.get("over_voltage") or []
         pw = J.get("powered")
@@ -121,3 +123,40 @@ def api_list(limit=100):
             "error": J.get("error"),
         })
     return out
+
+
+def samples(name, t0=None, t1=None, max_points=2000):
+    """GET /api/rail/samples/<file>: the readings for a chart, downsampled to about max_points. Each bucket keeps its
+    lowest and highest reading (in time order), so a one-sample spike or dropout survives; OL stays as v null."""
+    from .live import alarm_states, header_dict, limits
+    h, rows, marks = csvlog.read(config.log_path(name), t0, t1)
+    lim, modes = limits(h)
+    states = alarm_states(rows, lim, modes)
+    idx = list(range(len(rows)))
+    if len(rows) > max_points:
+        per = len(rows) / (max_points // 2)
+        keep = []
+        for b in range(max_points // 2):
+            chunk = idx[int(b * per):int((b + 1) * per)]
+            if not chunk:
+                continue
+            fin = [i for i in chunk if math.isfinite(rows[i].v)]
+            pick = {min(fin, key=lambda i: rows[i].v), max(fin, key=lambda i: rows[i].v)} if fin else {chunk[0]}
+            pick |= {i for i in chunk if states[i] in ("spike", "alarm")}          # never drop an over-limit reading
+            if len(fin) < len(chunk):
+                pick.add(next(i for i in chunk if not math.isfinite(rows[i].v)))  # and show that OL happened
+            keep.extend(sorted(pick))
+        idx = keep
+    return {"file": name, "header": header_dict(h), "alarm_hi": lim, "alarm_modes": sorted(modes),
+            "n": len(rows), "downsampled": len(idx) < len(rows),
+            "fields": ["epoch", "up", "raw", "unit", "v", "mode", "alarm"],
+            "rows": [[rows[i].epoch, rows[i].up, raw_value(rows[i]), rows[i].unit,
+                      rows[i].v if math.isfinite(rows[i].v) else None, rows[i].mode.key, states[i]] for i in idx],
+            "marks": [m._asdict() for m in marks]}
+
+
+def raw_value(r):
+    """The value as the meter sent it (the CSV's text is gone after parsing: rebuild it from v and the unit)."""
+    if not math.isfinite(r.v):
+        return "inf" if r.v > 0 else ("-inf" if r.v < 0 else "nan")
+    return f"{r.v / r.mode.scale:.6g}"

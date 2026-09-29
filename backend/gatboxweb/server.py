@@ -122,9 +122,28 @@ def post_kiosk(h, m, q):
     h.send(204, b"")
 
 
+# --- the dashboard (M5): static files from config.DASH ---------------------------------------
+def get_dash_redirect(h, m, q):
+    h.send(301, b"", extra=[("Location", "/dash/")])
+
+
+def get_dash(h, m, q):
+    name = m.get("file") or "index.html"
+    if name != "index.html" and not config.DASH_FILE.match(name):
+        return h.not_found()
+    try:
+        with open(os.path.join(config.DASH, name), "rb") as f:
+            body = f.read()
+    except OSError:
+        return h.not_found()
+    ctype = {"html": "text/html; charset=utf-8", "js": "text/javascript; charset=utf-8",
+             "css": "text/css; charset=utf-8", "svg": "image/svg+xml"}[name.rsplit(".", 1)[1]]
+    h.send(200, body, ctype, cache="no-cache")        # small files on a LAN: always check, so installs show at once
+
+
 # --- JSON API ---------------------------------------------------------------------------------
 def api_system(h, m, q):
-    h.json(200, system.snapshot())
+    h.json(200, dict(system.snapshot(), client={"local": h.is_local()}))   # local = the Pi's own screen
 
 
 def api_meter(h, m, q):
@@ -186,6 +205,14 @@ def api_session_new(h, m, q):
     h.json(202, {"ok": True, "logging": LIVE.logging()})
 
 
+def api_session_stop(h, m, q):
+    h.body()
+    meter.stop()
+    h.log_line("control: stop (api)")
+    LIVE.emit("state", meter.state(full=False))
+    h.json(202, {"ok": True})
+
+
 def api_captures_get(h, m, q):
     slug = q1(q, "machine") or meter.resolved()["machine"] or captures.UNASSIGNED
     h.json(200, {"machine": slug, "captures": captures.read(slug)})
@@ -235,6 +262,17 @@ def api_report(h, m, q):
     out = dict(J, text=report.text(J, name, t0, t1), png=f"/png/{name}{full}" if png else None,
                pdf=f"/pdf/{name}{full}", csv=f"/csv/{name}", range={"from": t0, "to": t1})
     h.json(200, out)
+
+
+def api_samples(h, m, q):
+    name = m["name"]
+    if not config.log_path(name):
+        raise Bad(404, f"no such session: {name!r}")
+    try:
+        mx = max(100, min(int(q1(q, "max", "2000")), 20000))
+    except ValueError:
+        raise Bad(400, "max: a whole number")
+    h.json(200, sessions.samples(name, *phone.span(q), max_points=mx))
 
 
 def api_live(h, m, q):
@@ -315,6 +353,9 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("POST", r"/control", post_control),
     ("GET", r"/kiosk/state", get_kiosk_state),
     ("POST", r"/kiosk/(?P<what>exit|shutdown)", post_kiosk),
+    # dashboard (M5)
+    ("GET", r"/dash", get_dash_redirect),
+    ("GET", r"/dash/(?P<file>[^/]*)", get_dash),
     # JSON API (M4d)
     ("GET", r"/api/system", api_system),
     ("GET", r"/api/meter", api_meter),
@@ -324,11 +365,13 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("GET", r"/api/rail/live", api_live),
     ("GET", r"/api/rail/sessions", api_sessions),
     ("GET", r"/api/rail/report/(?P<name>[^/]+)", api_report),
+    ("GET", r"/api/rail/samples/(?P<name>[^/]+)", api_samples),
     ("GET", r"/api/machine", api_machine_get),
     ("PUT", r"/api/machine", api_machine_put),
     ("DELETE", r"/api/machine", api_machine_delete),
     ("POST", r"/api/mark", api_mark),
     ("POST", r"/api/session/new", api_session_new),
+    ("POST", r"/api/session/stop", api_session_stop),
     ("GET", r"/api/captures", api_captures_get),
     ("POST", r"/api/captures", api_captures_post),
     ("GET", r"/api/devices", api_devices),
@@ -387,9 +430,13 @@ class H(BaseHTTPRequestHandler):
         sys.stderr.write(f"{self.address_string()} {msg}\n")
 
     def log_message(self, fmt, *a):
-        # a dashboard polls the API every second or two: log only what changes something, and failures
-        if self.command == "GET" and not getattr(self, "failed", False) and \
-                (self.url.path.startswith(("/api/", "/font/", "/kiosk/state"))):
+        # a dashboard polls the API every second or two: log only what changes something, and failures.
+        # No request line at all (Chromium opens spare connections and lets them time out): nothing to log.
+        command, url = getattr(self, "command", None), getattr(self, "url", None)
+        if command is None:
+            return
+        if command == "GET" and not getattr(self, "failed", False) and url and \
+                url.path.startswith(("/api/", "/font/", "/kiosk/state", "/dash/")):
             return
         sys.stderr.write("%s %s\n" % (self.address_string(), fmt % a))
 

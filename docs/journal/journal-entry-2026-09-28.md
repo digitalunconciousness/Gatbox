@@ -97,3 +97,24 @@
   The logger now compares to the millisecond.
 - NEXT: install M4d (the owner OKs the web unit change first), then M5, the dashboard at `/dash/` with the live
   graph (real time, tap for a reading, zoom).
+- M4d installed (19:32, owner OK'd the web unit change). `vcgencmd` works in the sandbox. FOUND: nothing in the
+  sandboxed web service can reach D-Bus, so `timedatectl` and `nmcli` fail there. The SYSTEM page now reads the clock
+  status from the kernel, and Wi-Fi and hotspot from `iw`. It also names anything it couldn't read.
+- M5 dashboard built at `/dash/`, and the kiosk opens it:
+  - METER: a big live reading, profile picker tiles, banners (SET DIAL TO, LEADS REVERSED?, HOLD, the A-jack
+    reminders), MARK / NEW FILE / ALARM ON-OFF / CAPTURE, and the live graph from the 09-28 wish list (real time,
+    tap for the reading at that moment, pinch/drag to zoom, LIVE to follow again).
+  - SESSIONS: the report plus the same zoomable graph over past logs.
+  - MACHINE, SYSTEM (with EXIT KIOSK / SHUT DOWN), DEVICES (NOT FITTED greyed), and DUMP, greyed until the T48 is
+    plugged in.
+- Over-voltage on screen: 2+ readings in a row take over the screen in red until ACK; one reading is an amber SPIKE
+  note. The 09-25 20 V glitches play back as three SPIKEs and no alarm.
+- FOUND: headless Chromium hung on every web page because it waits on the desktop keyring for its cookie key;
+  `--password-store=basic` fixes it (the kiosk already had it). The dashboard tests drive Chromium directly, step
+  through every state from the spec with the replay harness, and screenshot each one at 1024x600. I looked at them
+  all and fixed what they showed.
+- The owner found the report's wall of text ugly and distracting, though she likes the info. Reports now open with
+  a verdict (HELD THE WINDOW / LEFT THE WINDOW / OVER-VOLTAGE), number tiles and short tables. The full text is one
+  tap away, and the PDF still has all of it. The session list no longer says "left the window" just because the
+  board was switched off; it shows the report's verdict.
+- NEXT: install M5, the owner tries it on the 7" (⏸), then M6 (scanner).

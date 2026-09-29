@@ -67,7 +67,7 @@ echo "old URLs:"
 O=rail_20260921_000000.csv
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 check "/ lists the old session"              'curl -fs "$B/" | grep -q "2026-09-21 00:00:00"'
-check "/ uses the header window (old file: 4.75-5.25)" 'curl -fs "$B/" | grep -q "in window"'
+check "/ tags each session with the report's verdict" 'curl -fs "$B/" | grep -q "held the window"'
 check "/s/ 200, /png/ 200, /csv/ 200"        '[ "$(code "$B/s/$O") $(code "$B/png/$O") $(code "$B/csv/$O")" = "200 200 200" ]'
 check "/s/ with lo/hi still works"           'curl -fs "$B/s/$O?lo=5.0&hi=5.02" | grep -q "EXCURSIONS (1)"'
 check "/pdf/ is a PDF"                       'curl -fs "$B/pdf/$O" | head -c 5 | grep -q "%PDF-"'
@@ -82,6 +82,7 @@ check "POST /control junk -> 400"            '[ "$(code -X POST -d action=boom "
 check "unknown session -> 404"               '[ "$(code "$B/s/rail_20990101_000000.csv") $(code "$B/csv/../etc/passwd")" = "404 404" ]'
 if [ -r "$FX" ]; then
     check "09-25 fixture: page + 3 suspect OV" 'curl -fs "$B/s/rail_20260925_021402.csv" | grep -q "OVER-VOLTAGE (3): above 5.775 V; 3 suspect"'
+    check "09-25 fixture: verdict + tiles + tags, text collapsed" 'p=$(curl -fs "$B/s/rail_20260925_021402.csv"); grep -q "HELD THE WINDOW" <<<"$p" && [ "$(grep -o "tag warn\">suspect" <<<"$p" | wc -l)" = 3 ] && grep -q "<details><summary>Full text report" <<<"$p" && ! grep -q "left the window" <<<"$p"'
 fi
 
 echo "SSE + the alarm rule (replay at 20/s):"
@@ -139,6 +140,13 @@ check "report: text, OV sections, links"      '[ "$(js "\"OVER-VOLTAGE (2)\" in 
 check "report PNG link works"                 '[ "$(code "$B$(js "d[\"png\"]")")" = 200 ]'
 check "report with lo/hi + range"             '[ "$(api GET "/api/rail/report/$A1?lo=5.0&hi=5.3&from=2000-01-01T00:00")" = 200 ] && [ "$(js "d[\"window\"][\"lo\"], d[\"range\"][\"from\"]")" = "5.0 2000-01-01T00:00:00" ]'
 check "report: unknown / traversal -> 404"    '[ "$(api GET /api/rail/report/nope.csv) $(api GET /api/rail/report/..%2F..%2Fetc%2Fpasswd)" = "404 404" ]'
+check "samples: lone = spike, a run of 3 = alarm x3" '[ "$(api GET "/api/rail/samples/$A1")" = 200 ] && [ "$(js "[r[6] for r in d[\"rows\"] if r[6] in (\"spike\", \"alarm\")], d[\"n\"], d[\"alarm_hi\"]")" = "['"'"'spike'"'"', '"'"'alarm'"'"', '"'"'alarm'"'"', '"'"'alarm'"'"'] 28 5.775" ]'
+if [ -r "$FX" ]; then
+    check "samples: 09-25 fixture squeezed to 200 points keeps its 3 spikes" '[ "$(api GET "/api/rail/samples/rail_20260925_021402.csv?max=200")" = 200 ] && [ "$(js "d[\"downsampled\"], len(d[\"rows\"]) <= 210, sum(r[6] == \"spike\" for r in d[\"rows\"]), d[\"n\"]")" = "True True 3 10251" ]'
+fi
+check "samples: unknown -> 404"               '[ "$(api GET /api/rail/samples/nope.csv)" = 404 ]'
+check "/dash/: page, files; nothing else"     '[ "$(code "$B/dash/") $(code "$B/dash/dash.js") $(code "$B/dash/chart.js") $(code "$B/dash/dash.css")" = "200 200 200 200" ] && [ "$(code "$B/dash/x.py") $(code "$B/dash/..%2F..%2Fbackend%2Fgatbox-web") $(code "$B/dash/nope.js")" = "404 404 404" ] && [ "$(code "$B/dash")" = 301 ]'
+check "phone view links the dashboard"        'curl -fs "$B/" | grep -q "href=\"/dash/\""'
 
 echo "profile, alarm switch, machine, NEW, marks, captures (live session):"
 mapfile -t rows < <(rep 1200 "5.01,V,DC AUTO"); mkcsv "$T/b.csv" "${rows[@]}"
@@ -209,9 +217,11 @@ waitfor 'api GET /api/meter >/dev/null && [ "$(js "len(d[\"marks_pending\"]), le
 check "... and is no longer pending"          '[ "$(js "len(d[\"marks_pending\"]), [m[\"label\"] for m in d[\"session\"][\"marks\"]]")" = "0 ['"'"'before power-on'"'"']" ]'
 logger_stop
 
+check "POST /api/session/stop -> 202, stopped" '[ "$(api POST /api/session/stop)" = 202 ] && [ -e "$T/ctrl/stopped" ] && [ "$(api POST /api/session/new)" = 202 ] && [ ! -e "$T/ctrl/stopped" ]'
+
 echo "system + devices:"
 check "/api/system: the panel's fields"       '[ "$(api GET /api/system)" = 200 ] && [ "$(js "all(k in d for k in (\"temp_c\", \"throttled\", \"ext5v_v\", \"disk\", \"network\", \"clock\", \"kiosk\", \"versions\", \"logger\"))")" = True ]'
-check "/api/system: clock source + disk"      '[ "$(js "d[\"clock\"][\"source\"] in (\"ntp\", \"rtc\", \"unverified\"), d[\"disk\"][\"/\"][\"total\"] > 0")" = "True True" ]'
+check "/api/system: clock source + disk"      '[ "$(js "d[\"clock\"][\"source\"] in (\"ntp\", \"rtc\", \"unverified\"), d[\"disk\"][\"system\"][\"total\"] > 0")" = "True True" ]'
 check "/api/devices: dmm, t48, scanner, touch" '[ "$(api GET /api/devices)" = 200 ] && [ "$(js "sorted(k for k in d if k != \"usb\")")" = "['"'"'dmm'"'"', '"'"'scanner'"'"', '"'"'t48'"'"', '"'"'touch'"'"']" ]'
 check "unknown /api path -> 404 JSON"         '[ "$(api GET /api/nope)" = 404 ] && [ "$(js "d[\"error\"]")" = "not found" ]'
 check "server log: no errors"                 '! grep -q "Traceback\|error on\|^live: \|^warm-up: " "$T/web.log"'

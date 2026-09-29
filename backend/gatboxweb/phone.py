@@ -97,6 +97,17 @@ vertical-align:middle;text-shadow:none}.modes div{margin-top:5px}.modes .warn{fo
 .kx-off{display:none;position:fixed;inset:0;z-index:9;background:rgba(21,10,40,.96);align-items:center;justify-content:center;text-align:center;padding:24px}
 .cyan{color:var(--cyan)}.clk{display:inline-block;padding:0 6px;border:1px solid currentColor;border-radius:4px;
 font:12px/1.5 var(--mono);vertical-align:middle;font-weight:normal}
+.verdict{font:600 22px/1.2 var(--disp);letter-spacing:.03em}.verdict small{font:14px var(--mono);color:var(--mut);
+letter-spacing:0;margin-left:8px}
+.stat{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin:10px 0}
+.stat div{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:7px 10px}
+.stat b{display:block;font:600 20px/1.2 var(--disp)}.stat span{color:var(--mut);font-size:13px}
+.stat i{display:block;font-style:normal;color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+table.t{border-collapse:collapse;width:100%;font-size:14px}table.t td,table.t th{padding:3px 8px 3px 0;text-align:left;
+vertical-align:top}table.t th{color:var(--mut);font-weight:normal;font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+h3{font:600 14px/1.2 var(--disp);margin:14px 0 4px;letter-spacing:.06em;color:var(--mut);text-transform:uppercase}
+.tag{display:inline-block;padding:0 6px;border:1px solid currentColor;border-radius:4px;font-size:12px}
+details summary{cursor:pointer;color:var(--cyan)}details pre{margin-top:8px}
 """
 
 
@@ -146,20 +157,26 @@ def session_window(s, lo, hi):
     return win, keys
 
 
-def mode_lines(s, lo, hi, when="was on"):
-    """One line per meter mode seen: chip, min/max, and for the profile's own mode the window tag.
-    Then a warning for HOLD/REL/MAX/MIN."""
-    win, keys = session_window(s, lo, hi)
+def mode_lines(s, when="was on"):
+    """One line per meter mode seen: chip and raw min/max, then a warning for HOLD/REL/MAX/MIN. Whether the rail held
+    its window is the report's verdict (verdict_tag): raw min/max include power-offs and autorange glitches."""
     out = []
     for label, (n, vmin, vmax, base, key) in s["modes"].items():
         line = f'<span class="mode">{html.escape(label)}</span>'
         if vmin <= vmax and key != "CONT":             # all-OL has no finite values
             line += f' <span class="mut">min {html.escape(fmt(vmin, base))} · max {html.escape(fmt(vmax, base))}</span>'
-        if win and key in keys and vmin <= vmax:
-            line += (' · <span class="ok">in window</span>' if win[0] <= vmin and vmax <= win[1]
-                     else ' · <span class="bad">left the window</span>')
         out.append(f"<div>{line}</div>")
     return f'<div class="modes">{"".join(out)}{warnings(s["warn"], when)}</div>'
+
+
+def verdict_tag(name, lo, hi, live):
+    """The report's verdict as a small tag (cached report runs, the same numbers as everywhere else)."""
+    try:
+        J = report.summary(name, live=live) if lo is None and hi is None else report.run(name, lo, hi, plot=False)[0]
+    except Exception:
+        return ""
+    v = verdict(J)
+    return f' <span class="tag {v[1]}">{html.escape(v[0].lower())}</span>' if v else ""
 
 
 def window(q):
@@ -197,6 +214,112 @@ def win_inputs(lo, hi, ph):
         return (f'<input name="{k}" value="{"" if v is None else f"{v:g}"}" inputmode="decimal" '
                 f'placeholder="{"" if p is None else f"{p:g}"}">')
     return one("lo", lo, ph[0]) + one("hi", hi, ph[1])
+
+
+def _dur(sec):
+    sec = max(0.0, float(sec or 0))
+    if sec < 90:
+        return f"{sec:.1f} s" if sec < 10 else f"{sec:.0f} s"
+    m, s_ = divmod(int(round(sec)), 60)
+    h, m = divmod(m, 60)
+    return f"{h}h {m:02d}m" if h else f"{m}m {s_:02d}s"
+
+
+def _v(x, unit="V", nd=3):
+    return "—" if x is None else f"{x:.{nd}f} {unit}".replace("-", "−")
+
+
+def verdict(J):
+    """(title, css class, detail) for a report's headline, or None when the file has no window (bench, free)."""
+    if not J.get("window"):
+        return None
+    ov = J.get("over_voltage") or []
+    real = [o for o in ov if not o.get("suspect")]
+    exc = J.get("excursions") or []
+    sus = len(ov) - len(real)
+    extra = f" · {sus} suspect reading{'s' if sus > 1 else ''} set aside (autorange glitches)" if sus else ""
+    if real:
+        return "OVER-VOLTAGE", "bad", f"{len(real)} time{'s' if len(real) > 1 else ''} above {J.get('alarm_hi'):g} V{extra}"
+    if exc:
+        return "LEFT THE WINDOW", "warn", f"{len(exc)} excursion{'s' if len(exc) > 1 else ''}{extra}"
+    when = "whenever the board was on" if J.get("power_cycles") else "all session"
+    return "HELD THE WINDOW", "ok", when + extra
+
+
+ROWS = 8          # longer lists: the first ROWS, then "+N more" (the full text has them all)
+
+
+def report_cards(J):
+    """The report as a headline, stat tiles and short tables; the page puts the full text, collapsed, after it."""
+    e = html.escape
+    if J.get("error"):
+        return f'<div class="warn">{e(J["error"])}</div>'
+    out = []
+    v = verdict(J)
+    if v:
+        out.append(f'<div class="verdict {v[1]}">{e(v[0])}<small>{e(v[2])}</small></div>')
+    ses, pw, w = J.get("session") or {}, J.get("powered"), J.get("window")
+    ov, exc, pc, mk = (J.get(k) or [] for k in ("over_voltage", "excursions", "power_cycles", "marks"))
+    tiles = [("Duration", _dur(ses.get("duration_s")),
+              f"{(ses.get('start') or '')[11:19]} → {(ses.get('end') or '')[11:19]}"),
+             ("Readings", f"{ses.get('samples', 0):,}", f"{ses.get('rate', 0):.1f} per second")]
+    if pw and pw.get("min") is not None:
+        tiles.append(("Powered", f"{pw['min']:.3f}–{pw['max']:.3f} V", f"mean {pw['mean']:.4f} V"))
+        if pw.get("in_window_pct") is not None:
+            tiles.append(("In window", f"{pw['in_window_pct']:.2f}%", f"of {pw.get('readings', 0):,} readings on"))
+    elif J.get("modes"):
+        m0 = J["modes"][0]
+        tiles.append((m0["label"], m0["stats"].split("   ")[0].replace("mean ", ""), "mean"))
+    if pc:
+        tiles.append(("Power cycles", str(len(pc)), _dur(sum(p["duration_s"] for p in pc)) + " off in all"))
+    if w:
+        sus = sum(1 for o in ov if o.get("suspect"))
+        sub = ("all suspect" if ov and sus == len(ov) else f"{sus} suspect" if sus
+               else f"above {J['alarm_hi']:g} V" if J.get("alarm_hi") else "no limit")
+        tiles += [("Over-voltage", str(len(ov)), sub), ("Excursions", str(len(exc)), "outside the window")]
+    if mk:
+        tiles.append(("Marks", str(len(mk)), ""))
+    out.append('<div class="stat">' + "".join(f'<div><i>{e(a)}</i><b>{e(b)}</b><span>{e(c)}</span></div>'
+                                             for a, b, c in tiles) + "</div>")
+    src = (w or {}).get("source") or ""
+    about = [(J.get("profile") or {}).get("label"),
+             f"window {w['lo']:g}–{w['hi']:g} {w.get('unit') or 'V'} ({'default' if src.startswith('default') else src})"
+             if w else "no window",
+             f"limit {J['alarm_hi']:g} V" if J.get("alarm_hi") else None, J.get("machine"),
+             f"clock {(J.get('clock') or {}).get('source') or '?'}"]
+    out.append(f'<div class="mut">{e(" · ".join(x for x in about if x))}</div>')
+
+    def table(title, head, rows):
+        if not rows:
+            return
+        more = len(rows) - ROWS
+        body = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in rows[:ROWS])
+        out.append(f'<h3>{e(title)}</h3><table class="t"><tr>' + "".join(f"<th>{e(h)}</th>" for h in head) + "</tr>"
+                   + body + "</table>" + (f'<div class="mut">+{more} more in the full text</div>' if more > 0 else ""))
+
+    def t(iso):
+        return e((iso or "")[11:19])
+    table("Over-voltage", ["at", "peak", "readings", ""],
+          [[t(o["start"]), e(_v(o["peak"])), str(o["samples"]),
+            '<span class="tag warn">suspect</span>' if o.get("suspect") else '<span class="tag bad">real</span>'] for o in ov])
+    table("Excursions", ["from", "for", "worst", "readings"],
+          [[t(x["start"]), e(_dur(x["duration_s"])), e(_v(x["worst"])), str(x["samples"])] for x in exc])
+    table("Power cycles", ["off at", "back at", "down for"],
+          [[t(p["off_at"]), t(p["back_at"]) if p.get("back_at") else "end of log", e(_dur(p["duration_s"]))] for p in pc])
+    table("Marks", ["at", "from", "label"],
+          [[t(m["iso"]), e(m["source"]), e(m["label"]) + (' <span class="mut">(before the file)</span>'
+                                                          if m.get("before_start") else "")] for m in mk])
+    table("Open input (OL)", ["at", "for", "mode"],
+          [[t(o["at"]), e(_dur(o["duration_s"])), e(o["mode"])] for o in J.get("ol_events") or []])
+    table("Warnings", ["flag", "readings", "first"],
+          [[e(x["flag"]), str(x["samples"]), t(x["first"])] for x in J.get("warnings") or []])
+    table("Dial turns", ["at", "from", "to"], [[t(x["at"]), e(x["from"]), e(x["to"])] for x in J.get("mode_changes") or []])
+    table("Gaps", ["until", "for"], [[t(x["end"]), e(_dur(x["duration_s"]))] for x in J.get("gaps") or []])
+    table("Clock steps", ["at", "jump"], [[t(x["at"]), e(f"{x['jump_s']:+.1f} s")] for x in J.get("clock_steps") or []])
+    if len(J.get("modes") or []) > 1:
+        table("Per mode", ["mode", "readings", "stats"],
+              [[e(m["label"]), str(m["samples"]), e(m["stats"])] for m in J["modes"]])
+    return "".join(out)
 
 
 def controls(is_live):
@@ -244,15 +367,16 @@ def index(q, local):
         cards.append(
             f'<div class="card"><a href="/s/{name}{qs}">'
             f'<b>{html.escape(s["first"][0].replace("T", " "))}</b> {clock_badge(s)}'
-            f'{" · <span class=ok>live</span>" if is_live else ""}{mach}<br>'
+            f'{" · <span class=ok>live</span>" if is_live else ""}{mach}{verdict_tag(name, lo, hi, is_live)}<br>'
             f'<span class="mut">{dur/3600:.2f} h · {s["n"]} samples</span>'
-            f'{mode_lines(s, lo, hi)}</a></div>')
+            f'{mode_lines(s)}</a></div>')
     is_live = bool(live)
     if not live and not meter.stopped():
         live = ('<div class="card"><div class="mut">Not logging right now</div>'
                 '<div class="mut">Meter off, D02 head out of the top slot, or adapter unplugged.</div></div>')
     live = controls(is_live) + live
-    body = (f'<h1>GATBOX rail log</h1><div class="mut">Pi time {time.strftime("%Y-%m-%d %H:%M:%S")}'
+    body = (f'<h1>GATBOX rail log <a class="btn" style="float:right;font-size:14px" href="/dash/">Dashboard →</a></h1>'
+            f'<div class="mut">Pi time {time.strftime("%Y-%m-%d %H:%M:%S")}'
             f' · refreshes every 30 s</div>{KIOSK_EXIT if local else ""}{live}'
             f'<form method="get" action="/"><span class="mut">Window (V)</span>'
             f'{win_inputs(lo, hi, None)}<button>Apply</button>'
@@ -277,10 +401,10 @@ def detail(name, q):
           '<div class="mut">No plot (python3-matplotlib missing?)</div>'
     own, _ = session_window(s, None, None)
     own_note = "empty = the file's own" if own else "this file has no window"
-    body = (f'<a href="/{qs}">← all sessions</a><h1>{html.escape(name)}</h1>'
+    body = (f'<a href="/{qs}">← all sessions</a> · <a href="/dash/">dashboard</a><h1>{html.escape(name)}</h1>'
             f'<div class="card"><div>{clock_badge(s)} <span class="mut">{html.escape(s["clock_note"] or "no clock line")}</span></div>'
             f'<span class="mut">Meter mode{" in this range" if (t0 or t1) else ""}</span>'
-            f'{mode_lines(view, lo, hi) if view["n"] else "<div class=mut>no samples</div>"}</div>'
+            f'{mode_lines(view) if view["n"] else "<div class=mut>no samples</div>"}</div>'
             f'<form method="get"><span class="mut">Window</span>{win_inputs(lo, hi, own)}'
             f'<span class="mut">{own_note}</span>'
             f'<div class="rng"><label>From <input type="datetime-local" step="1" name="from" '
@@ -290,6 +414,7 @@ def detail(name, q):
             f'<button>Apply</button>'
             f'{f"<a href=/s/{name}{qs}>whole session</a>" if (t0 or t1) else ""}</form>'
             f'<p><a class="btn" href="/pdf/{name}{full}">PDF of this view</a></p>'
-            f'<div class="card">{img}</div><div class="card"><pre>{html.escape(text)}</pre></div>'
+            f'<div class="card">{img}</div><div class="card">{report_cards(J)}</div>'
+            f'<div class="card"><details><summary>Full text report</summary><pre>{html.escape(text)}</pre></details></div>'
             f'<a href="/csv/{name}">Download CSV</a>')
     return page(name, body)

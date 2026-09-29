@@ -70,6 +70,10 @@ backend/gatboxweb/captures.py                   /usr/local/lib/gatbox/gatboxweb/
 backend/gatboxweb/roster.py                     /usr/local/lib/gatbox/gatboxweb/roster.py             644
 backend/gatboxweb/system.py                     /usr/local/lib/gatbox/gatboxweb/system.py             644
 backend/gatboxweb/devices.py                    /usr/local/lib/gatbox/gatboxweb/devices.py            644
+web/dash/index.html                             /usr/local/share/gatbox-web/dash/index.html           644
+web/dash/dash.css                               /usr/local/share/gatbox-web/dash/dash.css             644
+web/dash/dash.js                                /usr/local/share/gatbox-web/dash/dash.js              644
+web/dash/chart.js                               /usr/local/share/gatbox-web/dash/chart.js             644
 data/profiles.json                              /usr/local/share/gatbox/profiles.json                 644
 data/gatbox-machine-specs.json                  /usr/local/share/gatbox/gatbox-machine-specs.json     644
 data/gatbox-barcade-roster.json                 /usr/local/share/gatbox/gatbox-barcade-roster.json    644  optional

@@ -18,12 +18,14 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       minipro 0.7.4 + mame 0.276 installed, GitHub (public, scrubbed), MAME smoke test, ⏸ T48 re-verify **passed**
 - [x] **M3 2B face** (2026-09-28): either HDMI port (EDID + unmapped touch), autotouch off, boot-to-kiosk +
       gatbox-kiosk + EXIT KIOSK, never blanks in kiosk, power OK under load, ⏸ reboot tests **passed**
-- [ ] **M4 2C backend**: [x] 4a replay harness [x] 4b data model + logger (mode/profile/window/alarm/machine
+- [x] **M4 2C backend** (2026-09-28): [x] 4a replay harness [x] 4b data model + logger (mode/profile/window/alarm/machine
       header, one file per dial mode + settling, marks spool, /run/gatbox/mode) [x] 4c report (header window/limit, power cycles, suspect
       glitches, marks, --json) [x] 4d JSON API + SSE (gatbox-web → package + routes table; 80 API tests)
-      4a–c + kiosk SHUT DOWN installed 2026-09-28 (reboot 17:44, `--check` clean). [ ] 4d install (needs OK: the
-      gatbox-web unit gets `video` + a private /dev with only /dev/vcio_gencmd)
-- [ ] **M5 2D dashboard** at `/dash/`; screenshot tests; ⏸ on the real panel
+      4a–c + kiosk SHUT DOWN installed 2026-09-28 (reboot 17:44, `--check` clean). 4d installed 19:32 (owner OK'd
+      the unit: `video` + a private /dev with only /dev/vcio_gencmd); vcgencmd works inside it
+- [ ] **M5 2D dashboard** at `/dash/`: [x] code (web/dash: METER/SESSIONS/MACHINE/SYSTEM/DEVICES/DUMP, live chart with
+      tap/zoom, alarm takeover, keypad) [x] screenshot tests (tests/test-dash.sh, 27 checks, looked at) [ ] install
+      [ ] ⏸ the owner tries it on the real panel
 - [ ] **M6 2E scanner**: gatbox-scand; labels; ⏸ scan slug / MARK / NEW
 - [ ] **M7 2F T48 dump**: gatbox-dump; dashboard flow; ⏸ real board dump
 - [ ] **M8 2G stretch**: ask first
@@ -203,8 +205,57 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
 - **Logger fix found by the API tests:** a mark made < 1 s before a file started was written as `# mark=`, because
   the logger compared whole seconds. It now compares milliseconds (builtins, per mark only; the sample loop is unchanged).
 - **Scanner:** no USB ID yet (the EY-H2 hasn't been plugged into this Pi); `/api/devices` says so until M6.
+- **After the 4d install (19:32):** `vcgencmd` works in the sandbox (throttle 0x0, EXT5V 5.14 V, cell 3.13 V), but
+  `timedatectl` and `nmcli` don't: D-Bus is unreachable from the DynamicUser service (the journal shows no request
+  from its uid at all). /api/system now reads NTP from the kernel (adjtimex, timedatectl's own "max error < 16 s"
+  rule), Wi-Fi/hotspot from `iw dev`, and the logger/kiosk from /proc, and it names any source that fails in
+  `errors`. Also fixed: a log crash on Chromium's idle pre-connects (no request line).
 - **Site config, not in the bootstrap:** the home Wi-Fi's static address (09-24, `nmcli connection modify … ipv4.method
   manual …`). It belongs to the network the Pi is on, not to the Pi, and the repo is public.
+
+### M5 notes
+- **Dashboard** (`web/dash/`, installed to /usr/local/share/gatbox-web/dash, served at `/dash/`; the kiosk opens it):
+  plain HTML/CSS/JS, no framework, no CDN, no browser storage. 1024x600: the METER view never scrolls; tap targets
+  ≥ 56 px; a phone gets a stacked layout.
+  - **METER:** the reading at arm's length, mode chip, profile chip (the picker), window and where it came from,
+    session age.
+  - **Banners:** SET DIAL TO, LEADS REVERSED?, HOLD/REL/MAX-MIN, the jack reminder, MOVE THE RED LEAD BACK TO VΩ,
+    NO READINGS / SESSION ENDED.
+  - **Buttons:** MARK (tap = now; hold = with a label), NEW FILE / START LOGGING, ALARM ON/OFF, CAPTURE (bench
+    profiles).
+  - **Live chart:** window band, limit line, marks, SPIKE/ALARM dots. Tap = the reading nearest in time; drag =
+    pan; pinch or wheel = zoom; LIVE = follow again.
+  - **SESSIONS:** the report with the same chart over a past file (`/api/rail/samples`: min/max per bucket, every
+    over-limit reading kept) and the report text. PDF/CSV only off the Pi's own screen: the kiosk has no way back
+    from a PDF.
+  - **MACHINE:** pick from the roster (keypad filter), the merged card, CLEAR.
+  - **SYSTEM:** health tiles, logger START/STOP, EXIT KIOSK / SHUT DOWN (Pi screen only).
+  - **DEVICES:** DMM chain, T48, scanner (M6), touch; NOT FITTED greyed.
+  - **DUMP:** greyed until the T48 is plugged in; the flow itself is M7.
+- **Alarm on screen:** a run of 2+ over-limit readings takes the screen (red, latched until ACK, peak kept up to
+  date); a lone reading gets an amber SPIKE toast once it's over ("likely an autorange glitch"). ALARM OFF keeps the
+  events and only skips the takeover. The 09-25 burst plays back as three SPIKEs and no takeover.
+- **Headless Chromium on this Pi:** `--screenshot` of any http page hangs. The net log shows the request stopping
+  right after its privacy-mode step, where it needs cookies, whose key Chromium fetches from the desktop keyring over
+  D-Bus. `--password-store=basic` fixes it (the kiosk already uses it). `tests/cdp.py` drives Chromium over
+  `--remote-debugging-pipe` (stdlib only: there's no websocket module) so the tests can tap, wait and screenshot.
+- **Report layout (owner, 2026-09-28: the report's wall of text is "ugly and distracting", but she likes the info):**
+  - The phone page (`/s/…`) and SESSIONS now show a verdict (HELD THE WINDOW / LEFT THE WINDOW / OVER-VOLTAGE), stat
+    tiles and short tables: over-voltage with suspect/real tags, excursions, power cycles, marks, OL, dial turns,
+    gaps. A table shows at most 8 rows, then "+N more".
+  - The full text sits collapsed underneath; the PDF keeps it.
+  - The session list's old "left the window" tag compared raw min/max, so every power cycle looked like a failure. It
+    is now the report's verdict.
+- **Found in the screenshots and fixed:**
+  - the empty-value dash drew as a triple bar;
+  - session rows squashed in the scrolling list;
+  - every recent file tagged LIVE;
+  - the band stayed after a dial turn;
+  - "-5.25--4.75";
+  - the first reading of an alarm run stayed amber;
+  - mark labels clipped at the right edge;
+  - "NO READINGS" flashed while a new file started;
+  - disk usage keyed by long paths.
 
 ## Bring-up 1: bootstrap run — 2026-09-23
 

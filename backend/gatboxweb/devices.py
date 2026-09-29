@@ -56,7 +56,7 @@ def snapshot():
                             "product": adapter and adapter["product"], "tty": adapter and _tty(adapter)},
                 "readings": {"flowing": flowing, "age_s": age, "mode": last["mode"] if (last and flowing) else None,
                              "file": LIVE.name if flowing else None},
-                "chain": "UT61E -> UT-D02 -> PL-2303 -> /dev/gatbox-dmm (19200 7O1, sigrok uni-t-ut61e-ser)"},
+                "chain": "UT61E → UT-D02 → PL-2303 → /dev/gatbox-dmm (19200 7O1, sigrok uni-t-ut61e-ser)"},
         "t48": {"present": bool(t48), "usb_id": t48 and t48["id"], "product": t48 and t48["product"]},
         "scanner": {"present": None, "grabbed": None, "note": "Eyoyo EY-H2: USB ID not read yet (M6)"},
         "touch": {"present": bool(touch), "usb_id": touch and touch["id"], "product": touch and touch["product"]},

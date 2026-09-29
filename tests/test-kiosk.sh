@@ -63,7 +63,7 @@ for f in --kiosk --ozone-platform=wayland --no-first-run --password-store=basic 
          --hide-crash-restore-bubble --disable-pinch "--user-data-dir=$T/home/.local/share/gatbox-kiosk"; do
     check "flag $f"                          '[[ " $args " == *" $f "* ]]'
 done
-check "opens gatbox-web's /"                 '[[ $args == *" http://127.0.0.1:$PORT/" ]]'
+check "opens the dashboard, /dash/"          '[[ $args == *" http://127.0.0.1:$PORT/dash/" ]]'
 check "crash state cleared before launch"    'grep -q "\"exited_cleanly\":true" "$T/home/.local/share/gatbox-kiosk/Default/Preferences" && grep -q "\"exit_type\":\"Normal\"" "$T/home/.local/share/gatbox-kiosk/Default/Preferences"'
 kill "$(cat "$T/browser.pid")"; waitfor '[ "$(wc -l < "$T/launches")" = 2 ]'
 check "browser restarted after it died"      '[ "$(wc -l < "$T/launches")" = 2 ]'

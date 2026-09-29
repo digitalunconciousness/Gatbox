@@ -4,11 +4,16 @@ Sources, read off this Pi (2026-09-28, Pi 5, Trixie):
   * temperature: /sys/class/thermal/thermal_zone0/temp; fan: the pwmfan hwmon's fan1_input
   * throttling + EXT5V + the RTC cell: vcgencmd, which opens /dev/vcio_gencmd (root:video 0660; the unit gives
     gatbox-web the video group for this and nothing else). Under-voltage now also from the rpi_volt hwmon.
-  * clock: NTP from timedatectl (as gatbox-raillog); the RTC checks mirror gatbox-raillog's rtc_trusted(), except
-    the /dev/rtc0 test (root-only; sysfs has the same clock)
-  * network: `ip -j addr`, nmcli for connections (the GATBOX hotspot is the NM profile gatbox-ap), iw for the SSID
-Results are cached for CACHE_S so a panel polling it can't pile up forks.
+  * clock: NTP synced = the kernel's clock status (adjtimex, read only) with timedatectl's own rule, max error
+    under 16 s. gatbox-raillog asks timedatectl, but D-Bus isn't reachable from this sandboxed service (seen
+    2026-09-28: nmcli and timedatectl both fail under DynamicUser, and never reach dbus-daemon). The RTC checks
+    mirror gatbox-raillog's rtc_trusted(), except the /dev/rtc0 test (root-only; sysfs has the same clock)
+  * network: `ip -j addr` and `iw dev` (netlink, no D-Bus). A wireless interface of type AP is the GATBOX hotspot
+    (NetworkManager's gatbox-ap profile), type managed is a client connection with its SSID.
+Results are cached for CACHE_S so a panel polling it can't pile up forks. A source that fails says why in "errors".
 """
+import ctypes
+import ctypes.util
 import glob
 import json
 import os
@@ -30,13 +35,34 @@ THROTTLE_BITS = {0: "under-voltage", 1: "arm frequency capped", 2: "throttled", 
 _lock = threading.Lock()
 _cache = [0.0, None]
 _versions = None
+_errors = {}          # this snapshot's failures: command -> first line of what it said
 
 
 def _run(cmd, timeout=3):
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return r.stdout if r.returncode == 0 else None
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError) as e:
+        _errors[" ".join(cmd[:2])] = repr(e)
+        return None
+    if r.returncode != 0:
+        _errors[" ".join(cmd[:2])] = ((r.stderr or r.stdout).strip().splitlines() or [f"exit {r.returncode}"])[0][:200]
+        return None
+    return r.stdout
+
+
+def ntp_synced():
+    """The kernel's clock status, as timedatectl's NTPSynchronized reads it: synced when the maximum error is under
+    16 s (systemd ignores STA_UNSYNC). adjtimex with modes = 0 only reads, and needs no privilege."""
+    try:
+        libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+        buf = ctypes.create_string_buffer(512)            # struct timex (~208 bytes on arm64), zeroed: modes = 0
+        if libc.adjtimex(buf) < 0:
+            _errors["adjtimex"] = os.strerror(ctypes.get_errno())
+            return None
+        # struct timex on 64-bit: unsigned modes (4) + pad (4), long offset, long freq, long maxerror (µs) at 24
+        return ctypes.c_long.from_buffer(buf, 24).value < 16_000_000
+    except (OSError, AttributeError) as e:
+        _errors["adjtimex"] = repr(e)
         return None
 
 
@@ -83,10 +109,7 @@ def hwmon(name):
 
 
 def clock():
-    ntp = None
-    out = _run(["timedatectl", "show", "-p", "NTPSynchronized", "--value"])
-    if out is not None:
-        ntp = out.strip() == "yes"
+    ntp = ntp_synced()
     rtc = _float(_read(os.path.join(RTC, "since_epoch")))
     stamp = _read(RTC_STAMP)                                 # "<epoch> <iso>", written by gatbox-rtc-sync
     st_epoch, st_iso = None, None
@@ -106,12 +129,12 @@ def clock():
 
 def disk():
     out = {}
-    for p in ("/", config.LOGDIR, config.SRV):
+    for label, p in (("system", "/"), ("logs", config.LOGDIR), ("dumps", config.SRV)):
         try:
             u = shutil.disk_usage(p)
-            out[p] = {"total": u.total, "free": u.free, "used_pct": round(100 * u.used / u.total, 1)}
+            out[label] = {"path": p, "total": u.total, "free": u.free, "used_pct": round(100 * u.used / u.total, 1)}
         except OSError:
-            out[p] = None                                    # /srv/gatbox arrives with the dumps (M7)
+            out[label] = None                                # /srv/gatbox arrives with the dumps (M7)
     return out
 
 
@@ -128,36 +151,44 @@ def network():
                                  if a.get("family") == "inet6" and a.get("scope") == "global"]})
     except (ValueError, TypeError, KeyError):
         pass
-    conns = []
-    out = _run(["nmcli", "-t", "-f", "NAME,TYPE,DEVICE", "con", "show", "--active"])
+    wifi = []
+    out = _run(["iw", "dev"])                                # "Interface wlan0 / ssid … / type managed|AP"
+    cur = None
     for line in (out or "").splitlines():
-        p = line.replace("\\:", "\0").split(":")
-        if len(p) >= 3:
-            conns.append({"name": p[0].replace("\0", ":"), "type": p[1], "device": p[2]})
-    wifi = next((c for c in conns if c["type"] == "802-11-wireless"), None)
-    ssid = None
-    if wifi:
-        link = _run(["iw", "dev", wifi["device"], "link"]) or ""
-        ssid = next((ln.split(":", 1)[1].strip() for ln in link.splitlines() if ln.strip().startswith("SSID:")), None)
-    ap = next((c for c in conns if c["name"] == AP_PROFILE), None)
-    ap_addr = next((i["ipv4"][0] for i in ifs if ap and i["name"] == ap["device"] and i["ipv4"]), None)
-    return {"interfaces": ifs, "connections": conns if out is not None else None,
-            "wifi": {"device": wifi["device"], "connection": wifi["name"], "ssid": ssid} if wifi else None,
-            "hotspot": {"active": bool(ap), "profile": AP_PROFILE, "address": ap_addr}}
+        w = line.strip().split(None, 1)
+        if not w:
+            continue
+        if w[0] == "Interface":
+            cur = {"device": w[1] if len(w) > 1 else None, "type": None, "ssid": None}
+            wifi.append(cur)
+        elif cur and w[0] == "type" and len(w) > 1:
+            cur["type"] = w[1]
+        elif cur and w[0] == "ssid" and len(w) > 1:
+            cur["ssid"] = w[1]
+    for w in wifi:
+        w["ipv4"] = next((i["ipv4"] for i in ifs if i["name"] == w["device"]), [])
+    client = next((w for w in wifi if w["type"] == "managed" and w["ssid"]), None)
+    ap = next((w for w in wifi if w["type"] == "AP"), None)
+    return {"interfaces": ifs, "wifi": client,
+            "hotspot": {"active": bool(ap), "profile": AP_PROFILE, "ssid": ap and ap["ssid"],
+                        "address": (ap["ipv4"] or [None])[0] if ap else None}}
 
 
-def kiosk():
-    """The 7" kiosk: is its Chromium running (its own profile dir), and the last EXIT / SHUT DOWN requests."""
-    running = False
+def cmdlines():
+    """Every process's command line (NUL-separated bytes). /proc, not systemctl: no D-Bus in this sandbox."""
+    out = []
     for d in glob.glob("/proc/[0-9]*/cmdline"):
         try:
             with open(d, "rb") as f:
-                c = f.read()
+                out.append(f.read())
         except OSError:
             continue
-        if b"--kiosk" in c and b"gatbox-kiosk" in c:
-            running = True
-            break
+    return out
+
+
+def kiosk(procs):
+    """The 7" kiosk: is its Chromium running (its own profile dir), and the last EXIT / SHUT DOWN requests."""
+    running = any(b"--kiosk" in c and b"gatbox-kiosk" in c for c in procs)
 
     def at(name):
         try:
@@ -183,9 +214,9 @@ def versions():
     return _versions
 
 
-def logger():
-    out = _run(["systemctl", "is-active", "gatbox-raillog.service"])
-    return {"service": (out or "").strip() or None, "stopped": os.path.exists(os.path.join(config.CTRL, "stopped")),
+def logger(procs):
+    running = any(c.split(b"\0")[1:2] == [b"/usr/local/bin/gatbox-raillog"] for c in procs)   # bash <script>
+    return {"running": running, "stopped": os.path.exists(os.path.join(config.CTRL, "stopped")),
             "logging": LIVE.logging(), "file": LIVE.name, "age_s": LIVE.age()}
 
 
@@ -193,6 +224,8 @@ def snapshot():
     with _lock:
         if _cache[1] and time.monotonic() - _cache[0] < CACHE_S:
             return _cache[1]
+        _errors.clear()
+        procs = cmdlines()
         vm = hwmon("rpi_volt")
         fan = hwmon("pwmfan")
         up = _float(_read("/proc/uptime").split()[0]) if _read("/proc/uptime") else None
@@ -204,8 +237,9 @@ def snapshot():
             "throttled": throttled(),
             "undervoltage_now": (_read(os.path.join(vm, "in0_lcrit_alarm")) == "1") if vm else None,
             "ext5v_v": _vc_volts("EXT5V_V"),
-            "disk": disk(), "network": network(), "clock": clock(), "kiosk": kiosk(),
-            "logger": logger(), "versions": versions(),
+            "disk": disk(), "network": network(), "clock": clock(), "kiosk": kiosk(procs),
+            "logger": logger(procs), "versions": versions(),
         }
+        out["errors"] = dict(_errors)
         _cache[:] = [time.monotonic(), out]
         return out

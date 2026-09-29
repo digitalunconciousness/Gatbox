@@ -13,7 +13,7 @@ set -u
 STATE="${XDG_CONFIG_HOME:-$HOME/.config}/gatbox/kiosk"            # "on" | "off"; missing = on
 PROFILE="${XDG_DATA_HOME:-$HOME/.local/share}/gatbox-kiosk"      # Chromium profile, separate from the desktop's
 BASE="${GATBOX_KIOSK_BASE:-http://127.0.0.1}"                    # gatbox-web (override: tests only)
-URL="${GATBOX_KIOSK_URL:-$BASE/}"                                # gatbox-web's / until the M5 dashboard (/dash/)
+URL="${GATBOX_KIOSK_URL:-$BASE/dash/}"                           # the M5 dashboard (links to the phone view at /)
 BROWSER="${GATBOX_KIOSK_BROWSER:-chromium}"                      # override: tests only
 WAIT="${GATBOX_KIOSK_WAIT:-120}"                                 # seconds to wait for gatbox-web at boot
 say() { echo "gatbox-kiosk: $*"; logger -t gatbox-kiosk -- "$*" 2>/dev/null; }   # autostart drops stdout: journal too

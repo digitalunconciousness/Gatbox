@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#150a28">
+<title>GATBOX//</title>
+<link rel="stylesheet" href="dash.css">
+</head>
+<body>
+<header>
+  <span class="brand">GATBOX<b>//</b></span>
+  <span class="unit">GDD-GAT/01</span>
+  <span class="hsp"></span>
+  <span id="h-log"><span id="h-dot" class="dot"></span><span id="h-logtxt" class="mut">…</span></span>
+  <span id="h-net" class="mut">…</span>
+  <span id="h-clock">--:--:--</span>
+  <span id="h-src" class="badge mut">…</span>
+</header>
+
+<nav id="nav">
+  <button data-view="meter" class="on">METER</button>
+  <button data-view="sessions">SESSIONS</button>
+  <button data-view="machine">MACHINE<small id="n-machine"></small></button>
+  <button data-view="system">SYSTEM</button>
+  <button data-view="devices">DEVICES</button>
+  <button data-view="dump" id="n-dump" class="dim">DUMP<small id="n-dump-s">T48 not plugged in</small></button>
+</nav>
+
+<main>
+  <!-- METER: the live reading -->
+  <section id="v-meter" class="view on">
+    <div id="banners"></div>
+    <div class="meter-top">
+      <div class="hero">
+        <div class="hero-line">
+          <span id="m-mode" class="chip">—</span>
+          <button id="m-profile" class="chip">PROFILE</button>
+          <span id="m-window" class="mut"></span>
+        </div>
+        <div class="hero-read"><span id="m-value">—</span><span id="m-unit"></span><span id="m-state" class="badge hide"></span></div>
+        <div id="m-session" class="mut">…</div>
+      </div>
+      <div class="actions">
+        <button id="b-mark" class="act">MARK<small>hold: with a label</small></button>
+        <button id="b-new" class="act">NEW FILE<small>end this one</small></button>
+        <button id="b-alarm" class="act">ALARM ON<small>over-voltage takeover</small></button>
+        <button id="b-capture" class="act">CAPTURE<small>save this reading</small></button>
+      </div>
+    </div>
+    <div class="chartbox">
+      <canvas id="c-live" aria-label="live readings"></canvas>
+      <div id="c-empty" class="chart-empty">Waiting for readings…</div>
+      <div class="chart-ctl">
+        <button data-z="out" aria-label="zoom out">−</button>
+        <button data-z="in" aria-label="zoom in">+</button>
+        <button data-z="live" class="on">LIVE</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- SESSIONS: the logs -->
+  <section id="v-sessions" class="view">
+    <div class="split">
+      <div id="s-list" class="list scroll"></div>
+      <div id="s-detail" class="detail scroll"><div class="card mut">Tap a session for its report.</div></div>
+    </div>
+  </section>
+
+  <!-- MACHINE: the current roster machine -->
+  <section id="v-machine" class="view scroll">
+    <div class="btnrow"><button id="mc-pick">PICK MACHINE</button><button id="mc-clear">CLEAR</button></div>
+    <div id="mc-body"></div>
+  </section>
+
+  <!-- SYSTEM: the Pi -->
+  <section id="v-system" class="view scroll">
+    <div id="sy-grid" class="grid"></div>
+    <div id="sy-kiosk" class="card hide">
+      <h2>This screen</h2>
+      <div class="btnrow">
+        <button class="hold" data-act="exit" data-ms="1500">HOLD TO EXIT KIOSK</button>
+        <button class="hold bad" data-act="shutdown" data-ms="3000">HOLD 3 S TO SHUT DOWN</button>
+      </div>
+      <p class="mut">Exit closes the kiosk until the next login. Shut down powers the Pi off safely; unplug only when
+        the screen is dark and the LED is red.</p>
+    </div>
+  </section>
+
+  <!-- DEVICES -->
+  <section id="v-devices" class="view scroll"><div id="dv-grid" class="grid"></div></section>
+
+  <!-- DUMP (M7) -->
+  <section id="v-dump" class="view scroll"><div id="du-body"></div></section>
+</main>
+
+<div id="alarm" class="hide" role="alertdialog" aria-live="assertive">
+  <div class="t">OVER-VOLTAGE</div>
+  <div class="v" id="al-v"></div>
+  <div id="al-sub"></div>
+  <button id="al-ack">ACK</button>
+</div>
+<div id="sheet" class="hide"><div class="pane" id="pane"></div></div>
+<div id="toast" class="hide"></div>
+<div id="kx-off" class="hide" style="position:fixed;inset:0;z-index:60;background:#150a28;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px">
+  <div><div class="big">Shutting down…</div><p>Unplug the Pi only when this screen goes dark and its LED turns red.</p></div>
+</div>
+
+<script src="chart.js"></script>
+<script src="dash.js"></script>
+</body>
+</html>

@@ -20,7 +20,8 @@ If readings come back as garbage, suspect the adapter chip or parity before the 
 - A power cut mid-session can leave a run of NUL bytes at the end of a CSV (ext4). Both readers skip it; keep it that way.
 
 ## Installed by `bootstrap/gatbox-bootstrap.sh`, straight from this checkout (see BRINGUP.md)
-Layout: `backend/` services + units, `tools/` CLIs, `bootstrap/` installer + `files/`, `data/`, `docs/`, `tests/`.
+Layout: `backend/` services + units, `tools/` CLIs, `web/dash/` the dashboard, `bootstrap/` installer + `files/`,
+`data/`, `docs/`, `tests/` (`tests/cdp.py` drives headless Chromium for the dashboard tests).
 The bootstrap's MANIFEST maps repo files to installed paths. `--check` (no root) shows what a run would change.
 - `gatbox-raillog.service` (root) → `/usr/local/bin/gatbox-raillog`. One CSV per contiguous session **and dial mode**
   (M4b): `/var/log/gatbox/rail_YYYYmmdd_HHMMSS[_N].csv` (`iso_time,epoch,value,unit,flags,uptime_s`; header
@@ -31,8 +32,9 @@ The bootstrap's MANIFEST maps repo files to installed paths. `--check` (no root)
   cycles, suspect glitches), `gatbox-meta`, `gatbox-replay` (tests), shared Python in `/usr/local/lib/gatbox/gatboxlib`
 - `gatbox-web` + `gatbox-web.service`: the one server on port 80: phone view (live reading, sessions, report/plot,
   PDF, CSV, Start/Stop) and, from M4d, the JSON API + SSE under `/api/` (package `backend/gatboxweb`, routes table in
-  `server.py`). Fonts in `/usr/local/share/gatbox-web/fonts`. Stdlib, DynamicUser. **M4d is in the repo; its install
-  (unit gets `video` + a private /dev) waits for the owner's OK.**
+  `server.py`). Fonts in `/usr/local/share/gatbox-web/fonts`. Stdlib, DynamicUser, `video` group + a private /dev
+  holding only /dev/vcio_gencmd (vcgencmd). No D-Bus from inside it: /api/system reads the kernel, sysfs, /proc, iw.
+- The dashboard (M5) at `/dash/` (static files in `/usr/local/share/gatbox-web/dash`), which the 7" kiosk opens.
 - udev `/etc/udev/rules.d/99-gatbox-dmm.rules`, persistent journal, menu entry "GATBOX Rail Monitor"
 - EEPROM `PSU_MAX_CURRENT=5000`, config.txt `usb_max_current_enable=1`
 - Fallback hotspot NM profile `gatbox-ap`, **SSID GATBOX**, up only if no known network appears ~60 s after boot.

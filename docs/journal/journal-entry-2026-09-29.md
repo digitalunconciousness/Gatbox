@@ -72,4 +72,6 @@
   manuals list.
 - NEXT: install (burn + the manuals list); a real burn to a blank chip from the 7"; CONFIRM the rail limits on the
   dashboard as each machine comes up; settle the CHECK machines (Batman, D&D, SF2 Grandmaster, After Burner, Snow
-  Bros 2, DDR's mix); M8 when she's ready.
+  Bros 2, DDR's mix).
+- DECIDED (owner): M8, the homelab side (Sync, the war-room panel), is on hold until she's ready to sort out
+  her server setup.

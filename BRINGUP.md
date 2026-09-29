@@ -46,7 +46,8 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       OK"), 2 read-backs == the image, `burns.jsonl` (plan docs/plans/2026-09-29-t48-burn.md; tests/test-dump.sh,
       test-dash; fake-minipro FAKE_CHIP) [ ] install (same units and paths: no system config change) [ ] ⏸ a real
       burn to a blank chip from the 7″
-- [ ] **M8 2G stretch**: ask first
+- [ ] **M8 2G stretch**: deferred by the owner (2026-09-29): the homelab side (Sync, the war-room panel) waits until
+      she's ready to sort out her server setup. Don't start it or ask about it until she brings it up.
 - [ ] **Owner requests (2026-09-29)**, off-spec, one at a time with her OK on each design:
       [x] + ADD MACHINE / EDIT / EXPORT ROSTER, and CAPTURE → SAVE READING (code + tests/test-roster.sh, test-dash)
       [x] installed (d578961) [x] each machine's ROM checklist from MAME's own hash data, no ROM sets downloaded

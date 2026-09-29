@@ -312,6 +312,11 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
     script's own prerequisite).
   - The firmware file is XGecu's and never goes in the repo.
   - `minipro -F` checks the file's version, size and CRC and asks y/n before switching the T48 to its bootloader.
+  - **Updated 2026-09-28 21:38 (owner ran it, socket empty):** `echo y | minipro -F ~/t48-firmware/UpdateT48-01.1.32.dat`
+    (the file's SHA-256 `af7394b8…3b4a5c` is next to it, with a provenance note). Before that, minipro checked the file
+    with the answer "n": "contains firmware version 00.1.32 (newer)", the same 0x120 it expects (its own print
+    format). After: `Found T48 00.1.32 (0x120)`, no out-of-date warning. `minipro -t` with the socket empty: every
+    VPP / VCC / GND pin driver and logic pin Good, VPP and VCC overcurrent protection OK, supply 5.03 V.
 - **Part names (minipro -q T48 -l, 32,361 entries):** generic names repeat (two `27C010@DIP32` entries), next to
   manufacturer-prefixed ones (AM27C010, M27C1001, TMS27C010…). The M2 dump showed why the exact part matters: generic
   `27C020@DIP32` refused a TI chip, "Invalid Chip ID: expected 0x8934, got 0x9732 (TMS27C020@DIP32)", and it read as

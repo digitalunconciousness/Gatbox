@@ -140,3 +140,7 @@
   pin 9.
 - NEXT: M7, the T48: pick the chip, label it, read it twice and compare, identify it with MAME, archive it under
   the machine. The DUMP tab lights up when the T48 is plugged in.
+- T48 firmware updated from 1.03 to 1.32, the version minipro expects. The file came from XGecu's official software
+  release that minipro's own script names, and was checked against its checksum before flashing. The T48's
+  self-test passed on every pin afterwards. This also brings the T48's own chip-programming routines up to date for
+  M7.

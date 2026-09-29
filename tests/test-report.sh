@@ -52,6 +52,7 @@ check "2-sample over-voltage is real (not suspect)" 'grep -q "^OVER-VOLTAGE (1):
 check "excursion covers 5.20 → 6.20 V"        'grep -q "^EXCURSIONS (1)" <<<"$out" && grep -q "worst +6.200 V   (4 samples)" <<<"$out"'
 check "marks listed, before-start tagged"     'grep -q "^MARKS (2):" <<<"$out" && grep -q "dashboard  before   (before this file started)" <<<"$out" && grep -q "scan       it just crashed$" <<<"$out"'
 check "--json marks + machine"               '[ "$(rep "$T/gl.csv" --json | jq_ "len(d[\"marks\"]), d[\"machine\"], d[\"over_voltage\"][0][\"suspect\"]")" = "2 gauntlet-legends False" ]'
+check "--no-plot: no PNG anywhere, plot null" '[ "$(cd "$T" && python3 "$REPORT" "$T/gl.csv" --json --no-plot | jq_ "d[\"plot\"], len(d[\"over_voltage\"])")" = "None 1" ] && [ ! -e "$T/gl.png" ]'
 
 echo "-5V rail:"
 mk "$T/neg.csv" "# clock=ntp" "# mode=VDC" "# profile=rail-neg5v" "# window=-5.25..-4.75 source=profile" "# alarm_hi=5.775" -- \

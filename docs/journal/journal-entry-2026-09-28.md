@@ -79,3 +79,21 @@
   4 power cycles, rail 5.009–5.024 V (100% in window, also at the GL spec), 3 suspect glitches, no excursions.
 - Kiosk SHUT DOWN button (owner's request): a 3 s hold on the 7" powers the Pi off cleanly (the logger stops normally,
   files synced). Pi screen only, never from a phone. No new permissions needed: the desktop session may power off.
+- M4a–c + SHUT DOWN installed and rebooted (17:44). The bootstrap check came back clean, the clock came up from the
+  RTC, and the kiosk started on its own.
+- M4d code (not installed yet): gatbox-web grew into a package with a JSON API under `/api/`. It has live readings
+  as a stream (SSE: every sample as it lands, file changes, over-voltage events, heartbeats); the meter state
+  (mode, value, profile, window, machine, dial check, leads-reversed, alarm); profile / machine / ALARM ON/OFF
+  switches; marks; NEW; captures; the session list with the report's own numbers; the Pi's health; USB devices;
+  and roster entries with their platform, critical actions and rail spec. Every old phone URL still works. The
+  phone view and PDF now use each file's own window.
+- DECIDED (applied): the live alarm fires on 2+ readings in a row over the limit; a lone one is an amber SPIKE; OL
+  never counts. ALARM OFF comes back on when another profile is picked, so an overnight log can't start with the
+  alarm silenced from probing.
+- FOUND: on this Pi 5, `vcgencmd` talks through `/dev/vcio_gencmd` (video group), not `/dev/vcio`. The web
+  service gets the video group and a private /dev that holds only that one node, so it can't even see the
+  meter's serial port.
+- FOUND by the new tests: a mark pressed in the same second a file started was labelled as made during the file.
+  The logger now compares to the millisecond.
+- NEXT: install M4d (the owner OKs the web unit change first), then M5, the dashboard at `/dash/` with the live
+  graph (real time, tap for a reading, zoom).

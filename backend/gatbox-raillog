@@ -153,6 +153,9 @@ mode_key() {   # <unit> <flags>: sets MODE
 # gatbox-web appends marks to $SPOOL; this moves the ones not taken yet into the live file. marks-seen = how many
 # lines were taken; marks-checked's mtime = when the spool was last looked at (touched *before* reading, so a mark
 # appended meanwhile is caught at the next sample). Builtins only: it runs from the sample loop.
+# epoch "S[.fff…]" -> whole milliseconds in REPLY (builtins only; marks and file starts can share a second)
+to_ms() { local f=000; [[ $1 == *.* ]] && f="${1#*.}000"; REPLY=$(( ${1%%.*} * 1000 + 10#${f:0:3} )); }
+
 take_marks() {
     local seen=0 n=0 e up src label kind
     : > "$RUNDIR/marks-checked"
@@ -162,7 +165,8 @@ take_marks() {
         (( n <= seen )) && continue
         [[ $e =~ ^[0-9]+(\.[0-9]+)?$ ]] || continue
         kind=mark
-        (( ${e%.*} < fstart )) && kind=mark-before-start        # made while no file was open
+        to_ms "$e"
+        (( REPLY < fstart )) && kind=mark-before-start          # made while no file was open
         printf '# %s=%(%FT%T)T,%s,%s,%s,%s\n' "$kind" "${e%.*}" "$e" "$up" "$src" "$label" >> "$F"
     done < "$SPOOL"
     printf '%s\n' "$n" > "$RUNDIR/marks-seen"
@@ -205,7 +209,7 @@ session() {
             F="$LOGDIR/rail_$(date +%Y%m%d_%H%M%S).csv"
             base=${F%.csv}; n=2
             while [ -e "$F" ]; do F="${base}_$n.csv"; n=$((n + 1)); done   # two files in one second (fast dial)
-            fmode=$MODE; fstart=${EPOCHREALTIME%.*}
+            fmode=$MODE; to_ms "$EPOCHREALTIME"; fstart=$REPLY
             clock_label                                        # once per file; forks are fine here
             # already NTP, or timesyncd's flag was already there: no mid-session sync to report
             if [ "$CLOCK_SRC" = ntp ] || [ -e "$NTP_FLAG" ]; then synced=1; else synced=0; fi

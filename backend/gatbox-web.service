@@ -15,6 +15,13 @@ CacheDirectory=gatbox-web
 StateDirectory=gatbox-web
 # matplotlib wants a writable config/font-cache dir; without one it rebuilds the font cache every run
 Environment=MPLCONFIGDIR=/var/cache/gatbox-web/mpl
+# /api/system runs vcgencmd (throttling, EXT5V, the RTC cell), which opens /dev/vcio_gencmd: root:video 0660 on
+# this Pi. The video group is for that one node: PrivateDevices gives the service an empty /dev (the DMM port
+# included: the logger owns it) and only vcio_gencmd is bound in. "-": start anyway if a kernel lacks the node.
+SupplementaryGroups=video
+PrivateDevices=yes
+BindReadOnlyPaths=-/dev/vcio_gencmd
+DeviceAllow=/dev/vcio_gencmd r
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes

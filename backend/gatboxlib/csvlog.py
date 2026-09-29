@@ -85,6 +85,11 @@ def _comment(h, marks, c, t0, t1):
             marks.append(Mark(iso, float(p[1]), _num(p[2]), p[3], p[4], key == "mark-before-start"))
 
 
+def comment(h, marks, line):
+    """Apply one '# …' line to Header h (and marks): for readers that follow a file as it grows."""
+    _comment(h, marks, line.lstrip("#").strip(), None, None)
+
+
 def read(path, t0=None, t1=None):
     """(Header, [Row], [Mark]); rows (and marks) limited to iso_time in [t0, t1] when given."""
     h, rows, marks = Header(), [], []

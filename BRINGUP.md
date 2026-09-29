@@ -20,8 +20,9 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       gatbox-kiosk + EXIT KIOSK, never blanks in kiosk, power OK under load, ⏸ reboot tests **passed**
 - [ ] **M4 2C backend**: [x] 4a replay harness [x] 4b data model + logger (mode/profile/window/alarm/machine
       header, one file per dial mode + settling, marks spool, /run/gatbox/mode) [x] 4c report (header window/limit, power cycles, suspect
-      glitches, marks, --json) [ ] 4d JSON API + SSE
-      [ ] install (needs OK: gatbox-web unit gets SupplementaryGroups=video) — code only so far, nothing installed
+      glitches, marks, --json) [x] 4d JSON API + SSE (gatbox-web → package + routes table; 80 API tests)
+      4a–c + kiosk SHUT DOWN installed 2026-09-28 (reboot 17:44, `--check` clean). [ ] 4d install (needs OK: the
+      gatbox-web unit gets `video` + a private /dev with only /dev/vcio_gencmd)
 - [ ] **M5 2D dashboard** at `/dash/`; screenshot tests; ⏸ on the real panel
 - [ ] **M6 2E scanner**: gatbox-scand; labels; ⏸ scan slug / MARK / NEW
 - [ ] **M7 2F T48 dump**: gatbox-dump; dashboard flow; ⏸ real board dump
@@ -179,6 +180,29 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   (1m32s), powered 5.009–5.024 V mean 5.020 (100% in the window, also at the GL spec 4.90–5.10), 3 suspect
   over-voltage readings, no excursions. The old report called the two switch-bounce power-downs "excursions of
   11 and 39 samples, worst +20.28 V", which is where the journal's "25 s at 20 V" came from.
+- **4d JSON API (2026-09-28):** gatbox-web is now `backend/gatboxweb/` (routes table in `server.py`) behind the same
+  `/usr/local/bin/gatbox-web`; every old URL answers as before, except that the phone view and PDF now use each file's
+  header window unless `lo`/`hi` are given. Endpoints per the spec, plus `PUT /api/meter/alarm {"on"}` (the ALARM
+  ON/OFF switch). Writes need `Content-Type: application/json` (no cross-site form posts) and bodies ≤ 4 KB.
+  - **Live:** one thread follows `/run/gatbox/current` across rollovers. It keeps the file's last hour of samples
+    (for the chart) and feeds every SSE client from one event log: hello, backlog, sample, session, alarm, mark,
+    capture, state, heartbeat; `Last-Event-ID` resumes.
+  - **The alarm rule** as decided: over `alarm_hi` (magnitude, only in the profile's own dial modes, never OL) = SPIKE;
+    2+ in a row = ALARM. Events are always tracked; ALARM OFF only stops the takeover. Picking another profile turns
+    the alarm back on, so an overnight log never inherits a silenced alarm from probing.
+  - **New files:** a profile change, or a different machine, while a session is live writes `start-request` (the
+    logger starts a new file); re-setting the same machine does nothing; nothing is written while stopped.
+  - **Captures:** the live reading only (≤ 3 s old), to `captures/<slug>.csv` (or `unassigned.csv`).
+  - **Roster:** critical actions name games by display name, so matching is by name (the longest wins: "Gauntlet"
+    doesn't also land on Gauntlet Legends).
+  - **Session list:** from `gatbox-rail-report --json --no-plot` (0.15 s a file, cached; the live one reused for 15 s).
+- **Spec vs reality (4d):** `vcgencmd` on this Pi 5 opens `/dev/vcio_gencmd` (root:video 0660), not `/dev/vcio`
+  (root-only). So the unit adds `SupplementaryGroups=video`, `PrivateDevices=yes`, and binds in only
+  `/dev/vcio_gencmd` (tried under `systemd-run --user`: vcgencmd works, and /dev has no ttyUSB, gatbox-dmm or vcio).
+  So hard rule 2 is also enforced by the unit: the web service can't see the meter's port.
+- **Logger fix found by the API tests:** a mark made < 1 s before a file started was written as `# mark=`, because
+  the logger compared whole seconds. It now compares milliseconds (builtins, per mark only; the sample loop is unchanged).
+- **Scanner:** no USB ID yet (the EY-H2 hasn't been plugged into this Pi); `/api/devices` says so until M6.
 - **Site config, not in the bootstrap:** the home Wi-Fi's static address (09-24, `nmcli connection modify … ipv4.method
   manual …`). It belongs to the network the Pi is on, not to the Pi, and the repo is public.
 

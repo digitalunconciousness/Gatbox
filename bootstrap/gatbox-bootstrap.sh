@@ -58,6 +58,18 @@ backend/gatboxlib/__init__.py                   /usr/local/lib/gatbox/gatboxlib/
 backend/gatboxlib/modes.py                      /usr/local/lib/gatbox/gatboxlib/modes.py              644
 backend/gatboxlib/profiles.py                   /usr/local/lib/gatbox/gatboxlib/profiles.py           644
 backend/gatboxlib/csvlog.py                     /usr/local/lib/gatbox/gatboxlib/csvlog.py             644
+backend/gatboxweb/__init__.py                   /usr/local/lib/gatbox/gatboxweb/__init__.py           644
+backend/gatboxweb/config.py                     /usr/local/lib/gatbox/gatboxweb/config.py             644
+backend/gatboxweb/server.py                     /usr/local/lib/gatbox/gatboxweb/server.py             644
+backend/gatboxweb/phone.py                      /usr/local/lib/gatbox/gatboxweb/phone.py              644
+backend/gatboxweb/sessions.py                   /usr/local/lib/gatbox/gatboxweb/sessions.py           644
+backend/gatboxweb/report.py                     /usr/local/lib/gatbox/gatboxweb/report.py             644
+backend/gatboxweb/live.py                       /usr/local/lib/gatbox/gatboxweb/live.py               644
+backend/gatboxweb/meter.py                      /usr/local/lib/gatbox/gatboxweb/meter.py              644
+backend/gatboxweb/captures.py                   /usr/local/lib/gatbox/gatboxweb/captures.py           644
+backend/gatboxweb/roster.py                     /usr/local/lib/gatbox/gatboxweb/roster.py             644
+backend/gatboxweb/system.py                     /usr/local/lib/gatbox/gatboxweb/system.py             644
+backend/gatboxweb/devices.py                    /usr/local/lib/gatbox/gatboxweb/devices.py            644
 data/profiles.json                              /usr/local/share/gatbox/profiles.json                 644
 data/gatbox-machine-specs.json                  /usr/local/share/gatbox/gatbox-machine-specs.json     644
 data/gatbox-barcade-roster.json                 /usr/local/share/gatbox/gatbox-barcade-roster.json    644  optional
@@ -346,7 +358,8 @@ svc() {   # <unit> <installed path glob>...: enable it; restart only if its file
     else log "$unit up to date, left running"; fi
 }
 svc gatbox-raillog.service /usr/local/bin/gatbox-raillog /etc/systemd/system/gatbox-raillog.service
-svc gatbox-web.service /usr/local/bin/gatbox-web /etc/systemd/system/gatbox-web.service
+svc gatbox-web.service /usr/local/bin/gatbox-web /etc/systemd/system/gatbox-web.service \
+    '/usr/local/lib/gatbox/gatboxweb/*' '/usr/local/lib/gatbox/gatboxlib/*'   # its package and the shared lib
 fetch_font() {   # <path in google/fonts> <local name> <sha256>
     local f="$FONTDIR/$2"
     echo "$3  $f" | sha256sum -c --status 2>/dev/null && return 0

@@ -22,15 +22,17 @@ If readings come back as garbage, suspect the adapter chip or parity before the 
 ## Installed by `bootstrap/gatbox-bootstrap.sh`, straight from this checkout (see BRINGUP.md)
 Layout: `backend/` services + units, `tools/` CLIs, `bootstrap/` installer + `files/`, `data/`, `docs/`, `tests/`.
 The bootstrap's MANIFEST maps repo files to installed paths. `--check` (no root) shows what a run would change.
-- `gatbox-raillog.service` (root) → `/usr/local/bin/gatbox-raillog`. It writes one CSV per contiguous session:
-  `/var/log/gatbox/rail_YYYYmmdd_HHMMSS.csv` (`iso_time,epoch,value,unit,flags,uptime_s` + `# clock=` line;
-  `uptime_s` is monotonic, use it for durations), and `/run/gatbox/current`. The ACT LED blinks while it's logging.
-  Start/Stop flag files in `/var/lib/gatbox-web`.
-  **Not yet (as of 2026-09-28, despite the handoff/project docs):** no `# mode=` header, no `/run/gatbox/mode`, and
-  no new file on a dial change. Those arrive with M4b.
-- `gatbox-status [-f]`, `gatbox-rail-report [csv] [--lo --hi --plot]` (mode-aware; default window 4.75–5.25 V)
-- `gatbox-web` + `gatbox-web.service`: phone web view on port 80 (live reading + meter mode, sessions, report/plot,
-  PDF, CSV, Start/Stop). Fonts in `/usr/local/share/gatbox-web/fonts`. Stdlib, DynamicUser.
+- `gatbox-raillog.service` (root) → `/usr/local/bin/gatbox-raillog`. One CSV per contiguous session **and dial mode**
+  (M4b): `/var/log/gatbox/rail_YYYYmmdd_HHMMSS[_N].csv` (`iso_time,epoch,value,unit,flags,uptime_s`; header
+  `# clock=`, `# mode=`, `# profile=`, `# window=`, `# alarm_hi=`, `# machine=`; `# mark=` lines; format in
+  `backend/gatboxlib/csvlog.py`). `uptime_s` is monotonic, use it for durations. `/run/gatbox/current` + `mode`.
+  The ACT LED blinks while it's logging. Flags, profile, machine and the marks spool live in `/var/lib/gatbox-web`.
+- `gatbox-status [-f]`, `gatbox-rail-report [csv] [--lo --hi --plot|--no-plot --json]` (header window, power
+  cycles, suspect glitches), `gatbox-meta`, `gatbox-replay` (tests), shared Python in `/usr/local/lib/gatbox/gatboxlib`
+- `gatbox-web` + `gatbox-web.service`: the one server on port 80: phone view (live reading, sessions, report/plot,
+  PDF, CSV, Start/Stop) and, from M4d, the JSON API + SSE under `/api/` (package `backend/gatboxweb`, routes table in
+  `server.py`). Fonts in `/usr/local/share/gatbox-web/fonts`. Stdlib, DynamicUser. **M4d is in the repo; its install
+  (unit gets `video` + a private /dev) waits for the owner's OK.**
 - udev `/etc/udev/rules.d/99-gatbox-dmm.rules`, persistent journal, menu entry "GATBOX Rail Monitor"
 - EEPROM `PSU_MAX_CURRENT=5000`, config.txt `usb_max_current_enable=1`
 - Fallback hotspot NM profile `gatbox-ap`, **SSID GATBOX**, up only if no known network appears ~60 s after boot.

@@ -40,6 +40,7 @@ The bootstrap's MANIFEST maps repo files to installed paths. `--check` (no root)
   exports file + additions for the maintenance app.
 - `gatbox-scand` + `gatbox-scand.service` (M6): grabs the EY-H2 (USB af99:8002) and posts each code to gatbox-web
   (`POST /api/scan`, loopback): roster slug → machine, `GATBOX:MARK` → mark, `GATBOX:NEW` → new file.
+  A hub-printed label scans as `<base>/g/<slug>`; the slug inside it works like a bare one.
   DynamicUser + input group, input devices only, localhost only. `gatbox-labels` / `/labels.pdf`: QR sheet (the owner
   makes labels in her Katasymbol app from the dashboard's MACHINE → LABEL LIST).
 - udev `/etc/udev/rules.d/99-gatbox-dmm.rules`, persistent journal, menu entry "GATBOX Rail Monitor"

@@ -250,6 +250,20 @@ if [ "${1:-}" = "--check" ]; then
     exit 0
 fi
 
+# Anything that is not exactly --check or --extract reached here, which means a real
+# run. A mistyped flag must not install files and restart services on a live Pi: that
+# happened with "--checksudo", a paste that ran the whole install instead of the
+# read-only report it asked for. Refuse before the root check, so the message is the
+# same with or without sudo.
+if [ -n "${1:-}" ]; then
+    printf 'unknown argument: %s\n\n' "$1" >&2
+    printf 'usage:\n' >&2
+    printf '  sudo bash %s                 install\n' "$0" >&2
+    printf '  bash %s --check              what a run would change (no root, changes nothing)\n' "$0" >&2
+    printf '  bash %s --extract DIR        install under DIR instead of / (review)\n' "$0" >&2
+    exit 2
+fi
+
 [ "$(id -u)" -eq 0 ] || die "run with sudo:  sudo bash $0"
 [ "$(uname -m)" = aarch64 ] || die "expected 64-bit Pi OS (aarch64), got $(uname -m)"
 CFG=/boot/firmware/config.txt

@@ -69,7 +69,9 @@ kill "$(cat "$T/browser.pid")"; waitfor '[ "$(wc -l < "$T/launches")" = 2 ]'
 check "browser restarted after it died"      '[ "$(wc -l < "$T/launches")" = 2 ]'
 
 echo "EXIT KIOSK:"
-lan=$(hostname -I | awk '{print $1}')
+# `hostname` is not on every distro (Arch ships it in inetutils); ask the kernel if it is missing.
+lan=$(hostname -I 2>/dev/null | awk '{print $1}')
+[ -n "${lan:-}" ] || lan=$(ip -4 -o addr show scope global 2>/dev/null | awk 'NR==1{split($4,a,"/"); print a[1]}')
 check "controls shown to the Pi itself"      'curl -fs "http://127.0.0.1:$PORT/" | grep -q "data-act=\"exit\"" && curl -fs "http://127.0.0.1:$PORT/" | grep -q "data-act=\"shutdown\""'
 check "controls hidden from the network"     '! curl -fs "http://$lan:$PORT/" | grep -q "data-act="'
 check "exit from the network: 403"           '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://$lan:$PORT/kiosk/exit")" = 403 ]'

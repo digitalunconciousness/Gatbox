@@ -1,0 +1,71 @@
+name: tests
+
+# The hardware-free tests. Nothing here needs the Pi, root, the meter, the T48 or
+# the scanner: the suites fake the devices (tests/fake-minipro, fake-mame,
+# GATBOX_SCAN_FAKE) and never touch a live service, port or log.
+on:
+  push:
+    branches: [main, 'integration/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The Pi runs Trixie's Python 3.13. Nothing newer: the code must not rely on
+      # anything 3.14 added, so CI pins the same version the deployment has.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # On the Pi these are apt packages (python3-matplotlib, python3-qrcode) and the
+      # code lazy-imports both, so a machine without them degrades instead of failing.
+      # CI installs them so the plot, PDF and label paths are actually exercised.
+      - name: Plot and QR dependencies
+        run: python -m pip install --disable-pip-version-check matplotlib qrcode
+
+      - name: Report the versions under test
+        run: |
+          python -VV
+          python -c "import matplotlib, qrcode; print('matplotlib', matplotlib.__version__)"
+
+      - name: Run the test suite
+        run: |
+          failed=()
+          for t in tests/test-*.sh; do
+            # test-dash drives a real browser; it runs in its own job below.
+            [ "$t" = tests/test-dash.sh ] && continue
+            echo "::group::$t"
+            if bash "$t"; then :; else failed+=("$t"); fi
+            echo "::endgroup::"
+          done
+          if [ ${#failed[@]} -ne 0 ]; then
+            printf 'FAILED: %s\n' "${failed[@]}"
+            exit 1
+          fi
+          echo "all suites passed"
+
+  dashboard:
+    # Screenshot tests: a real browser over --remote-debugging-pipe (tests/cdp.py).
+    # Split out so a browser problem on the runner cannot mask a logic failure above.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Plot and QR dependencies
+        run: python -m pip install --disable-pip-version-check matplotlib qrcode
+      - uses: browser-actions/setup-chrome@v1
+        id: chrome
+        with:
+          chrome-version: stable
+      - name: Run the dashboard screenshot tests
+        env:
+          # Pi OS has `chromium`; the runner installs Chrome somewhere else.
+          GATBOX_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+        run: bash tests/test-dash.sh

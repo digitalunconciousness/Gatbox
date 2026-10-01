@@ -300,6 +300,8 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   - It posts every code to gatbox-web: `POST /api/scan`, loopback only.
 - **gatbox-web decides what a code means,** and stays the only writer:
   - a roster slug (video_games + pinball, not retired; case doesn't matter) sets the machine;
+  - a cabinet label printed by the maintenance app carries `<base>/g/<slug>` instead of a bare slug; the slug
+    inside it sets the machine the same way (the host is never checked -- it differs by site);
   - `GATBOX:MARK` makes a mark with source `scan`;
   - `GATBOX:NEW` = NEW;
   - anything else shows as UNKNOWN CODE on the dashboard.

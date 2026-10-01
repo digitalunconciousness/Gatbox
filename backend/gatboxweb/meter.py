@@ -16,6 +16,7 @@ reads it through gatbox-meta when it starts a file, and polls the flags:
 import json
 import math
 import os
+import re
 import threading
 import time
 
@@ -244,10 +245,24 @@ def add_mark(body):
 SCAN_MAX = 200
 SCAN_MARK, SCAN_NEW = "GATBOX:MARK", "GATBOX:NEW"
 
+# The hub prints cabinet labels whose QR encodes a URL, not a bare slug: <base>/g/<slug>. The host is deliberately
+# not checked -- the label may carry a LAN address, a tunnel hostname or neither, and which one is site data that
+# does not belong in this repository. The slug is what means something here, so that is all we read.
+LABEL_URL = re.compile(r"^(?:https?://[^/?#\s]+)?/g/([A-Za-z0-9][A-Za-z0-9._-]{0,63})/?(?:[?#].*)?$", re.I)
+
+
+def scanned_slug(code):
+    """The roster slug a scanned code is asking for: the code itself, or the one inside a printed label's URL.
+
+    Returns (slug, from_label). Case is folded because a scanner on caps lock still has to work."""
+    m = LABEL_URL.match(code)
+    return (m.group(1).lower(), True) if m else (code.lower(), False)
+
 
 def scan(code):
     """POST /api/scan (from gatbox-scand): what a scanned code means. Returns {"action", "code", …}:
-    machine / same-machine (a roster slug), mark (GATBOX:MARK), new (GATBOX:NEW), unknown (anything else)."""
+    machine / same-machine (a roster slug, or a hub label's /g/<slug> URL), mark (GATBOX:MARK),
+    new (GATBOX:NEW), unknown (anything else)."""
     if not isinstance(code, str):
         raise Bad(400, 'expected {"code": "<text>"}')
     code = code.strip()
@@ -259,14 +274,21 @@ def scan(code):
     if up == SCAN_NEW:
         request_start()
         return {"action": "new", "code": code, "logging": LIVE.logging()}
-    slug = code.lower()
+    slug, from_label = scanned_slug(code)
     known = roster.slugs()
     if known and slug in known:
         changed, new_file = set_machine(slug)
         return {"action": "machine" if changed else "same-machine", "code": code, "slug": slug,
-                "name": roster.name(slug), "new_file": new_file}
-    return {"action": "unknown", "code": code,
-            "detail": "no roster installed" if known is None else "not a roster slug or a GATBOX: command"}
+                "name": roster.name(slug), "new_file": new_file, "via_label": from_label}
+    if known is None:
+        detail = "no roster installed"
+    elif from_label:
+        # Worth saying apart: the label scanned cleanly and the machine is simply not in this roster yet,
+        # which is a roster to export again, not a bad scan.
+        detail = f"a hub label for {slug!r}, which is not in this roster"
+    else:
+        detail = "not a roster slug or a GATBOX: command"
+    return {"action": "unknown", "code": code, "detail": detail}
 
 
 def pending_marks():

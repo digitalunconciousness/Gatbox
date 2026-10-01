@@ -182,6 +182,23 @@ def main():
     check("a retired machine is unknown", api("POST", "/api/scan", {"code": "pin-gone"})[1]["action"] == "unknown")
     check("no code / tab / too long -> 400", [api("POST", "/api/scan", b)[0] for b in
           ({}, {"code": "a\tb"}, {"code": "x" * 201})] == [400, 400, 400])
+
+    # A cabinet's printed label is a hub URL, not a bare slug: the host varies by site and is never checked.
+    for code in ("http://hub.example.test/g/pin-x-men", "https://hub.example.test:5000/g/PIN-X-MEN/",
+                 "/g/pin-x-men", "http://hub.example.test/g/pin-x-men?src=label"):
+        c, r = api("POST", "/api/scan", {"code": code})
+        check(f"label URL resolves to the machine: {code}",
+              c == 200 and r["action"] in ("machine", "same-machine")
+              and r["slug"] == "pin-x-men" and r["via_label"] is True)
+    check("a bare slug is not reported as a label",
+          api("POST", "/api/scan", {"code": "pin-x-men"})[1]["via_label"] is False)
+    c, r = api("POST", "/api/scan", {"code": "http://hub.example.test/g/not-on-this-floor"})
+    check("a label for a machine this roster lacks says so",
+          c == 200 and r["action"] == "unknown" and "not in this roster" in r["detail"])
+    for code in ("http://hub.example.test/g/", "http://hub.example.test/g/-bad",
+                 "http://hub.example.test/g/a/b", "http://hub.example.test/games/3"):
+        check(f"not a label, so not treated as one: {code}",
+              api("POST", "/api/scan", {"code": code})[1]["action"] == "unknown")
     lan = next((a for a in _lan_addrs()
                 if "." in a), None)
     if lan:

@@ -1,0 +1,19 @@
+# Copy to patterns.local (git-ignored) and replace with your own values.
+# One extended regex per line; # comments and blank lines are skipped.
+# The hook never prints a match, only which pattern tripped.
+
+# Owner identity
+# [Ff]irst[ ._-]?[Ll]ast
+# your-username
+# you@example\.com
+
+# Home network
+# MySSID
+# 192\.168\.0\.
+# 10\.42\.0\.
+
+# Hosts and services
+# yourdomain\.com
+
+# Timezone give-aways in content (commit timestamps are checked separately)
+# Continent/Your_City

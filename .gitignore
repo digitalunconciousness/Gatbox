@@ -18,6 +18,8 @@ secrets/
 
 # Local only, never public: site-specific values (owner, username, home network) and workplace data
 *.local.md
+*.local
+.githooks/patterns.local
 data/gatbox-barcade-roster.json
 data/gatbox-mame-sets.json
 data/gatbox-manuals.json

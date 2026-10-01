@@ -25,7 +25,9 @@ import time
 
 
 class Chrome:
-    def __init__(self, profile, browser="chromium"):
+    def __init__(self, profile, browser=None):
+        # GATBOX_CHROME lets a PC or a CI runner name its own binary; Pi OS has `chromium`.
+        browser = browser or os.environ.get("GATBOX_CHROME") or "chromium"
         self.profile, self.browser = profile, browser
         self.n, self.buf, self.events, self.sid = 0, b"", [], None
 

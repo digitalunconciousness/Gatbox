@@ -381,8 +381,12 @@ def burn_web(w, call, B):
                                                              {"image": rel, "part": "27C999@DIP32"})]
     check("blank check: an image not in the list or an unknown part -> 400", bad == [400, 400, 400])
     code, r = call("POST", "/api/burn", {"image": rel, "part": "27C020@DIP32"})
-    check("burn with no blank check first -> 409", code == 409 and "blank" in r["error"].lower())
-    lan = next((a for a in subprocess.run(["hostname", "-I"], capture_output=True, text=True).stdout.split() if "." in a), None)
+    # _queue checks the T48 before it runs the blank-check guard, so off the Pi the
+    # refusal is the right code for the other reason. Assert whichever applies.
+    want = "blank" if t48_present() else "t48"
+    check(f"burn with no blank check first -> 409 ({want})",
+          code == 409 and want in r["error"].lower())
+    lan = next((a for a in _lan_addrs() if "." in a), None)
     if lan:
         req = urllib.request.Request(B.replace("127.0.0.1", lan) + "/api/burn", method="POST",
                                      data=json.dumps({"image": rel, "part": "27C020@DIP32"}).encode(),
@@ -418,6 +422,21 @@ def burn_web(w, call, B):
           and st["verified"] is True and open(f"{w}/chip.bin", "rb").read() == img)
     code, r = call("POST", "/api/burn", {"image": rel, "part": "27C020@DIP32"})
     check("burn again without a new blank check -> 409 (the last job was a burn)", code == 409)
+
+
+def _lan_addrs():
+    """This host's addresses. `hostname -I` is not present everywhere (Arch ships it
+    in inetutils), so fall back to the kernel's own view before giving up."""
+    try:
+        return subprocess.run(["hostname", "-I"], capture_output=True, text=True).stdout.split()
+    except (FileNotFoundError, OSError):
+        pass
+    try:
+        out = subprocess.run(["ip", "-4", "-o", "addr", "show", "scope", "global"],
+                             capture_output=True, text=True).stdout
+        return [ln.split()[3].split("/")[0] for ln in out.splitlines() if len(ln.split()) > 3]
+    except (FileNotFoundError, OSError, IndexError):
+        return []
 
 
 def t48_present():

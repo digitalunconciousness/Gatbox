@@ -170,6 +170,21 @@ def setup():
     raise SystemExit("gatbox-web didn't start")
 
 
+def _lan_addrs():
+    """This host's addresses. `hostname -I` is not present everywhere (Arch ships it
+    in inetutils), so fall back to the kernel's own view before giving up."""
+    try:
+        return subprocess.run(["hostname", "-I"], capture_output=True, text=True).stdout.split()
+    except (FileNotFoundError, OSError):
+        pass
+    try:
+        out = subprocess.run(["ip", "-4", "-o", "addr", "show", "scope", "global"],
+                             capture_output=True, text=True).stdout
+        return [ln.split()[3].split("/")[0] for ln in out.splitlines() if len(ln.split()) > 3]
+    except (FileNotFoundError, OSError, IndexError):
+        return []
+
+
 def main():
     setup()
     with Chrome(f"{T}/browser") as c:
@@ -625,7 +640,7 @@ def main():
             check("held 3 s: BURNING, then VERIFIED; the chip holds the image", open(f"{T}/chip.bin", "rb").read() == img
                   and "2 read-backs identical to the image" in text("#du-body"))
             shot("19d-burn-verified")
-            lan = next((a for a in subprocess.run(["hostname", "-I"], capture_output=True, text=True).stdout.split() if "." in a), None)
+            lan = next((a for a in _lan_addrs() if "." in a), None)
             if lan:
                 open(f"{T}/chip.bin", "wb").write(b"\xff" * 262144)
                 api("POST", "/api/burn/blank", {"image": "_images/diag.bin", "part": "27C020@DIP32"})

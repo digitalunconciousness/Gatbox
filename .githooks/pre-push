@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# Refuse to push anything that would leak site values or copyrighted payload out
+# of this public repo. CLAUDE.md hard rule 13 and the BRINGUP M2 notes.
+#
+# Until 2026-09-30 this lived only in the Pi's .git/hooks, so a clone had no
+# protection at all. It is now in the repo and enabled with:
+#
+#     git config core.hooksPath .githooks
+#
+# Owner-specific values are NOT in here. They live in .githooks/patterns.local,
+# which is git-ignored: one extended regex per line, # comments and blanks
+# skipped. Without that file the generic checks still run, and the hook says so.
+set -u
+
+readonly SELF="pre-push"
+readonly LOCAL_DIR="$(git rev-parse --git-common-dir 2>/dev/null)/../.githooks"
+readonly PATTERNS="${GATBOX_HOOK_PATTERNS:-$LOCAL_DIR/patterns.local}"
+readonly ZERO="0000000000000000000000000000000000000000"
+
+fail=0
+
+say()  { printf '%s: %s\n' "$SELF" "$*" >&2; }
+bad()  { fail=1; printf '%s: REFUSED  %s\n' "$SELF" "$*" >&2; }
+
+# Paths that must never be committed, as extended regexes against the path.
+readonly -a FORBIDDEN_PATHS=(
+  '(^|/)data/gatbox-barcade-roster\.json$'
+  '(^|/)data/gatbox-mame-sets\.json$'
+  '(^|/)data/gatbox-manuals\.json$'
+  '\.local$'
+  '\.local\.md$'
+  '\.pdf$'
+  '\.bin$'
+  '(^|/)(id_rsa|id_ed25519|id_ecdsa)(\.pub)?$'
+  '\.(psk|key|pem|token)$'
+  '(^|/)SITE\.local'
+  '(^|/)\.env$'
+)
+
+# Content that must never appear in an added line, regardless of file.
+# Site-specific values come from patterns.local; these are the generic ones.
+readonly -a FORBIDDEN_CONTENT=(
+  '-----BEGIN [A-Z ]*PRIVATE KEY-----'
+  '(psk|passphrase|password)[[:space:]]*[:=][[:space:]]*["'"'"']?[^"'"'"'[:space:]]{6,}'
+  '(api[_-]?key|secret[_-]?key|access[_-]?token|bearer)[[:space:]]*[:=][[:space:]]*["'"'"']?[A-Za-z0-9/+_-]{12,}'
+  'wpa[_-]?passphrase'
+)
+
+# --- read the local patterns file -------------------------------------------
+declare -a LOCAL_PATTERNS=()
+if [ -r "$PATTERNS" ]; then
+  while IFS= read -r line; do
+    case "$line" in ''|\#*) continue ;; esac
+    LOCAL_PATTERNS+=("$line")
+  done < "$PATTERNS"
+  say "loaded ${#LOCAL_PATTERNS[@]} local pattern(s) from ${PATTERNS##*/}"
+else
+  say "NOTE: no $PATTERNS - generic checks only, site values are NOT being checked."
+  say "      copy .githooks/patterns.local.example and fill it in."
+fi
+
+# --- walk every ref being pushed --------------------------------------------
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ "$local_sha" = "$ZERO" ] && continue          # branch deletion: nothing to inspect
+
+  if [ "$remote_sha" = "$ZERO" ]; then            # new branch: everything not already pushed
+    mapfile -t commits < <(git rev-list "$local_sha" --not --remotes 2>/dev/null)
+    range_args=("$local_sha" --not --remotes)
+  else
+    mapfile -t commits < <(git rev-list "$remote_sha..$local_sha" 2>/dev/null)
+    range_args=("$remote_sha..$local_sha")
+  fi
+  [ "${#commits[@]}" -eq 0 ] && continue
+
+  # 1. Commit timestamps must be UTC: a local offset gives away the timezone.
+  for c in "${commits[@]}"; do
+    for d in $(git show -s --format='%ad%n%cd' --date=iso-strict "$c"); do
+      case "$d" in
+        *+00:00|*Z) ;;
+        *) bad "$(git rev-parse --short "$c") has a non-UTC timestamp ($d) - commit with TZ=UTC" ;;
+      esac
+    done
+  done
+
+  # 2. Forbidden paths anywhere in the range.
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    for pat in "${FORBIDDEN_PATHS[@]}"; do
+      if printf '%s\n' "$path" | grep -qE -- "$pat"; then
+        bad "$path matches a forbidden path pattern ($pat)"
+      fi
+    done
+  done < <(git diff --name-only --diff-filter=ACMR "${range_args[@]}" 2>/dev/null)
+
+  # 3. Added lines, against the generic patterns and then the local ones.
+  added=$(git diff --unified=0 "${range_args[@]}" 2>/dev/null | grep '^+' | grep -v '^+++')
+  if [ -n "$added" ]; then
+    for pat in "${FORBIDDEN_CONTENT[@]}"; do
+      if printf '%s\n' "$added" | grep -qiE -- "$pat"; then
+        bad "an added line matches a forbidden content pattern ($pat)"
+      fi
+    done
+    for pat in "${LOCAL_PATTERNS[@]}"; do
+      if printf '%s\n' "$added" | grep -qE -- "$pat"; then
+        # Never echo the match itself: that would print the secret into the terminal.
+        bad "an added line matches a local site pattern (/$pat/)"
+      fi
+    done
+  fi
+done
+
+if [ "$fail" -ne 0 ]; then
+  say "push aborted. Fix the commits, or set GATBOX_HOOK_PATTERNS to test."
+  say "This repo is public: nothing here is recoverable once pushed."
+  exit 1
+fi
+
+say "clean"
+exit 0

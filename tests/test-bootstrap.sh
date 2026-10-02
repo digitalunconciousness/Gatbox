@@ -34,6 +34,13 @@ bash "$BOOT" --check > "$T/check" 2>&1; rc=$?
 check "--check runs without root (exit 0 or 3)" '[ $rc = 0 ] || [ $rc = 3 ]'
 out=$(bash "$BOOT" 2>&1); rc=$?
 check "a real run refuses without root"         '[ $rc = 1 ] && [[ $out == *"run with sudo"* ]]'
+# A mistyped flag used to fall through to a real run: "--checksudo", from a mangled
+# paste, installed files and restarted services on a live Pi instead of reporting.
+for bad in --chekc --checksudo --dry-run -n extract --check=1; do
+    out=$(bash "$BOOT" "$bad" 2>&1); rc=$?
+    check "unknown argument '$bad' refuses (exit 2, usage)" \
+          '[ $rc = 2 ] && [[ $out == *"unknown argument"* ]] && [[ $out == *"--check"* ]]'
+done
 
 echo "--- --check on this Pi:"; sed 's/^/    /' "$T/check"
 echo "bootstrap: $pass passed, $fail failed"

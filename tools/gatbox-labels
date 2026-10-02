@@ -6,8 +6,10 @@
 Letter-size PDF (cut on the dashed lines):
   * page 1: the command card, GATBOX:MARK ("it just crashed") and GATBOX:NEW (start a new file), big
   * then 20 machines a page (4 x 5), sorted by name: video_games + pinball from the roster, not retired.
-    Each QR encodes the machine's roster slug and nothing else (the maintenance app's QR codes are the same
-    slugs); the name and slug are printed under it.
+    Each QR encodes the machine's roster slug and nothing else; the name and slug are printed under it.
+    These are bench labels: the EY-H2 reads them, a phone camera sees meaningless text. The maintenance app's
+    labels encode <base>/g/<slug> instead, which the EY-H2 also reads (meter.scanned_slug) AND a phone opens,
+    so for a label going on a cabinet, print from the app. Use this sheet for the bench and the workshop.
 
 A machine QR is 33 mm across (about 1 mm a module for a slug), comfortable for the EY-H2 at ~20 cm. Error correction
 level M, so a scuffed label still reads. QR from python3-qrcode (apt), drawing from python3-matplotlib (apt).

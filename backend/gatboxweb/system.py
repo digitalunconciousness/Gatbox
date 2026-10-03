@@ -220,6 +220,31 @@ def logger(procs):
             "logging": LIVE.logging(), "file": LIVE.name, "age_s": LIVE.age()}
 
 
+# gatbox-sync's own StateDirectory. Read-only from here: that job is the only writer of its
+# state, so the dashboard reports what it finds and never corrects it.
+SYNC_STATE = "/var/lib/gatbox-sync"
+
+
+def hub():
+    """What gatbox-sync last managed, for the SYSTEM panel.
+
+    None when the job has never run -- which is the normal state of a Pi that has not been
+    given a hub token, not a fault, so the panel should say "not configured" rather than
+    show a failure. Fails soft like every other source here."""
+    path = os.environ.get("GATBOX_SYNC_STATE", SYNC_STATE)
+    try:
+        with open(os.path.join(path, "status.json"), encoding="utf-8") as fh:
+            st = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return {"ok": st.get("ok"), "url": st.get("hub"), "at": st.get("at"),
+            "queued": st.get("queued"), "sent_total": st.get("sent_total"),
+            "error": st.get("error"),
+            "last": {"created": st.get("last_created"),
+                     "duplicate": st.get("last_duplicate"),
+                     "rejected": st.get("last_rejected")}}
+
+
 def snapshot():
     with _lock:
         if _cache[1] and time.monotonic() - _cache[0] < CACHE_S:
@@ -238,7 +263,7 @@ def snapshot():
             "undervoltage_now": (_read(os.path.join(vm, "in0_lcrit_alarm")) == "1") if vm else None,
             "ext5v_v": _vc_volts("EXT5V_V"),
             "disk": disk(), "network": network(), "clock": clock(), "kiosk": kiosk(procs),
-            "logger": logger(procs), "versions": versions(),
+            "logger": logger(procs), "versions": versions(), "hub": hub(),
         }
         out["errors"] = dict(_errors)
         _cache[:] = [time.monotonic(), out]

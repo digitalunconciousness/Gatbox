@@ -55,6 +55,9 @@ backend/gatbox-rtc-sync                         /usr/local/sbin/gatbox-rtc-sync 
 backend/gatbox-rtc-sync.service                 /etc/systemd/system/gatbox-rtc-sync.service           644
 backend/gatbox-rtc-sync.timer                   /etc/systemd/system/gatbox-rtc-sync.timer             644
 backend/gatbox-ap-fallback                      /usr/local/sbin/gatbox-ap-fallback                    755
+backend/gatbox-sync                              /usr/local/bin/gatbox-sync                            755
+backend/gatbox-sync.service                      /etc/systemd/system/gatbox-sync.service               644
+backend/gatbox-sync.timer                        /etc/systemd/system/gatbox-sync.timer                 644
 backend/gatbox-ap-fallback.service              /etc/systemd/system/gatbox-ap-fallback.service        644
 tools/gatbox-status                             /usr/local/bin/gatbox-status                          755
 tools/gatbox-rail-report                        /usr/local/bin/gatbox-rail-report                     755
@@ -234,10 +237,13 @@ if [ "${1:-}" = "--check" ]; then
     while read -r _ name sum; do font_ok "$name" "$sum" || DIFFS+=("fetch      font $name"); done < <(grep -v '^$' <<<"$FONTS")
     for l in usb_max_current_enable=1; do grep -qxF "$l" /boot/firmware/config.txt || DIFFS+=("config.txt += $l"); done
     grep -qE '^[^#]*rtc_bbat_vchg' /boot/firmware/config.txt && [ -z "$RTC_CHARGE" ] && DIFFS+=("config.txt: comment out rtc_bbat_vchg (RTC CHARGING IS ON)")
-    for u in gatbox-raillog.service gatbox-web.service gatbox-scand.service gatbox-dump.path gatbox-rtc-sync.timer; do
+    for u in gatbox-raillog.service gatbox-web.service gatbox-scand.service gatbox-dump.path gatbox-rtc-sync.timer \
+             gatbox-sync.timer; do
         systemctl -q is-enabled "$u" 2>/dev/null || DIFFS+=("enable     $u"); done
     getent passwd gatbox-dump >/dev/null || DIFFS+=("create     user gatbox-dump (sysusers.d)")
+    getent passwd gatbox-sync >/dev/null || DIFFS+=("create     user gatbox-sync (sysusers.d)")
     [ -d /srv/gatbox/roms ] && [ -d /var/spool/gatbox-dump ] || DIFFS+=("create     /srv/gatbox/roms + /var/spool/gatbox-dump (tmpfiles.d)")
+    [ -d /etc/gatbox ] || DIFFS+=("create     /etc/gatbox (tmpfiles.d; hub.conf goes in by hand)")
     id -nG "$(id -un)" | grep -qw gatbox-dump || DIFFS+=("group      $(id -un) += gatbox-dump (the dump archive)")
     getent group gatbox-manuals >/dev/null || DIFFS+=("create     group gatbox-manuals (sysusers.d)")
     [ -d /srv/gatbox/manuals ] || DIFFS+=("create     /srv/gatbox/manuals (tmpfiles.d)")
@@ -413,11 +419,12 @@ svc() {   # <unit> <installed path glob>...: enable it; restart only if its file
     else log "$unit up to date, left running"; fi
 }
 # the dump job's user, the archive and the spool (before gatbox-web, which joins the gatbox-dump group)
-if changed /etc/sysusers.d/gatbox.conf || ! getent passwd gatbox-dump >/dev/null || ! getent group gatbox-manuals >/dev/null; then
-    systemd-sysusers /etc/sysusers.d/gatbox.conf && log "user gatbox-dump (T48 dumps, group plugdev), group gatbox-manuals"
+if changed /etc/sysusers.d/gatbox.conf || ! getent passwd gatbox-dump >/dev/null || ! getent group gatbox-manuals >/dev/null \
+   || ! getent passwd gatbox-sync >/dev/null; then
+    systemd-sysusers /etc/sysusers.d/gatbox.conf && log "users gatbox-dump (T48 dumps, group plugdev) and gatbox-sync (hub push), group gatbox-manuals"
 fi
-if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ] || [ ! -d /srv/gatbox/manuals ]; then
-    systemd-tmpfiles --create /etc/tmpfiles.d/gatbox.conf && log "/srv/gatbox/roms + /srv/gatbox/manuals + /var/spool/gatbox-dump"
+if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ] || [ ! -d /srv/gatbox/manuals ] || [ ! -d /etc/gatbox ]; then
+    systemd-tmpfiles --create /etc/tmpfiles.d/gatbox.conf && log "/srv/gatbox/roms + /srv/gatbox/manuals + /var/spool/gatbox-dump + /etc/gatbox"
 fi
 if ! id -nG "$U" | grep -qw gatbox-dump; then
     usermod -aG gatbox-dump "$U" && log "$U += gatbox-dump (gatbox-dump from the terminal archives too; log out/in)"
@@ -445,6 +452,9 @@ if [ "$fonts_ok" = 1 ]; then log "web fonts in $FONTDIR"
 else warn "couldn't fetch the web fonts (no internet?). The page falls back to system fonts; re-run later to add them."; fi
 log "web view: http://gatbox.local/ (http://10.42.0.1/ on the GATBOX hotspot)"
 svc gatbox-rtc-sync.timer '/usr/local/sbin/gatbox-rtc-sync' '/etc/systemd/system/gatbox-rtc-sync.*'
+# The hub push. Its .service carries ConditionPathExists=/etc/gatbox/hub.conf, so on a Pi
+# with no token the timer runs and the job condition-skips rather than failing every 2 min.
+svc gatbox-sync.timer '/usr/local/bin/gatbox-sync' '/etc/systemd/system/gatbox-sync.*'
 if changed '/usr/local/sbin/gatbox-rtc-sync' '/etc/systemd/system/gatbox-rtc-sync.*' || [ ! -e /var/lib/gatbox/rtc-synced ]; then
     systemctl start gatbox-rtc-sync.service || warn "gatbox-rtc-sync failed: journalctl -u gatbox-rtc-sync"
 fi

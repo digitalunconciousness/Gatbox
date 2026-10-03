@@ -1,0 +1,40 @@
+[Unit]
+Description=GATBOX: push finished rail sessions to the hub
+After=network-online.target gatbox-web.service
+Wants=network-online.target
+# A Pi that has never been given a hub token is not broken, it just has nothing to send.
+# Without this the timer would fail every two minutes for the life of the box, and real
+# failures would be buried in the noise.
+ConditionPathExists=/etc/gatbox/hub.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gatbox-sync
+# The token lives in a root-owned 600 file. LoadCredential has systemd read it and expose it
+# to this service alone, so the file itself never becomes readable by the user below.
+LoadCredential=hub:/etc/gatbox/hub.conf
+# A real user (sysusers.d), not DynamicUser. This job needs no log directory, no /dev and no
+# matplotlib -- which is the whole reason it talks HTTP instead of importing gatboxweb -- but
+# a DynamicUser's StateDirectory is /var/lib/private/<name> at 0700, and gatbox-web is a
+# different dynamic user: it could never read the status the SYSTEM panel shows.
+User=gatbox-sync
+Group=gatbox-sync
+# The sent ledger, the roster and open-orders caches, and status.json for the SYSTEM tile.
+# 0755 so gatbox-web can read it; nothing in here is secret -- the token is a credential.
+StateDirectory=gatbox-sync
+StateDirectoryMode=0755
+# The job stops itself at a 240s budget; this is the backstop if it wedges in a socket.
+# TimeoutStartSec, not RuntimeMaxSec: for Type=oneshot the whole run counts as "starting",
+# and systemd-analyze verify says RuntimeMaxSec has no effect here at all.
+TimeoutStartSec=300
+ProtectSystem=strict
+ProtectHome=yes
+PrivateDevices=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+Nice=15
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

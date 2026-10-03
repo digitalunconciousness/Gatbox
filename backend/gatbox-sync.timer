@@ -1,0 +1,14 @@
+[Unit]
+Description=GATBOX: push finished rail sessions to the hub, every 2 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=30s
+# The Pi is off for most of the week. Without this a session finished just before shutdown
+# waits for the 2min boot delay and then the full interval; with it, the missed run happens
+# at boot instead.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

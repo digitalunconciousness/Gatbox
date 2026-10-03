@@ -30,6 +30,9 @@ ReadWritePaths=-/var/spool/gatbox-dump
 # setgid); everything else there it only reads.
 SupplementaryGroups=gatbox-manuals
 ReadWritePaths=-/srv/gatbox/manuals
+# gatbox-sync's status, for the SYSTEM panel's hub block. Read-only and fails soft: that job
+# is the only writer of its own state. "-": start anyway on a Pi where sync never ran.
+ReadOnlyPaths=-/var/lib/gatbox-sync
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes

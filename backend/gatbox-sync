@@ -1,0 +1,475 @@
+#!/usr/bin/env python3
+"""gatbox-sync — push finished rail sessions to the hub (arcade-tracker).
+
+One direction only. This reads from gatbox-web on loopback and writes to the hub; the hub
+never connects here. Run as a oneshot from gatbox-sync.timer, every couple of minutes.
+
+**It imports nothing from gatboxweb, on purpose.** The obvious shortcut -- import
+gatboxweb.report and build the payload in-process -- is worse:
+
+  * The report cache belongs to gatbox-web: its CacheDirectory, keyed on the CSV's size and
+    mtime. This job has its own DynamicUser and so its own cache, and would re-run
+    gatbox-rail-report over a ten-thousand-sample CSV that gatbox-web had already analysed.
+  * Reading over HTTP means the hub stores the very numbers the dashboard shows -- the same
+    cached report object -- rather than a second computation that agrees today and could
+    drift later.
+  * The sandbox gets much tighter: no /var/log/gatbox, no /dev, no matplotlib. One loopback
+    socket, one credential, its own state directory.
+
+What it reads from gatbox-web:
+    GET /api/rail/sessions?limit=    what exists, and which file is still being written
+    GET /api/rail/report/<file>      the whole summary; every contract field comes from here
+    GET /api/rail/samples/<file>     the trace, already reduced by gatbox-web's reducer
+
+What it sends, per contract/v1 (vendored at docs/contract/v1/):
+    POST /api/v1/ingest              rail_session items, readings nested
+    GET  /api/v1/roster              cached for the dashboard and for slug checks
+    GET  /api/v1/machines/<s>/orders cached so the 7" can show what is already reported
+
+Idempotency is the hub's, not ours: every uid is derived from the device id and the CSV's
+own name, so re-sending changes nothing and comes back "duplicate". **The sent ledger is an
+optimisation, not correctness** -- delete state/sent.json and everything is simply re-sent
+and acknowledged as duplicate. That is the recovery for "the state looks wrong".
+
+Stdlib only.
+
+Config, /etc/gatbox/hub.conf (mode 600, root), reached through LoadCredential= so the file
+itself never becomes readable by this job's user:
+
+    HUB_URLS=https://tracker.example   one or more, space-separated, tried in order
+    HUB_TOKEN=gbx_<public_id>.<secret>
+
+Environment (the unit sets CREDENTIALS_DIRECTORY and STATE_DIRECTORY; tests set the rest):
+    GATBOX_SYNC_CONF      read the config from this path instead of the credential
+    GATBOX_SYNC_WEB       gatbox-web's base URL (default http://127.0.0.1)
+    GATBOX_SYNC_MAX       sessions per run (default 10)
+    GATBOX_SYNC_ONCE      ignore the ledger: send everything eligible (for a forced re-push)
+    GATBOX_SYNC_DRYRUN    build payloads and report, but post nothing
+"""
+import hashlib
+import json
+import os
+import socket
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+WEB = os.environ.get("GATBOX_SYNC_WEB", "http://127.0.0.1").rstrip("/")
+STATE = os.environ.get("STATE_DIRECTORY", "/var/lib/gatbox-sync").split(":")[0]
+CONTRACT = "v1"
+
+# Ten sessions, not ten readings: a session is one bench run, carrying up to MAX_READINGS
+# points. Ten of them is at most 20,000 readings, which is exactly the contract's
+# per-request ceiling -- so a capped run is always one POST rather than a split one.
+MAX_SESSIONS = int(os.environ.get("GATBOX_SYNC_MAX", "10"))
+MAX_READINGS = 2000               # contract/v1: readings per session
+HEALTH_TIMEOUT = 2.0              # per candidate URL: an unreachable one must be cheap
+WEB_TIMEOUT = 120.0               # a cold report over 10k samples is not quick
+POST_TIMEOUT = 120.0
+RUN_BUDGET = 240.0                # under the unit's RuntimeMaxSec, so we stop ourselves first
+
+DRYRUN = bool(os.environ.get("GATBOX_SYNC_DRYRUN"))
+IGNORE_LEDGER = bool(os.environ.get("GATBOX_SYNC_ONCE"))
+
+
+def log(msg):
+    """Unbuffered, so journalctl shows progress rather than a lump at exit."""
+    print(msg, flush=True)
+
+
+# ---------------------------------------------------------------------------
+# config
+# ---------------------------------------------------------------------------
+
+def conf_path():
+    if os.environ.get("GATBOX_SYNC_CONF"):
+        return os.environ["GATBOX_SYNC_CONF"]
+    creds = os.environ.get("CREDENTIALS_DIRECTORY")
+    if creds:
+        return os.path.join(creds, "hub")
+    return "/etc/gatbox/hub.conf"
+
+
+def read_conf():
+    """(urls, token). Exits 0 -- not 1 -- when there is no config: a Pi that has never been
+    given a token is not broken, it just has nothing to do, and a timer that fails every two
+    minutes for the life of the box is noise that hides real failures."""
+    path = conf_path()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError as exc:
+        log(f"no hub config at {path} ({exc.strerror}); nothing to do")
+        sys.exit(0)
+
+    conf = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, _, value = line.partition("=")
+            conf[key.strip()] = value.strip()
+
+    urls = [u.rstrip("/") for u in conf.get("HUB_URLS", "").split() if u]
+    token = conf.get("HUB_TOKEN", "")
+    if not urls or not token:
+        log(f"{path}: HUB_URLS and HUB_TOKEN are both required; nothing to do")
+        sys.exit(0)
+    return urls, token
+
+
+def device_id(token):
+    """The public id half of gbx_<public_id>.<secret>: what every uid is salted with."""
+    if not token.startswith("gbx_") or "." not in token:
+        log("HUB_TOKEN is not of the form gbx_<public_id>.<secret>")
+        sys.exit(1)
+    return token[len("gbx_"):].partition(".")[0]
+
+
+# ---------------------------------------------------------------------------
+# state
+# ---------------------------------------------------------------------------
+
+def load(name, default):
+    try:
+        with open(os.path.join(STATE, name), encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return default
+
+
+def save(name, obj):
+    """Atomic: a run killed mid-write must not leave a half-parsed ledger behind."""
+    os.makedirs(STATE, exist_ok=True)
+    path = os.path.join(STATE, name)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(obj, fh, indent=1, sort_keys=True)
+    os.replace(tmp, path)
+
+
+# ---------------------------------------------------------------------------
+# http
+# ---------------------------------------------------------------------------
+
+def get_json(url, timeout, token=None):
+    req = urllib.request.Request(url, method="GET")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def post_json(url, body, token, timeout=POST_TIMEOUT):
+    """(status, parsed body). An HTTP error still carries a contract {"error": …}, which is
+    worth reading rather than discarding as an exception."""
+    data = json.dumps(body, allow_nan=False).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", "replace")
+        try:
+            return exc.code, json.loads(raw)
+        except ValueError:
+            return exc.code, {"error": raw.strip()[:200] or exc.reason}
+
+
+def pick_hub(urls, token):
+    """The first URL whose /api/v1/health answers. Chosen per run and deliberately not
+    remembered: GATBOX moves between its own hotspot and the shop's Wi-Fi, and a remembered
+    address is wrong exactly when it matters. An unreachable entry costs one failed connect,
+    so listing a LAN address and the tunnel together is safe at either site."""
+    for url in urls:
+        try:
+            body = get_json(f"{url}/api/v1/health", HEALTH_TIMEOUT)
+        except (urllib.error.URLError, OSError, ValueError, socket.timeout) as exc:
+            log(f"  {url}: unreachable ({exc})")
+            continue
+        if body.get("contract") != CONTRACT:
+            log(f"  {url}: speaks contract {body.get('contract')!r}, not {CONTRACT!r}")
+            continue
+        log(f"  {url}: ok")
+        return url
+    return None
+
+
+# ---------------------------------------------------------------------------
+# building a payload
+# ---------------------------------------------------------------------------
+
+def uid_session(dev, file_name):
+    return hashlib.sha256(f"{dev}|rail_session|{file_name}".encode()).hexdigest()[:32]
+
+
+def uid_reading(dev, file_name, epoch):
+    # The .3f is contractual. At .6f the same reading hashes differently and the trace is
+    # stored twice, because the hub's duplicate check is on this exact string.
+    return hashlib.sha256(
+        f"{dev}|reading|{file_name}|{epoch:.3f}".encode()
+    ).hexdigest()[:32]
+
+
+def epoch_of(iso):
+    """The report's ISO strings are the CSV's: local wall clock, no offset. Only used to
+    order sessions for sending; the contract carries epochs, which come from the samples."""
+    try:
+        return time.mktime(time.strptime(iso[:19], "%Y-%m-%dT%H:%M:%S"))
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def build_item(dev, file_name, report, samples):
+    """One rail_session item, contract/v1. Every number comes from the report as-is: the hub
+    stores and does not recompute, so anything derived here would be a second opinion."""
+    fields = samples.get("fields") or []
+    idx = {name: i for i, name in enumerate(fields)}
+    readings = []
+    for row in samples.get("rows") or []:
+        epoch = row[idx["epoch"]]
+        raw = row[idx["raw"]] if "raw" in idx else None
+        readings.append({
+            "uid": uid_reading(dev, file_name, epoch),
+            "epoch": epoch,
+            "up": row[idx["up"]] if "up" in idx else None,
+            "v": row[idx["v"]] if "v" in idx else None,
+            "raw": raw,
+            "unit": row[idx["unit"]] if "unit" in idx else None,
+            "mode": row[idx["mode"]] if "mode" in idx else None,
+            "alarm": row[idx["alarm"]] if "alarm" in idx else None,
+            # The compact row has no ol field. raw is the precise signal -- v being null
+            # also means "no value here", which is not the same thing.
+            "ol": raw in ("inf", "-inf"),
+        })
+
+    session = report.get("session") or {}
+    profile = report.get("profile") or {}
+    clock = report.get("clock") or {}
+    powered = report.get("powered") or {}
+    window = report.get("window")
+    verdict = report.get("verdict")
+    over = report.get("over_voltage") or []
+
+    item = {
+        "kind": "rail_session",
+        "uid": uid_session(dev, file_name),
+        "file": file_name,
+        "machine": report.get("machine"),
+        "samples": session.get("samples"),
+        "rate": session.get("rate"),
+        "duration_s": session.get("duration_s"),
+        "timebase": session.get("timebase"),
+        "clock": {"source": clock.get("source"),
+                  "ntp_from": epoch_of(clock.get("ntp_from")) or None},
+        "profile": {"id": profile.get("id"), "label": profile.get("label"),
+                    "kind": profile.get("kind"), "rail": profile.get("rail")},
+        "mode": report.get("mode_key"),
+        "window": ({"lo": window.get("lo"), "hi": window.get("hi"),
+                    "unit": window.get("unit"), "source": window.get("source")}
+                   if window else None),
+        "alarm_hi": report.get("alarm_hi"),
+        "powered": ({"mean": powered.get("mean"), "min": powered.get("min"),
+                     "max": powered.get("max"), "readings": powered.get("readings"),
+                     "in_window_pct": powered.get("in_window_pct")}
+                    if powered else None),
+        "verdict": ({"state": verdict.get("state"), "detail": verdict.get("detail"),
+                     "suspect": verdict.get("suspect")} if verdict else None),
+        "counts": {
+            "over_voltage": len(over),
+            "excursions": len(report.get("excursions") or []),
+            "power_cycles": len(report.get("power_cycles") or []),
+            "gaps": len(report.get("gaps") or []),
+            "ol_events": len(report.get("ol_events") or []),
+            "marks": len(report.get("marks") or []),
+            "suspect": sum(1 for o in over if o.get("suspect")),
+        },
+        "readings": readings,
+    }
+    # The first and last reading's epochs, not the report's local ISO strings: the contract
+    # wants epochs and these are the only unambiguous ones we have.
+    if readings:
+        item["started"] = readings[0]["epoch"]
+        item["ended"] = readings[-1]["epoch"]
+    return item
+
+
+# ---------------------------------------------------------------------------
+# the run
+# ---------------------------------------------------------------------------
+
+def eligible(sessions, sent):
+    """Finished sessions the hub has not acknowledged, oldest first.
+
+    Never the live file: the contract forbids it, and for a reason that is easy to miss --
+    a partial session reduces into different buckets than the finished one, so its readings
+    would hash differently and the duplicate check would not catch the overlap."""
+    out = []
+    for s in sessions:
+        name = s.get("file")
+        if not name or s.get("live"):
+            continue
+        if s.get("error"):
+            continue                      # a report that would not run has nothing to send
+        if not s.get("machine"):
+            continue                      # no machine: the hub would reject it as unknown
+        if not IGNORE_LEDGER and name in sent:
+            continue
+        out.append(name)
+    return sorted(out)                    # rail_YYYYmmdd_HHMMSS sorts chronologically
+
+
+def main():
+    started = time.monotonic()
+    urls, token = read_conf()
+    dev = device_id(token)
+
+    log(f"gatbox-sync: device {dev}, web {WEB}")
+    try:
+        listing = get_json(f"{WEB}/api/rail/sessions?limit=1000", WEB_TIMEOUT)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        log(f"gatbox-web unreachable: {exc}")
+        save("status.json", {"at": time.time(), "ok": False,
+                             "error": f"gatbox-web unreachable: {exc}"})
+        return 1
+    sessions = listing.get("sessions") or []
+
+    sent = {} if IGNORE_LEDGER else load("sent.json", {})
+    # Prune the ledger against what still exists, so it cannot grow for ever as old CSVs go.
+    present = {s.get("file") for s in sessions}
+    sent = {k: v for k, v in sent.items() if k in present}
+
+    queue = eligible(sessions, sent)
+    log(f"  {len(sessions)} sessions on the Pi, {len(queue)} to send")
+
+    if not queue:
+        # Still refresh the caches: the roster and open orders are what the dashboard and the
+        # 7" read, and they go stale whether or not there is anything to push.
+        hub = pick_hub(urls, token)
+        status = {"at": time.time(), "ok": bool(hub), "hub": hub, "queued": 0,
+                  "sent_total": len(sent)}
+        if hub:
+            refresh_caches(hub, token, sessions, status)
+        save("status.json", status)
+        save("sent.json", sent)
+        return 0 if hub else 1
+
+    hub = pick_hub(urls, token)
+    if hub is None:
+        log(f"  no hub reachable; {len(queue)} queued")
+        save("status.json", {"at": time.time(), "ok": False, "queued": len(queue),
+                             "error": "no hub reachable"})
+        save("sent.json", sent)
+        return 1
+
+    batch, skipped = [], 0
+    for name in queue[:MAX_SESSIONS]:
+        if time.monotonic() - started > RUN_BUDGET:
+            log("  run budget spent; the rest waits for the next timer")
+            break
+        try:
+            report = get_json(f"{WEB}/api/rail/report/{urllib.parse.quote(name)}",
+                              WEB_TIMEOUT)
+            samples = get_json(
+                f"{WEB}/api/rail/samples/{urllib.parse.quote(name)}?max={MAX_READINGS}",
+                WEB_TIMEOUT)
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            log(f"  {name}: could not read from gatbox-web ({exc})")
+            skipped += 1
+            continue
+        if report.get("error"):
+            log(f"  {name}: report error, skipped ({report['error']})")
+            skipped += 1
+            continue
+        batch.append(build_item(dev, name, report, samples))
+
+    if not batch:
+        save("status.json", {"at": time.time(), "ok": True, "hub": hub,
+                             "queued": len(queue), "error": "nothing could be built"})
+        save("sent.json", sent)
+        return 1
+
+    total_readings = sum(len(i["readings"]) for i in batch)
+    log(f"  posting {len(batch)} session(s), {total_readings} readings")
+    if DRYRUN:
+        log("  dry run: posting nothing")
+        return 0
+
+    status_code, body = post_json(f"{hub}/api/v1/ingest",
+                                  {"contract": CONTRACT, "device": dev, "items": batch},
+                                  token)
+    if status_code != 200:
+        log(f"  ingest failed: HTTP {status_code} {body.get('error')}")
+        save("status.json", {"at": time.time(), "ok": False, "hub": hub,
+                             "queued": len(queue),
+                             "error": f"HTTP {status_code}: {body.get('error')}"})
+        save("sent.json", sent)
+        return 1
+
+    now = time.time()
+    created = duplicate = rejected = 0
+    for result in body.get("results") or []:
+        by_uid = {i["uid"]: i["file"] for i in batch}
+        name = by_uid.get(result.get("uid"))
+        state = result.get("status")
+        if state in ("created", "duplicate"):
+            # Both mean the hub has it. Only then does the ledger record it -- a rejected
+            # item must stay queued so a fixed roster lets the retry through.
+            if name:
+                sent[name] = now
+            created += state == "created"
+            duplicate += state == "duplicate"
+        else:
+            rejected += 1
+            log(f"  rejected {name or result.get('uid')}: {result.get('reason')}")
+
+    log(f"  {created} created, {duplicate} duplicate, {rejected} rejected")
+    status = {"at": now, "ok": rejected == 0, "hub": hub,
+              "queued": max(len(queue) - created - duplicate, 0),
+              # The panel reads status.json alone, so the running total goes in here rather
+              # than making it open the ledger as well.
+              "sent_total": len(sent),
+              "last_created": created, "last_duplicate": duplicate,
+              "last_rejected": rejected, "skipped": skipped}
+    refresh_caches(hub, token, sessions, status)
+    save("sent.json", sent)
+    save("status.json", status)
+    return 0 if rejected == 0 else 1
+
+
+def refresh_caches(hub, token, sessions, status):
+    """The roster, and open orders for the machines this Pi has actually metered.
+
+    Orders are fetched per machine rather than wholesale because the hub offers no bulk
+    endpoint, so this is deliberately bounded to the machines that appear in the local
+    sessions -- not every machine on the floor."""
+    try:
+        roster = get_json(f"{hub}/api/v1/roster", WEB_TIMEOUT, token)
+        save("roster.json", {"at": time.time(), "machines": roster.get("machines") or []})
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        status["roster_error"] = str(exc)
+        return
+
+    slugs = sorted({s["machine"] for s in sessions if s.get("machine")})[:40]
+    orders, errors = {}, 0
+    for slug in slugs:
+        try:
+            body = get_json(
+                f"{hub}/api/v1/machines/{urllib.parse.quote(slug)}/orders?status=open",
+                WEB_TIMEOUT, token)
+            orders[slug] = body.get("orders") or []
+        except (urllib.error.URLError, OSError, ValueError):
+            errors += 1
+    save("orders.json", {"at": time.time(), "open": orders})
+    if errors:
+        status["orders_errors"] = errors
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(130)

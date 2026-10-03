@@ -110,7 +110,7 @@ J[\"verdict\"] = report.verdict(J)
 # The hub stores these and recomputes none of them, so each must be here to be sent.
 ses, prof, win, pw = J[\"session\"], J[\"profile\"], J[\"window\"], J[\"powered\"]
 for d, keys in ((ses, (\"start\", \"end\", \"duration_s\", \"samples\", \"rate\", \"timebase\")),
-                (prof, (\"id\", \"label\", \"kind\")),
+                (prof, (\"id\", \"label\", \"kind\", \"rail\")),
                 (win, (\"lo\", \"hi\", \"unit\", \"source\")),
                 (pw, (\"mean\", \"min\", \"max\", \"readings\", \"in_window_pct\"))):
     missing = [k for k in keys if k not in d]
@@ -119,6 +119,7 @@ for k in (\"alarm_hi\", \"machine\", \"clock\", \"mode_key\", \"over_voltage\",
           \"excursions\", \"power_cycles\", \"gaps\", \"ol_events\", \"marks\", \"verdict\"):
     assert k in J, k
 assert J[\"machine\"] == \"widget-wars\"
+assert J[\"profile\"][\"rail\"] == \"+5V\", J[\"profile\"]
 assert J[\"verdict\"][\"state\"] == \"over\", J[\"verdict\"]
 assert J[\"clock\"][\"source\"] == \"rtc\"
 "'

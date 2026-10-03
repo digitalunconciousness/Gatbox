@@ -230,20 +230,14 @@ def _v(x, unit="V", nd=3):
 
 
 def verdict(J):
-    """(title, css class, detail) for a report's headline, or None when the file has no window (bench, free)."""
-    if not J.get("window"):
-        return None
-    ov = J.get("over_voltage") or []
-    real = [o for o in ov if not o.get("suspect")]
-    exc = J.get("excursions") or []
-    sus = len(ov) - len(real)
-    extra = f" · {sus} suspect reading{'s' if sus > 1 else ''} set aside (autorange glitches)" if sus else ""
-    if real:
-        return "OVER-VOLTAGE", "bad", f"{len(real)} time{'s' if len(real) > 1 else ''} above {J.get('alarm_hi'):g} V{extra}"
-    if exc:
-        return "LEFT THE WINDOW", "warn", f"{len(exc)} excursion{'s' if len(exc) > 1 else ''}{extra}"
-    when = "whenever the board was on" if J.get("power_cycles") else "all session"
-    return "HELD THE WINDOW", "ok", when + extra
+    """(title, css class, detail) for a report's headline, or None when there is no window.
+
+    The rule lives in report.verdict() -- one definition, read here and in dash.js. This
+    used to derive it independently, which is how the same session could in principle be
+    described two ways by the same Pi.
+    """
+    v = J.get("verdict")
+    return (v["title"], v["css"], v["detail"]) if v else None
 
 
 ROWS = 8          # longer lists: the first ROWS, then "+N more" (the full text has them all)

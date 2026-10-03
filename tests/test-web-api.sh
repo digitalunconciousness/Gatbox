@@ -135,7 +135,9 @@ api GET /api/rail/sessions >/dev/null
 check "sessions: newest first, both new files" '[ "$(js "len(d[\"sessions\"]) >= 3 and d[\"sessions\"][0][\"file\"] > d[\"sessions\"][-1][\"file\"]")" = True ]'
 check "the VDC file: 2 OV, profile rail-5v"   '[ "$(js "[(s[\"ov\"], s[\"profile\"][\"id\"], s[\"mode\"], s[\"window\"][\"lo\"]) for s in d[\"sessions\"] if s[\"file\"] == \"$A1\"]")" = "[(2, '"'"'rail-5v'"'"', '"'"'VDC'"'"', 4.75)]" ]'
 check "old file: default window, clock ntp"   '[ "$(js "[(s[\"window\"][\"source\"][:7], s[\"clock\"][\"source\"]) for s in d[\"sessions\"] if s[\"file\"] == \"$O\"]")" = "[('"'"'default'"'"', '"'"'ntp'"'"')]" ]'
+check "sessions: the verdict travels, decided once"  '[ "$(js "[(s[\"verdict\"][\"state\"], s[\"verdict\"][\"css\"]) for s in d[\"sessions\"] if s[\"file\"] == \"$A1\"]")" = "[('"'"'over'"'"', '"'"'bad'"'"')]" ]'
 api GET "/api/rail/report/$A1" >/dev/null
+check "report: carries the verdict too"       '[ "$(js "d[\"verdict\"][\"state\"], d[\"verdict\"][\"title\"]")" = "over OVER-VOLTAGE" ]'
 check "report: text, OV sections, links"      '[ "$(js "\"OVER-VOLTAGE (2)\" in d[\"text\"], len(d[\"over_voltage\"]), d[\"png\"].startswith(\"/png/\"), d[\"csv\"]")" = "True 2 True /csv/$A1" ]'
 check "report PNG link works"                 '[ "$(code "$B$(js "d[\"png\"]")")" = 200 ]'
 check "report with lo/hi + range"             '[ "$(api GET "/api/rail/report/$A1?lo=5.0&hi=5.3&from=2000-01-01T00:00")" = 200 ] && [ "$(js "d[\"window\"][\"lo\"], d[\"range\"][\"from\"]")" = "5.0 2000-01-01T00:00:00" ]'

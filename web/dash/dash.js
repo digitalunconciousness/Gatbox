@@ -567,14 +567,11 @@
   function durS(s) { s = Math.max(0, +s || 0); return s < 90 ? (s < 10 ? s.toFixed(1) : s.toFixed(0)) + " s" : dur(s); }
   const vtxt = x => x == null ? "—" : (x.toFixed(3) + " V").replace("-", "−");
   const clock = iso => (iso || "").slice(11, 19);
+  // The report decides the verdict (report.verdict in report.py) and sends it. This used to
+  // re-derive the rule here, so the dashboard and the phone view each had their own copy and
+  // could in principle disagree about the same session.
   function verdictOf(J) {
-    if (!J.window) return null;
-    const ov = J.over_voltage || [], real = ov.filter(o => !o.suspect), exc = J.excursions || [];
-    const sus = ov.length - real.length;
-    const extra = sus ? ` · ${sus} suspect reading${sus > 1 ? "s" : ""} set aside (autorange glitches)` : "";
-    if (real.length) return ["OVER-VOLTAGE", "bad", `${real.length} time${real.length > 1 ? "s" : ""} above ${J.alarm_hi} V${extra}`];
-    if (exc.length) return ["LEFT THE WINDOW", "warn", `${exc.length} excursion${exc.length > 1 ? "s" : ""}${extra}`];
-    return ["HELD THE WINDOW", "ok", ((J.power_cycles || []).length ? "whenever the board was on" : "all session") + extra];
+    return J.verdict ? [J.verdict.title, J.verdict.css, J.verdict.detail] : null;
   }
   function reportCards(J) {
     const c = el("div", "card");

@@ -34,6 +34,51 @@ def _key(name, st, lo, hi, t0, t1, light, plot):
     return ver, f"{name[:-4]}_{ver}_{win}{rng}{'_light' if light else ''}{'' if plot else '_np'}"
 
 
+# The pass/fail rule, in one place. It used to be written twice -- in phone.py and again in
+# web/dash/dash.js -- and was absent from the report JSON, so the hub would have been a third
+# copy free to disagree with this Pi about whether a machine passed. It lives here because
+# the report is what it is derived from, and because report.py is already in the bootstrap
+# MANIFEST: a new module would need a manifest line and a bootstrap run to appear.
+#
+# state is for machines (and the hub's contract); title and css are for a screen.
+VERDICTS = {
+    "over": ("OVER-VOLTAGE", "bad"),
+    "left": ("LEFT THE WINDOW", "warn"),
+    "held": ("HELD THE WINDOW", "ok"),
+}
+
+
+def verdict(J):
+    """Did the rail hold? None when the file has no window at all (bench, free).
+
+    Over-voltage beats an excursion: a reading above the alarm limit is the worse news, and
+    one that is above it is outside the window by definition. Suspect readings -- a lone
+    over-limit sample whose neighbour came back in a different SI unit, i.e. an autorange
+    glitch -- are set aside rather than counted, and said out loud rather than hidden.
+    """
+    if not J.get("window"):
+        return None
+    ov = J.get("over_voltage") or []
+    real = [o for o in ov if not o.get("suspect")]
+    exc = J.get("excursions") or []
+    suspect = len(ov) - len(real)
+    extra = (f" · {suspect} suspect reading{'s' if suspect > 1 else ''} "
+             f"set aside (autorange glitches)") if suspect else ""
+    if real:
+        state = "over"
+        detail = (f"{len(real)} time{'s' if len(real) > 1 else ''} "
+                  f"above {J.get('alarm_hi'):g} V{extra}")
+    elif exc:
+        state = "left"
+        detail = f"{len(exc)} excursion{'s' if len(exc) > 1 else ''}{extra}"
+    else:
+        state = "held"
+        detail = ("whenever the board was on" if J.get("power_cycles") else "all session") + extra
+    title, css = VERDICTS[state]
+    return {"state": state, "title": title, "css": css, "detail": detail,
+            "suspect": suspect}
+
+
 def run(name, lo=None, hi=None, t0=None, t1=None, light=False, plot=True):
     """(J, png path or None) for a session (or its from/to slice). J is the report's --json object; on failure
     it's {"error": …, "text": …}. lo/hi None = the file's header window (older files: 4.75-5.25 V)."""
@@ -49,7 +94,13 @@ def run(name, lo=None, hi=None, t0=None, t1=None, light=False, plot=True):
             for k in [k for k, v in _run_locks.items() if k != key and not v.locked()]:
                 del _run_locks[k]
     with lock:
-        return _run(name, src, ver, key, lo, hi, t0, t1, light, plot)
+        J, png = _run(name, src, ver, key, lo, hi, t0, t1, light, plot)
+    # Derived here rather than stored in the cache, so a report cached before this rule
+    # existed still gets a verdict, and changing the rule takes effect without anyone
+    # having to remember to clear $CACHE_DIRECTORY.
+    if "error" not in J:
+        J["verdict"] = verdict(J)
+    return J, png
 
 
 def _run(name, src, ver, key, lo, hi, t0, t1, light, plot):

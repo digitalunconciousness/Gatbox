@@ -120,6 +120,10 @@ def api_list(limit=100):
             "power_cycles": len(J.get("power_cycles") or []),
             "marks": len(J.get("marks") or []),
             "warnings": [w["flag"] for w in J.get("warnings") or []],
+            # report.verdict decided this, not the caller. The session list is where the
+            # phone and the dashboard get their tags, and where the hub's sync reads the
+            # verdict it pushes -- all three the same answer by construction.
+            "verdict": J.get("verdict"),
             "error": J.get("error"),
         })
     return out

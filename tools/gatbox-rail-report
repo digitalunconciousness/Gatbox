@@ -447,7 +447,10 @@ def main():
             "session": {"start": rows[0].iso, "end": rows[-1].iso, "duration_s": dur, "samples": len(rows),
                         "rate": len(rows) / max(dur, 1), "timebase": "monotonic" if mono else "wall clock"},
             "modes": mode_stats, "mode_key": h.mode,
-            "profile": {"id": pid, "label": prof.get("label", pid), "kind": kind, "from_header": bool(h.profile)},
+            # rail is the ASCII rail id ("+5V", "-5V") or None for a bench profile. The hub's
+            # contract/v1 declares it and this did not emit it, so the sync had nothing to send.
+            "profile": {"id": pid, "label": prof.get("label", pid), "kind": kind,
+                        "rail": prof.get("rail"), "from_header": bool(h.profile)},
             "machine": h.machine,
             "window": ({"lo": window[0], "hi": window[1], "unit": wunit, "source": wsource, "applies_to": applies}
                        if window else None),

@@ -952,6 +952,21 @@
       if (await confirmBox("STOP LOGGING?", "Nothing is recorded until someone presses START.", "STOP")) api("POST", "/api/session/stop").then(loadSystem).catch(fail);
     });
     add(row, go, stop); lt.appendChild(row);
+    // The hub push (gatbox-sync). Absent means the job has never run, which is the normal
+    // state of a Pi with no token in /etc/gatbox/hub.conf -- not a fault, so say so plainly
+    // rather than showing a failure.
+    const hb = d.hub;
+    const ago = t => t ? `${Math.max(0, Math.round(Date.now() / 1000 - t) / 60).toFixed(0)} min ago` : "never";
+    tile("Hub", hb ? [
+      ["reachable", hb.ok ? (hb.url || "yes") : (hb.error || "no"), hb.ok ? "ok" : "bad"],
+      ["queued", hb.queued === 0 ? "nothing waiting" : `${hb.queued} session${hb.queued === 1 ? "" : "s"}`,
+       hb.queued ? "warn" : null],
+      ["last run", ago(hb.at)],
+      ["last push", hb.last && hb.last.created != null
+        ? `${hb.last.created} new, ${hb.last.duplicate} already there${hb.last.rejected ? `, ${hb.last.rejected} refused` : ""}`
+        : "nothing yet", hb.last && hb.last.rejected ? "bad" : null],
+      ["sent in all", hb.sent_total != null ? String(hb.sent_total) : "-"],
+    ] : [["sync", "not configured (no /etc/gatbox/hub.conf)", "mut"]]);
     const v = d.versions || {};
     tile("Software", Object.entries(v).map(([k, x]) => [k, x]));
     if (d.errors && Object.keys(d.errors).length) tile("Couldn't read", Object.entries(d.errors).map(([k, x]) => [k, x, "warn"]));

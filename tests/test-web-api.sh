@@ -225,7 +225,8 @@ logger_stop
 check "POST /api/session/stop -> 202, stopped" '[ "$(api POST /api/session/stop)" = 202 ] && [ -e "$T/ctrl/stopped" ] && [ "$(api POST /api/session/new)" = 202 ] && [ ! -e "$T/ctrl/stopped" ]'
 
 echo "system + devices:"
-check "/api/system: the panel's fields"       '[ "$(api GET /api/system)" = 200 ] && [ "$(js "all(k in d for k in (\"temp_c\", \"throttled\", \"ext5v_v\", \"disk\", \"network\", \"clock\", \"kiosk\", \"versions\", \"logger\"))")" = True ]'
+check "/api/system: the panel's fields"       '[ "$(api GET /api/system)" = 200 ] && [ "$(js "all(k in d for k in (\"temp_c\", \"throttled\", \"ext5v_v\", \"disk\", \"network\", \"clock\", \"kiosk\", \"versions\", \"logger\", \"hub\"))")" = True ]'
+check "/api/system: hub is null until sync runs"  '[ "$(js "d[\"hub\"] is None")" = True ]'
 check "/api/system: clock source + disk"      '[ "$(js "d[\"clock\"][\"source\"] in (\"ntp\", \"rtc\", \"unverified\"), d[\"disk\"][\"system\"][\"total\"] > 0")" = "True True" ]'
 check "/api/devices: dmm, t48, scanner, touch" '[ "$(api GET /api/devices)" = 200 ] && [ "$(js "sorted(k for k in d if k != \"usb\")")" = "['"'"'dmm'"'"', '"'"'scanner'"'"', '"'"'t48'"'"', '"'"'touch'"'"']" ]'
 check "unknown /api path -> 404 JSON"         '[ "$(api GET /api/nope)" = 404 ] && [ "$(js "d[\"error\"]")" = "not found" ]'

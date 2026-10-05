@@ -727,6 +727,14 @@ def main():
             time.sleep(2)
             shot(f"17-{v}")
         check("system: kiosk controls on the Pi's own screen", q("!document.querySelector('#sy-kiosk').classList.contains('hide')"))
+        # The hub push (gatbox-sync). Nothing has run here and there is no
+        # /var/lib/gatbox-sync, so the tile must say so plainly rather than read as a failure
+        # -- a Pi with no token in /etc/gatbox/hub.conf is the normal case, not a fault.
+        hubcard = ("[...document.querySelectorAll('#sy-grid .card')]"
+                   ".find(c => (c.querySelector('h2') || {}).textContent === 'Hub')")
+        check("system: a Hub tile", q(f"!!({hubcard})"))
+        check("system: it says sync isn't configured, not that it failed",
+              "not configured" in q(f"(({hubcard}) || {{}}).textContent || ''"))
         check("devices: NOT FITTED cards greyed", q("document.querySelectorAll('#dv-grid .notfit').length") == 3)
 
     print("phone (390x844):")

@@ -75,6 +75,10 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/v1/health":
             if os.path.exists(os.path.join(WORK, "hub-down")):
                 return self.reply(503, {"error": "down"})
+            if os.path.exists(os.path.join(WORK, "hub-403")):
+                # What a tunnel or WAF in front of the hub does; the application itself
+                # cannot produce this for a route that takes no token.
+                return self.reply(403, {"error": "Forbidden"})
             return self.reply(200, {"ok": True, "contract": "v1", "time": 0})
         if not self.headers.get("Authorization", "").startswith("Bearer gbx_"):
             return self.reply(401, {"error": "a valid device token is required"})
@@ -94,8 +98,11 @@ class H(BaseHTTPRequestHandler):
              f"readings={sum(len(i.get('readings') or []) for i in body.get('items') or [])}")
         with open(os.path.join(WORK, "posted.json"), "a") as fh:
             fh.write(json.dumps(body) + "\n")
-        if not self.headers.get("Authorization", "").startswith("Bearer gbx_"):
+        if (not self.headers.get("Authorization", "").startswith("Bearer gbx_")
+                or os.path.exists(os.path.join(WORK, "hub-401"))):
             return self.reply(401, {"error": "a valid device token is required"})
+        if os.path.exists(os.path.join(WORK, "hub-500")):
+            return self.reply(500, {"error": "the hub fell over"})
         # created the first time a uid is seen, duplicate after -- the real hub's behaviour,
         # which is what makes the ledger an optimisation rather than correctness.
         seen_path = os.path.join(WORK, "seen.json")
@@ -254,22 +261,36 @@ check "losing it re-sends"                     'grep -q "2 to send" "$T/out"'
 check "and the hub answers duplicate, so nothing is doubled" 'grep -q "0 created, 2 duplicate, 0 rejected" "$T/out"'
 check "exits 0: a duplicate is not a failure"  '[ "$(cat "$T/rc")" = 0 ]'
 
-echo "the hub unreachable:"
+echo "the hub unreachable -- the normal case for a box that travels:"
 touch "$T/work/hub-down"
 rm -f "$T/state/sent.json"
 run
-check "exits non-zero"                         '[ "$(cat "$T/rc")" != 0 ]'
+# systemd marks a oneshot failed on a non-zero exit. A timer that fails every two minutes
+# whenever GATBOX is off its home network fills systemctl --failed with noise and hides the
+# failures that matter, so this is deliberately a success with the detail in the journal.
+check "exits 0: being off the network is not a fault" '[ "$(cat "$T/rc")" = 0 ]'
 check "says how many are queued"               'grep -q "no hub reachable; 2 queued" "$T/out"'
 check "records it for the SYSTEM tile"         'python3 -c "
 import json; d=json.load(open(\"$T/state/status.json\"))
 assert d[\"ok\"] is False and d[\"queued\"] == 2, d"'
 rm -f "$T/work/hub-down"
 
+echo "a hub that answers and refuses is not 'unreachable':"
+touch "$T/work/hub-403"
+rm -f "$T/state/sent.json"
+run
+check "says refused, with the status"          'grep -q "refused (HTTP 403" "$T/out"'
+check "and points past the hub, since health takes no token" 'grep -q "something in front of the hub" "$T/out"'
+check "still exits 0"                          '[ "$(cat "$T/rc")" = 0 ]'
+rm -f "$T/work/hub-403"
+
 echo "a rejected item stays queued:"
 touch "$T/work/hub-rejects"
 rm -f "$T/state/sent.json" "$T/state/status.json"
 run
-check "exits non-zero"                         '[ "$(cat "$T/rc")" != 0 ]'
+# A rejected item usually means a slug the hub does not know, which a person must fix -- but
+# failing the unit every two minutes until they do is exactly the noise this avoids.
+check "exits 0, with the reason in the journal" '[ "$(cat "$T/rc")" = 0 ] && grep -q "left queued" "$T/out"'
 check "the reason is logged"                   'grep -q "rejected rail_20260920_010000.csv: no machine with that slug" "$T/out"'
 check "the ledger does not record it"          '[ ! -f "$T/state/sent.json" ] || python3 -c "
 import json; d=json.load(open(\"$T/state/sent.json\"))
@@ -306,6 +327,24 @@ echo "a dry run:"
 rm -f "$T/state/sent.json" "$T/work/hub.log"
 touch "$T/work/hub.log"
 check "builds but posts nothing"               'run GATBOX_SYNC_DRYRUN=1; grep -q "dry run: posting nothing" "$T/out" && [ "$(grep -c "^POST" "$T/work/hub.log")" = 0 ]'
+
+echo "the other half of the policy -- what SHOULD fail the unit:"
+touch "$T/work/hub-401"
+rm -f "$T/state/sent.json"
+run
+# A revoked or disabled token needs a person, and no amount of retrying helps. This is
+# precisely what systemctl --failed should be reserved for.
+check "a refused token exits 1"                '[ "$(cat "$T/rc")" = 1 ]'
+check "and says so"                            'grep -q "ingest failed: HTTP 401" "$T/out"'
+rm -f "$T/work/hub-401"
+touch "$T/work/hub-500"
+rm -f "$T/state/sent.json"
+run
+check "but the hub falling over exits 0"       '[ "$(cat "$T/rc")" = 0 ]'
+check "because that clears on its own"         'grep -q "ingest failed: HTTP 500" "$T/out"'
+rm -f "$T/work/hub-500"
+check "nothing was recorded as sent either way" '[ ! -f "$T/state/sent.json" ] || [ "$(python3 -c "
+import json; print(len(json.load(open(\"$T/state/sent.json\"))))")" = 0 ]'
 
 echo "a bad token:"
 MALFORMED=not-of-the-right-shape

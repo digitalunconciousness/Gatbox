@@ -31,6 +31,19 @@ own name, so re-sending changes nothing and comes back "duplicate". **The sent l
 optimisation, not correctness** -- delete state/sent.json and everything is simply re-sent
 and acknowledged as duplicate. That is the recovery for "the state looks wrong".
 
+**Exit codes.** systemd marks a oneshot failed on a non-zero exit, and a timer-driven unit
+that fails routinely fills `systemctl --failed` with noise that hides the failures that
+matter. So non-zero is reserved for "a person must act, and retrying cannot help":
+
+    1   the token is malformed, or the hub refuses it (401/403 on ingest), or the hub
+        rejects the request as malformed (400) -- a contract bug on our side
+    0   everything else, including no hub reachable, gatbox-web down, 429 or 5xx, and
+        items the hub rejected
+
+A portable bench box being off its home network is the normal case, not a fault. What is
+happening is still in the journal and in status.json, which is what the dashboard's SYSTEM
+panel reads -- that is the channel for "nothing has gone out lately", not a failed unit.
+
 Stdlib only.
 
 Config, /etc/gatbox/hub.conf (mode 600, root), reached through LoadCredential= so the file
@@ -187,6 +200,17 @@ def pick_hub(urls, token):
     for url in urls:
         try:
             body = get_json(f"{url}/api/v1/health", HEALTH_TIMEOUT)
+        except urllib.error.HTTPError as exc:
+            # Something answered and refused, which is a different problem from a dead
+            # network and wants saying differently. /api/v1/health takes no token and the
+            # application cannot produce a 401 or 403 for it, so one of those means
+            # something in front of the hub -- a tunnel, a proxy, a WAF -- is doing it.
+            note = ""
+            if exc.code in (401, 403):
+                note = ("; health takes no token, so this is something in front of the hub, "
+                        "not the hub")
+            log(f"  {url}: refused (HTTP {exc.code} {exc.reason}){note}")
+            continue
         except (urllib.error.URLError, OSError, ValueError, socket.timeout) as exc:
             log(f"  {url}: unreachable ({exc})")
             continue
@@ -334,7 +358,7 @@ def main():
         log(f"gatbox-web unreachable: {exc}")
         save("status.json", {"at": time.time(), "ok": False,
                              "error": f"gatbox-web unreachable: {exc}"})
-        return 1
+        return 0           # it is Restart=always; the next timer will find it
     sessions = listing.get("sessions") or []
 
     sent = {} if IGNORE_LEDGER else load("sent.json", {})
@@ -359,11 +383,11 @@ def main():
 
     hub = pick_hub(urls, token)
     if hub is None:
-        log(f"  no hub reachable; {len(queue)} queued")
+        log(f"  no hub reachable; {len(queue)} queued, nothing sent")
         save("status.json", {"at": time.time(), "ok": False, "queued": len(queue),
                              "error": "no hub reachable"})
         save("sent.json", sent)
-        return 1
+        return 0           # off the network is the normal case for a box that travels
 
     batch, skipped = [], 0
     for name in queue[:MAX_SESSIONS]:
@@ -387,10 +411,11 @@ def main():
         batch.append(build_item(dev, name, report, samples))
 
     if not batch:
-        save("status.json", {"at": time.time(), "ok": True, "hub": hub,
+        log("  nothing could be built from the queue; see the lines above")
+        save("status.json", {"at": time.time(), "ok": False, "hub": hub,
                              "queued": len(queue), "error": "nothing could be built"})
         save("sent.json", sent)
-        return 1
+        return 0           # visible in the journal and the panel; failing every 2 min is not
 
     total_readings = sum(len(i["readings"]) for i in batch)
     log(f"  posting {len(batch)} session(s), {total_readings} readings")
@@ -407,7 +432,13 @@ def main():
                              "queued": len(queue),
                              "error": f"HTTP {status_code}: {body.get('error')}"})
         save("sent.json", sent)
-        return 1
+        # 401/403: the token is wrong, disabled or revoked. 400: we are sending something
+        # the hub will never accept, which is a contract bug here. Both need a person, and
+        # no amount of retrying helps -- so these are the cases worth failing the unit for.
+        # 429 and 5xx are the hub's problem and will clear on their own.
+        if status_code in (400, 401, 403):
+            return 1
+        return 0
 
     now = time.time()
     created = duplicate = rejected = 0
@@ -437,7 +468,12 @@ def main():
     refresh_caches(hub, token, sessions, status)
     save("sent.json", sent)
     save("status.json", status)
-    return 0 if rejected == 0 else 1
+    if rejected:
+        log(f"  {rejected} item(s) rejected and left queued; they will be retried")
+    # Not a unit failure: the reasons are above and in status.json, the items stay queued,
+    # and a unit that fails every two minutes until someone edits the roster is the noise
+    # this policy exists to avoid.
+    return 0
 
 
 def refresh_caches(hub, token, sessions, status):

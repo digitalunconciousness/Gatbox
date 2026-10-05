@@ -83,6 +83,13 @@ WEB_TIMEOUT = 120.0               # a cold report over 10k samples is not quick
 POST_TIMEOUT = 120.0
 RUN_BUDGET = 240.0                # under the unit's RuntimeMaxSec, so we stop ourselves first
 
+# Say what we are. urllib otherwise sends "Python-urllib/3.13", which is a string generic
+# bot protection blocks outright -- Cloudflare in front of the hub refused it with a 403
+# while the very same request with any other User-Agent got a 200, curl included. Beyond
+# getting through, a request that names the program is simply easier to account for in
+# someone else's log than one that names the language it happens to be written in.
+USER_AGENT = "gatbox-sync/1 (+https://github.com/digitalunconciousness/Gatbox)"
+
 DRYRUN = bool(os.environ.get("GATBOX_SYNC_DRYRUN"))
 IGNORE_LEDGER = bool(os.environ.get("GATBOX_SYNC_ONCE"))
 
@@ -168,6 +175,7 @@ def save(name, obj):
 
 def get_json(url, timeout, token=None):
     req = urllib.request.Request(url, method="GET")
+    req.add_header("User-Agent", USER_AGENT)
     if token:
         req.add_header("Authorization", f"Bearer {token}")
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -179,6 +187,7 @@ def post_json(url, body, token, timeout=POST_TIMEOUT):
     worth reading rather than discarding as an exception."""
     data = json.dumps(body, allow_nan=False).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")
+    req.add_header("User-Agent", USER_AGENT)
     req.add_header("Content-Type", "application/json")
     req.add_header("Authorization", f"Bearer {token}")
     try:

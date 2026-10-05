@@ -61,7 +61,7 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        note(f"GET {self.path}")
+        note(f"GET {self.path} ua={self.headers.get('User-Agent', '-')}")
         path = self.path.split("?")[0]
         if ROLE == "web":
             if path == "/api/rail/sessions":
@@ -95,7 +95,8 @@ class H(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(n) or b"{}")
         note(f"POST {self.path} items={len(body.get('items') or [])} "
-             f"readings={sum(len(i.get('readings') or []) for i in body.get('items') or [])}")
+             f"readings={sum(len(i.get('readings') or []) for i in body.get('items') or [])} "
+             f"ua={self.headers.get('User-Agent', '-')}")
         with open(os.path.join(WORK, "posted.json"), "a") as fh:
             fh.write(json.dumps(body) + "\n")
         if (not self.headers.get("Authorization", "").startswith("Bearer gbx_")
@@ -202,6 +203,14 @@ check "one POST, 8 readings"                   '[ "$(grep -c "^POST /api/v1/inge
 check "never asks gatbox-web for the live file" '! grep -q "20260922" "$T/work/web.log"'
 check "nor for the one with no machine"         '! grep -q "20260923" "$T/work/web.log"'
 check "nor for the one whose report failed"     '! grep -q "20260924" "$T/work/web.log"'
+
+echo "what it says it is:"
+# urllib's default is "Python-urllib/3.x", which generic bot protection blocks outright:
+# Cloudflare in front of the hub answered 403 to exactly that and 200 to every other
+# User-Agent, curl's included. Found on the bench, 2026-10-05.
+check "never identifies as Python-urllib"      '! grep -q "Python-urllib" "$T/work/hub.log" "$T/work/web.log"'
+check "names itself to the hub"                'grep -q "POST /api/v1/ingest .*ua=gatbox-sync/" "$T/work/hub.log"'
+check "and to gatbox-web"                      'grep -q "ua=gatbox-sync/" "$T/work/web.log"'
 
 echo "the payload:"
 check "contract v1, device from the token"     '[ "$(python3 -c "

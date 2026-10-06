@@ -58,6 +58,9 @@ backend/gatbox-ap-fallback                      /usr/local/sbin/gatbox-ap-fallba
 backend/gatbox-sync                              /usr/local/bin/gatbox-sync                            755
 backend/gatbox-sync.service                      /etc/systemd/system/gatbox-sync.service               644
 backend/gatbox-sync.timer                        /etc/systemd/system/gatbox-sync.timer                 644
+backend/gatbox-wifi                              /usr/local/sbin/gatbox-wifi                           755
+backend/gatbox-wifi.service                      /etc/systemd/system/gatbox-wifi.service               644
+backend/gatbox-wifi.path                         /etc/systemd/system/gatbox-wifi.path                  644
 backend/gatbox-ap-fallback.service              /etc/systemd/system/gatbox-ap-fallback.service        644
 backend/gatbox-ap-fallback.timer                /etc/systemd/system/gatbox-ap-fallback.timer          644
 tools/gatbox-status                             /usr/local/bin/gatbox-status                          755
@@ -243,6 +246,8 @@ if [ "${1:-}" = "--check" ]; then
         systemctl -q is-enabled "$u" 2>/dev/null || DIFFS+=("enable     $u"); done
     getent passwd gatbox-dump >/dev/null || DIFFS+=("create     user gatbox-dump (sysusers.d)")
     getent passwd gatbox-sync >/dev/null || DIFFS+=("create     user gatbox-sync (sysusers.d)")
+    getent group gatbox-wifi >/dev/null || DIFFS+=("create     group gatbox-wifi (sysusers.d)")
+    [ -d /var/spool/gatbox-wifi ] || DIFFS+=("create     /var/spool/gatbox-wifi (tmpfiles.d)")
     [ -d /srv/gatbox/roms ] && [ -d /var/spool/gatbox-dump ] || DIFFS+=("create     /srv/gatbox/roms + /var/spool/gatbox-dump (tmpfiles.d)")
     [ -d /etc/gatbox ] || DIFFS+=("create     /etc/gatbox (tmpfiles.d; hub.conf goes in by hand)")
     # Only when the hotspot is armed at all: an unarmed Pi is not missing anything.
@@ -427,10 +432,10 @@ svc() {   # <unit> <installed path glob>...: enable it; restart only if its file
 }
 # the dump job's user, the archive and the spool (before gatbox-web, which joins the gatbox-dump group)
 if changed /etc/sysusers.d/gatbox.conf || ! getent passwd gatbox-dump >/dev/null || ! getent group gatbox-manuals >/dev/null \
-   || ! getent passwd gatbox-sync >/dev/null; then
+   || ! getent passwd gatbox-sync >/dev/null || ! getent group gatbox-wifi >/dev/null; then
     systemd-sysusers /etc/sysusers.d/gatbox.conf && log "users gatbox-dump (T48 dumps, group plugdev) and gatbox-sync (hub push), group gatbox-manuals"
 fi
-if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ] || [ ! -d /srv/gatbox/manuals ] || [ ! -d /etc/gatbox ]; then
+if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ] || [ ! -d /srv/gatbox/manuals ] || [ ! -d /etc/gatbox ] || [ ! -d /var/spool/gatbox-wifi ]; then
     systemd-tmpfiles --create /etc/tmpfiles.d/gatbox.conf && log "/srv/gatbox/roms + /srv/gatbox/manuals + /var/spool/gatbox-dump + /etc/gatbox"
 fi
 if ! id -nG "$U" | grep -qw gatbox-dump; then
@@ -444,6 +449,9 @@ svc gatbox-web.service /usr/local/bin/gatbox-web /etc/systemd/system/gatbox-web.
     '/usr/local/lib/gatbox/gatboxweb/*' '/usr/local/lib/gatbox/gatboxlib/*'   # its package and the shared lib
 svc gatbox-scand.service /usr/local/bin/gatbox-scand /etc/systemd/system/gatbox-scand.service   # after gatbox-web
 svc gatbox-dump.path /etc/systemd/system/gatbox-dump.path /etc/systemd/system/gatbox-dump.service   # dashboard dumps
+# Wi-Fi requests from the dashboard and from a scanned code; the helper is the only thing
+# here that can change the network.
+svc gatbox-wifi.path /usr/local/sbin/gatbox-wifi '/etc/systemd/system/gatbox-wifi.*'
 fetch_font() {   # <path in google/fonts> <local name> <sha256>
     local f="$FONTDIR/$2"
     echo "$3  $f" | sha256sum -c --status 2>/dev/null && return 0

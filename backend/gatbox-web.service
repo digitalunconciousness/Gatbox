@@ -30,6 +30,10 @@ ReadWritePaths=-/var/spool/gatbox-dump
 # setgid); everything else there it only reads.
 SupplementaryGroups=gatbox-manuals
 ReadWritePaths=-/srv/gatbox/manuals
+# Wi-Fi: the dashboard writes a request here and gatbox-wifi (root) acts on it. This service
+# cannot change the network itself -- DynamicUser leaves it no D-Bus, so nmcli fails here.
+SupplementaryGroups=gatbox-wifi
+ReadWritePaths=-/var/spool/gatbox-wifi
 # gatbox-sync's status, for the SYSTEM panel's hub block. Read-only and fails soft: that job
 # is the only writer of its own state. "-": start anyway on a Pi where sync never ran.
 ReadOnlyPaths=-/var/lib/gatbox-sync

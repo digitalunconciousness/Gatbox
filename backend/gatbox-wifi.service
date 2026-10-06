@@ -1,0 +1,16 @@
+[Unit]
+Description=GATBOX: act on a Wi-Fi request from the dashboard or a scanned code
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/gatbox-wifi
+# Root, because it drives NetworkManager. Nothing else here does: gatbox-web runs DynamicUser
+# with no D-Bus and cannot reach nmcli at all, which is why this job exists.
+# TimeoutStartSec, not RuntimeMaxSec: for Type=oneshot the whole run counts as "starting".
+TimeoutStartSec=180
+# The request file holds a plaintext key until this job takes it, which it does before doing
+# anything else. PrivateTmp so nothing it runs leaves traces in a shared /tmp.
+PrivateTmp=yes
+NoNewPrivileges=yes

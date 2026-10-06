@@ -46,6 +46,22 @@ check "the service no longer installs itself"    '! grep -q "WantedBy" "$REPO/ba
 check "--check reports the timer only when armed" \
     'grep -q "is-enabled gatbox-ap-fallback.timer" "$BOOT" && grep -q "replaces the boot-only service" "$BOOT"'
 
+# gatbox-wifi: the root helper, its .path trigger, the spool it watches, and the group
+# gatbox-web joins to write into that spool.
+for f in gatbox-wifi gatbox-wifi.service gatbox-wifi.path; do
+    check "MANIFEST installs $f"                 'grep -qE "^backend/$f +/" "$BOOT"'
+done
+check "the helper installs to sbin, 755"         'grep -qE "^backend/gatbox-wifi +/usr/local/sbin/gatbox-wifi +755" "$BOOT"'
+check "bootstrap enables the .path"              'grep -q "svc gatbox-wifi.path" "$BOOT"'
+check "sysusers creates the gatbox-wifi group"   'grep -q "^g gatbox-wifi" "$REPO/bootstrap/files/sysusers-gatbox.conf"'
+# 2770: setgid so the dashboard's files keep the group, and not world-readable, because a
+# request file in here holds a plaintext Wi-Fi key until the helper takes it.
+check "tmpfiles creates the spool 2770 root:gatbox-wifi" \
+    'grep -qE "^d /var/spool/gatbox-wifi +2770 +root +gatbox-wifi" "$REPO/bootstrap/files/tmpfiles-gatbox.conf"'
+check "gatbox-web may write to the spool"        'grep -q "ReadWritePaths=-/var/spool/gatbox-wifi" "$REPO/backend/gatbox-web.service"'
+check "gatbox-web is in the gatbox-wifi group"   'grep -q "SupplementaryGroups=gatbox-wifi" "$REPO/backend/gatbox-web.service"'
+check "--check reports the spool"                'grep -q "/var/spool/gatbox-wifi" "$BOOT"'
+
 bash "$BOOT" --check > "$T/check" 2>&1; rc=$?
 check "--check runs without root (exit 0 or 3)" '[ $rc = 0 ] || [ $rc = 3 ]'
 out=$(bash "$BOOT" 2>&1); rc=$?

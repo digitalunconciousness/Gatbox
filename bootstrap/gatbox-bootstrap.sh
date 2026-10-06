@@ -59,6 +59,7 @@ backend/gatbox-sync                              /usr/local/bin/gatbox-sync     
 backend/gatbox-sync.service                      /etc/systemd/system/gatbox-sync.service               644
 backend/gatbox-sync.timer                        /etc/systemd/system/gatbox-sync.timer                 644
 backend/gatbox-ap-fallback.service              /etc/systemd/system/gatbox-ap-fallback.service        644
+backend/gatbox-ap-fallback.timer                /etc/systemd/system/gatbox-ap-fallback.timer          644
 tools/gatbox-status                             /usr/local/bin/gatbox-status                          755
 tools/gatbox-rail-report                        /usr/local/bin/gatbox-rail-report                     755
 tools/gatbox-kiosk                              /usr/local/bin/gatbox-kiosk                           755
@@ -244,6 +245,12 @@ if [ "${1:-}" = "--check" ]; then
     getent passwd gatbox-sync >/dev/null || DIFFS+=("create     user gatbox-sync (sysusers.d)")
     [ -d /srv/gatbox/roms ] && [ -d /var/spool/gatbox-dump ] || DIFFS+=("create     /srv/gatbox/roms + /var/spool/gatbox-dump (tmpfiles.d)")
     [ -d /etc/gatbox ] || DIFFS+=("create     /etc/gatbox (tmpfiles.d; hub.conf goes in by hand)")
+    # Only when the hotspot is armed at all: an unarmed Pi is not missing anything.
+    if systemctl -q is-enabled gatbox-ap-fallback.service 2>/dev/null \
+       || systemctl -q is-enabled gatbox-ap-fallback.timer 2>/dev/null; then
+        systemctl -q is-enabled gatbox-ap-fallback.timer 2>/dev/null \
+            || DIFFS+=("enable     gatbox-ap-fallback.timer (replaces the boot-only service)")
+    fi
     id -nG "$(id -un)" | grep -qw gatbox-dump || DIFFS+=("group      $(id -un) += gatbox-dump (the dump archive)")
     getent group gatbox-manuals >/dev/null || DIFFS+=("create     group gatbox-manuals (sysusers.d)")
     [ -d /srv/gatbox/manuals ] || DIFFS+=("create     /srv/gatbox/manuals (tmpfiles.d)")
@@ -529,8 +536,12 @@ elif [ -n "$AP" ]; then
         ipv4.method shared ipv6.method disabled \
         wifi-sec.key-mgmt wpa-psk wifi-sec.proto rsn wifi-sec.pairwise ccmp wifi-sec.group ccmp \
         wifi-sec.psk "$AP" >/dev/null
-    systemctl enable gatbox-ap-fallback.service >/dev/null
-    log "hotspot 'GATBOX' armed: comes up ~60 s after boot only if no known Wi-Fi/Ethernet"
+    # The service used to carry its own [Install] and run once at boot. Disable that first,
+    # or an upgraded Pi keeps a dangling boot-time symlink alongside the timer.
+    systemctl disable gatbox-ap-fallback.service >/dev/null 2>&1 || true
+    systemctl enable gatbox-ap-fallback.timer >/dev/null
+    log "hotspot 'GATBOX' armed: comes up ~90 s after boot if no known Wi-Fi/Ethernet, and
+        drops again when a saved network comes back into range"
 elif systemctl -q is-enabled gatbox-ap-fallback.service 2>/dev/null; then
     log "hotspot fallback already armed (left as is; GATBOX_AP_PSK=off removes it)"
 else

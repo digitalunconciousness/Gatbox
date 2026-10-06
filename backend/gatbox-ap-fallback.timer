@@ -1,0 +1,16 @@
+[Unit]
+Description=GATBOX: keep the Pi reachable — hotspot when there is no network, off it when one returns
+
+[Timer]
+# OnBootSec is the grace period a network has to come up before the hotspot does. It is the
+# only timing mechanism: the script itself acts immediately, so there is one place to change
+# this rather than a unit and a sleep loop that have to agree.
+OnBootSec=90s
+OnUnitActiveSec=2min
+AccuracySec=30s
+# A box asleep in a cabinet misses runs. Without this, waking up with no network waits a full
+# interval before anything happens.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

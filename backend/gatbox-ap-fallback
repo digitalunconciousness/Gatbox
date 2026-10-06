@@ -1,13 +1,94 @@
 #!/usr/bin/env bash
-# gatbox-ap-fallback — if no known network shows up after boot, raise the GATBOX
-# hotspot so a phone or laptop can still reach the Pi inside a cabinet.
-# Pi is then 10.42.0.1 (also gatbox.local). Reboot near known Wi-Fi to go back.
+# gatbox-ap-fallback — keep the Pi reachable. If no known network is up, raise the GATBOX
+# hotspot so a phone or laptop can still reach it inside a cabinet; and when a saved network
+# comes back into range, drop the hotspot again so NetworkManager rejoins it.
+# Pi on the hotspot is 10.42.0.1 (also gatbox.local).
+#
+# Run repeatedly, from gatbox-ap-fallback.timer. It used to run once at boot and said so --
+# "Reboot near known Wi-Fi to go back" -- which strands a box inside a cabinet that loses its
+# network, and is the whole reason this is now idempotent and recurring.
 set -u
 WAIT="${GATBOX_AP_WAIT:-60}"
-online() { nmcli -t -f DEVICE,STATE device 2>/dev/null | grep -Eq '^(wlan0|eth0):connected$'; }
-for ((i = 0; i < WAIT; i += 5)); do
-    online && { echo "gatbox-ap: network up, hotspot not needed"; exit 0; }
-    sleep 5
-done
-echo "gatbox-ap: no known network after ${WAIT}s, raising hotspot"
-exec nmcli connection up gatbox-ap
+AP_PROFILE="${GATBOX_AP_PROFILE:-gatbox-ap}"
+
+# Is the box on a network that is not its own hotspot?
+#
+# The obvious check -- "is wlan0 connected" -- says yes while the Pi is doing nothing but
+# running the GATBOX AP, because NetworkManager reports the AP device as connected like any
+# other. So the connection name has to be read too, and ours excluded. Terse -t output is
+# DEVICE:STATE:CONNECTION, and a connection name may contain spaces, so the name is whatever
+# follows the second colon.
+real_network_up() {
+    # Self-contained: tests/test-ap-fallback.sh sources this function on its own, the way
+    # tests/test-modes.sh sources mode_key, so it cannot read a variable set further up.
+    local line device state name ap=${GATBOX_AP_PROFILE:-gatbox-ap} out
+    # Conservative on purpose, and the asymmetry is the reason: a wrong "yes" leaves the box
+    # with no network and no hotspot, stranded until someone power-cycles it, while a wrong
+    # "no" costs an unnecessary hotspot. So nmcli failing, or missing, is not a network.
+    out=$(nmcli -t -f DEVICE,STATE,CONNECTION device 2>/dev/null) || return 1
+    while IFS= read -r line; do
+        device=${line%%:*}
+        line=${line#*:}
+        state=${line%%:*}
+        name=${line#*:}
+        [ "$state" = connected ] || continue
+        case "$device" in wlan0 | eth0) ;; *) continue ;; esac
+        [ "$name" = "$ap" ] && continue
+        return 0
+    done <<< "$out"
+    return 1
+}
+# Is our own hotspot the thing that is up?
+hotspot_up() {
+    local line device state name ap=${GATBOX_AP_PROFILE:-gatbox-ap} out
+    out=$(nmcli -t -f DEVICE,STATE,CONNECTION device 2>/dev/null) || return 1
+    while IFS= read -r line; do
+        device=${line%%:*}
+        line=${line#*:}
+        state=${line%%:*}
+        name=${line#*:}
+        [ "$state" = connected ] && [ "$name" = "$ap" ] && [ "$device" = wlan0 ] && return 0
+    done <<< "$out"
+    return 1
+}
+
+# Is a network we already have a profile for within reach? Compared by profile name, which is
+# the SSID for anything added the ordinary way -- by the desktop, by a scanned code, or by the
+# dashboard. A profile whose name was changed by hand will not match, and the cost of that is
+# only that the hotspot stays up.
+saved_in_range() {
+    local ap=${GATBOX_AP_PROFILE:-gatbox-ap} saved ssid
+    saved=$(nmcli -t -f NAME connection show 2>/dev/null) || return 1
+    while IFS= read -r ssid; do
+        [ -n "$ssid" ] || continue
+        [ "$ssid" = "$ap" ] && continue
+        printf '%s\n' "$saved" | grep -qxF -- "$ssid" && return 0
+    done <<< "$(nmcli -t -f SSID device wifi list --rescan yes 2>/dev/null)"
+    return 1
+}
+
+# The boot-time grace period, for the run started at boot. The recurring runs pass 0: a
+# network that is going to come up has had two minutes already.
+if [ "$WAIT" -gt 0 ]; then
+    for ((i = 0; i < WAIT; i += 5)); do
+        real_network_up && { echo "gatbox-ap: network up, hotspot not needed"; exit 0; }
+        sleep 5
+    done
+fi
+
+if real_network_up; then
+    echo "gatbox-ap: on a network, nothing to do"
+    exit 0
+fi
+
+if hotspot_up; then
+    if saved_in_range; then
+        echo "gatbox-ap: a saved network is in range, dropping the hotspot to rejoin it"
+        exec nmcli connection down "$AP_PROFILE"
+    fi
+    echo "gatbox-ap: hotspot up, no saved network in range"
+    exit 0
+fi
+
+echo "gatbox-ap: no network, raising hotspot"
+exec nmcli connection up "$AP_PROFILE"

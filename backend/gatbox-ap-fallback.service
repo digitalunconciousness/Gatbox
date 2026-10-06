@@ -1,11 +1,11 @@
 [Unit]
-Description=GATBOX: raise the GATBOX Wi-Fi hotspot if no known network appears after boot
+Description=GATBOX: raise the hotspot when there is no network, drop it when one returns
 Wants=NetworkManager.service
 After=NetworkManager.service
 
 [Service]
-Type=exec
+Type=oneshot
 ExecStart=/usr/local/sbin/gatbox-ap-fallback
 
-[Install]
-WantedBy=multi-user.target
+# No [Install] section: gatbox-ap-fallback.timer owns when this runs. It used to install
+# itself into multi-user.target and ran exactly once, at boot.

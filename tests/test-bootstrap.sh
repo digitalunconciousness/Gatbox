@@ -30,6 +30,22 @@ check "second --extract writes nothing"         '[[ $out2 == "0 file(s) written 
 echo tampered >> "$T/root/usr/local/bin/gatbox-status"; chmod 700 "$T/root/usr/local/bin/gatbox-web"
 out3=$(bash "$BOOT" --extract "$T/root" 2>&1)
 check "changed content + mode get rewritten"     '[[ $out3 == "2 file(s) written under $T/root" ]] && cmp -s "$REPO/tools/gatbox-status" "$T/root/usr/local/bin/gatbox-status"'
+# The hotspot fallback is driven by a timer, not by the service's own [Install]: it used to
+# run once at boot and tell you to reboot to get back on Wi-Fi, which strands a box in a
+# cabinet. The timer has to be installed and enabled, and the old enablement cleaned up.
+check "MANIFEST installs the AP fallback timer"  'grep -qE "^backend/gatbox-ap-fallback\.timer +/etc/systemd/system/" "$BOOT"'
+check "bootstrap enables the timer"              'grep -q "enable gatbox-ap-fallback.timer" "$BOOT"'
+# Not a bare grep: the removal branch (GATBOX_AP_PSK=off) has always disabled the service, so
+# that would pass without the arming branch cleaning up the old boot-time enablement at all.
+check "and the arming branch cleans up the old enablement" \
+    '[ "$(grep -c "disable gatbox-ap-fallback.service" "$BOOT")" -ge 2 ]'
+check "the service no longer installs itself"    '! grep -q "WantedBy" "$REPO/backend/gatbox-ap-fallback.service"'
+# Not the unconditional unit list: the hotspot is optional, so a Pi that deliberately has
+# none must not be told every run that it is missing a unit. --check reports the timer only
+# where the hotspot is armed at all.
+check "--check reports the timer only when armed" \
+    'grep -q "is-enabled gatbox-ap-fallback.timer" "$BOOT" && grep -q "replaces the boot-only service" "$BOOT"'
+
 bash "$BOOT" --check > "$T/check" 2>&1; rc=$?
 check "--check runs without root (exit 0 or 3)" '[ $rc = 0 ] || [ $rc = 3 ]'
 out=$(bash "$BOOT" 2>&1); rc=$?

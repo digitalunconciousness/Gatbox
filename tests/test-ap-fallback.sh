@@ -29,6 +29,9 @@ STUB
 chmod +x "$T/bin/nmcli"
 export PATH="$T/bin:$PATH" NMCLI_LOG="$T/calls" NMCLI_DEVICE="$T/device"
 export NMCLI_SSIDS="$T/ssids" NMCLI_SAVED="$T/saved"
+# Where the hotspot hold-off is remembered. Exported before anything runs the script, so no
+# case here can reach the installed /var/lib path.
+export GATBOX_AP_STATE="$T/apstate"
 : > "$T/ssids"; : > "$T/saved"
 
 # Source the predicate out of the script, the way tests/test-modes.sh sources mode_key.
@@ -106,6 +109,63 @@ SomeCafe
 run
 check "hotspot up and nothing saved in range: stays up" '! called "connection down gatbox-ap"'
 
+echo "a saved network that will not join does not flap the hotspot:"
+# The password at a venue changed. The profile is still saved and the SSID is still in range,
+# so every run drops the hotspot to rejoin, the join fails, the next run raises the hotspot
+# again -- every two minutes, for ever, cutting anyone on GATBOX each cycle.
+rm -rf "$GATBOX_AP_STATE"
+printf 'HomeNetwork\n' > "$T/ssids"
+printf 'HomeNetwork\ngatbox-ap\n' > "$T/saved"
+state 'wlan0:connected:gatbox-ap'
+run
+check "the first sighting still drops the hotspot" 'called "connection down gatbox-ap"'
+state 'wlan0:connected:gatbox-ap'
+run
+check "the second holds the hotspot instead"    '! called "connection down gatbox-ap"'
+check "and says how long it is holding for"     'grep -q "holding the hotspot" "$T/out"'
+# A hold-off has to expire, or fixing the password at the router would need a reboot.
+mkdir -p "$GATBOX_AP_STATE"
+printf '2 1000000000 HomeNetwork\n' > "$GATBOX_AP_STATE/attempts"
+state 'wlan0:connected:gatbox-ap'
+run
+check "a hold-off from long ago has expired"    'called "connection down gatbox-ap"'
+# A clock that went backwards must not hold the box off for ever -- "clock=unverified" is a
+# state this box really records, and the RTC is deliberately not trickle-charged.
+mkdir -p "$GATBOX_AP_STATE"
+printf '2 9000000000 HomeNetwork\n' > "$GATBOX_AP_STATE/attempts"
+state 'wlan0:connected:gatbox-ap'
+run
+check "a record from the future is not trusted" 'called "connection down gatbox-ap"'
+# The network comes back: the count clears, so the next genuine need to rejoin is immediate.
+rm -rf "$GATBOX_AP_STATE"
+state 'wlan0:connected:gatbox-ap'
+run
+state 'wlan0:connected:HomeNetwork'
+run
+check "being on a network clears the hold-off"  '! [ -s "$GATBOX_AP_STATE/attempts" ]'
+state 'wlan0:connected:gatbox-ap'
+run
+check "so the next sighting drops the hotspot"  'called "connection down gatbox-ap"'
+# Matched by name, which may contain spaces: the record keeps the ssid last for that reason.
+rm -rf "$GATBOX_AP_STATE"
+printf 'My Network With Spaces\n' > "$T/ssids"
+printf 'My Network With Spaces\ngatbox-ap\n' > "$T/saved"
+state 'wlan0:connected:gatbox-ap'
+run
+check "an ssid with spaces drops the hotspot once" 'called "connection down gatbox-ap"'
+state 'wlan0:connected:gatbox-ap'
+run
+check "and is then held off by that same name"  '! called "connection down gatbox-ap"'
+# A corrupt record is not a reason to strand the box on its own hotspot.
+mkdir -p "$GATBOX_AP_STATE"
+printf 'nonsense\n' > "$GATBOX_AP_STATE/attempts"
+state 'wlan0:connected:gatbox-ap'
+run
+check "a corrupt record falls back to trying"   'called "connection down gatbox-ap"'
+rm -rf "$GATBOX_AP_STATE"
+printf 'HomeNetwork\nNeighbour\n' > "$T/ssids"
+printf 'HomeNetwork\ngatbox-ap\n' > "$T/saved"
+
 echo "the timer is the only grace period:"
 # The Task 1 ruling said GATBOX_AP_WAIT defaults to 0 and OnBootSec is the one place the
 # delay lives. It shipped defaulting to 60, so the hotspot came up ~150 s after boot (not the
@@ -126,6 +186,7 @@ state 'wlan0:connected (externally):HomeNetwork'
 check "connected (externally) is a real network" 'real_network_up'
 check "both units pin the locale"               'grep -q "LC_ALL=C" "$REPO/backend/gatbox-ap-fallback.service" && grep -q "LC_ALL=C" "$REPO/backend/gatbox-wifi.service"'
 check "the ap service bounds its start"         'grep -q "TimeoutStartSec" "$REPO/backend/gatbox-ap-fallback.service"'
+check "and gives the hold-off somewhere to live" 'grep -q "^StateDirectory=gatbox-ap-fallback$" "$REPO/backend/gatbox-ap-fallback.service"'
 
 echo "the three hotspot branches, against a fake systemctl:"
 # Grepping the bootstrap's source cannot see which of three branches enables what, which is

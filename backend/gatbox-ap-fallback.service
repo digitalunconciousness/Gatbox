@@ -12,6 +12,10 @@ ExecStart=/usr/local/sbin/gatbox-ap-fallback
 TimeoutStartSec=150
 # nmcli's state strings are localized; the predicate matches them.
 Environment=LC_ALL=C
+# /var/lib/gatbox-ap-fallback: how many times each saved network has been tried and
+# failed, so a profile whose password changed does not flap the hotspot every two
+# minutes. Survives a reboot on purpose -- the password is still wrong after one.
+StateDirectory=gatbox-ap-fallback
 
 # No [Install] section: gatbox-ap-fallback.timer owns when this runs. It used to install
 # itself into multi-user.target and ran exactly once, at boot.

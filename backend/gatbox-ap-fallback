@@ -12,6 +12,11 @@ set -u
 # delay in one place is the whole point. Set it only to wait by hand.
 WAIT="${GATBOX_AP_WAIT:-0}"
 AP_PROFILE="${GATBOX_AP_PROFILE:-gatbox-ap}"
+# Where the hold-off below is remembered. gatbox-ap-fallback.service declares
+# StateDirectory=gatbox-ap-fallback and systemd exports STATE_DIRECTORY; a run started by
+# gatbox-wifi's restore_hotspot has no such variable, so the path is also written out.
+STATE_DIR="${GATBOX_AP_STATE:-${STATE_DIRECTORY:-/var/lib/gatbox-ap-fallback}}"
+ATTEMPTS="$STATE_DIR/attempts"
 
 # Is the box on a network that is not its own hotspot?
 #
@@ -68,10 +73,67 @@ saved_in_range() {
     while IFS= read -r ssid; do
         [ -n "$ssid" ] || continue
         [ "$ssid" = "$ap" ] && continue
-        printf '%s\n' "$saved" | grep -qxF -- "$ssid" && return 0
+        # Prints the match: the caller needs the name to hold off that one network rather
+        # than every network, and grep -qxF is otherwise silent.
+        printf '%s\n' "$saved" | grep -qxF -- "$ssid" && { printf '%s\n' "$ssid"; return 0; }
     done <<< "$(nmcli -t -f SSID device wifi list --rescan yes 2>/dev/null)"
     return 1
 }
+
+# A saved profile whose password changed -- the ordinary thing to happen at a venue -- used
+# to cost the hotspot every two minutes for ever: the SSID is in range, so drop the AP to
+# rejoin; the join fails; the next run finds no network and raises the AP; repeat. Anyone on
+# GATBOX is cut each cycle, which is the opposite of what this script is for. So each attempt
+# to rejoin an SSID is remembered and the next one waits longer.
+#
+# Remembered per SSID rather than globally: a box that cannot rejoin the office network must
+# still take the first chance it gets at a different one.
+hold_for() {        # hold_for COUNT -> seconds to leave that SSID alone for
+    case "$1" in
+        0) echo 0 ;;
+        1) echo 600 ;;
+        2) echo 1800 ;;
+        *) echo 3600 ;;
+    esac
+}
+
+attempt_for() {     # attempt_for SSID -> "COUNT EPOCH", or "0 0" for one never tried
+    # `name`, not `ssid`: the caller's variable is called that, and a local of the same name
+    # here would shadow it silently for anything added below.
+    local count epoch name
+    if [ -r "$ATTEMPTS" ]; then
+        # The ssid is the last field, so one containing spaces needs no quoting; and it is
+        # compared with = rather than matched, so one containing a regex character cannot
+        # match the wrong row.
+        while read -r count epoch name; do
+            [ "$name" = "$1" ] || continue
+            # A record this script did not write is not a reason to strand the box on its
+            # own hotspot, so anything non-numeric reads as "never tried".
+            case "$count$epoch" in '' | *[!0-9]*) continue ;; esac
+            echo "$count $epoch"
+            return
+        done < "$ATTEMPTS"
+    fi
+    echo "0 0"
+}
+
+note_attempt() {    # note_attempt SSID COUNT
+    local tmp c e s
+    mkdir -p "$STATE_DIR" 2>/dev/null || return 0
+    tmp="$ATTEMPTS.$$"
+    : > "$tmp" || return 0
+    if [ -r "$ATTEMPTS" ]; then
+        while read -r c e s; do
+            [ -n "$e" ] || continue
+            [ "$s" = "$1" ] && continue
+            printf '%s %s %s\n' "$c" "$e" "$s"
+        done < "$ATTEMPTS" | tail -n 19 >> "$tmp"
+    fi
+    printf '%s %s %s\n' "$(($2 + 1))" "$(date +%s)" "$1" >> "$tmp"
+    mv -f "$tmp" "$ATTEMPTS" 2>/dev/null || rm -f "$tmp"
+}
+
+clear_attempts() { rm -f "$ATTEMPTS" 2>/dev/null || :; }
 
 # The boot-time grace period, for the run started at boot. The recurring runs pass 0: a
 # network that is going to come up has had two minutes already.
@@ -84,11 +146,26 @@ fi
 
 if real_network_up; then
     echo "gatbox-ap: on a network, nothing to do"
+    # Whatever was being held off is moot now. Clearing here is what makes a hold-off
+    # temporary rather than a profile the box quietly gives up on.
+    clear_attempts
     exit 0
 fi
 
 if hotspot_up; then
-    if saved_in_range; then
+    if ssid=$(saved_in_range); then
+        read -r count last <<< "$(attempt_for "$ssid")"
+        wait_for=$(hold_for "$count")
+        age=$(($(date +%s) - last))
+        # age >= 0: a record dated in the future means the clock moved, not that the attempt
+        # is pending. This box records "clock=unverified" as a real state and its RTC is
+        # deliberately not trickle-charged, so that is not hypothetical -- and a negative age
+        # would otherwise hold the hotspot up until the record aged out of the future.
+        if [ "$count" -gt 0 ] && [ "$age" -ge 0 ] && [ "$age" -lt "$wait_for" ]; then
+            echo "gatbox-ap: $ssid is in range but the last $count attempt(s) to rejoin it did not stick; holding the hotspot for another $((wait_for - age))s"
+            exit 0
+        fi
+        note_attempt "$ssid" "$count"
         echo "gatbox-ap: a saved network is in range, dropping the hotspot to rejoin it"
         exec nmcli connection down "$AP_PROFILE"
     fi

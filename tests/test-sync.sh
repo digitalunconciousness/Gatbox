@@ -434,5 +434,47 @@ rm -f "$T/work/orders.json"
 run
 check "a file in the old flat ledger is not re-sent" '[ ! -s "$T/work/posted.json" ] || [ "$(posted "len([i for i in items if i.get(\"file\") == \"rail_20260920_010000.csv\"])")" = 0 ]'
 
+echo "an item the hub will never accept stops being retried:"
+# Rejections were retried for ever with no ceiling. Most of what could be rejected before
+# Phase 6 cleared on its own -- a session the hub had not ingested yet -- but an order for a
+# machine the hub's roster does not have never clears, and nothing on the dashboard said so.
+rm -f "$T/work/hub-"* "$T/state/sent.json" "$T/work/posted.json" "$T/work/seen.json"
+cat > "$T/work/orders.json" <<'JSON'
+{"orders": [
+  {"uid": "dddddddddddddddddddddddddddddddd", "kind": "order", "state": "queued",
+   "created": 1790000400.0, "machine": "not-on-the-floor", "issue": "Nobody will take this",
+   "priority": "Medium"}
+]}
+JSON
+touch "$T/work/hub-rejects"
+parked() { python3 -c "
+import json; d = json.load(open('$T/state/sent.json'))
+print(json.dumps(d.get('parked') or {}))"; }
+for _ in 1 2 3 4; do run; done
+check "four refusals do not park it yet"       '[ "$(parked)" = "{}" ]'
+check "it is still being offered"              '[ "$(posted "len([i for i in items if i[\"uid\"] == \"dddddddddddddddddddddddddddddddd\"])")" -ge 4 ]'
+run
+check "the fifth parks it"                     'python3 -c "import json,sys; sys.exit(0 if \"dddddddddddddddddddddddddddddddd\" in json.loads(sys.argv[1]) else 1)" "$(parked)"'
+check "and keeps the reason the hub gave"      'python3 -c "import json,sys; d=json.loads(sys.argv[1]); sys.exit(0 if d[\"dddddddddddddddddddddddddddddddd\"][\"reason\"] else 1)" "$(parked)"'
+rm -f "$T/work/posted.json"
+run
+check "and it is no longer sent"               '[ ! -s "$T/work/posted.json" ] || [ "$(posted "len([i for i in items if i[\"uid\"] == \"dddddddddddddddddddddddddddddddd\"])")" = 0 ]'
+# The stub is refusing everything here, so the sessions park alongside it -- what matters is
+# that the order is in the list with its reason, not how long the list is.
+check "the panel can see it"                   '[ "$(python3 -c "
+import json
+p = json.load(open(\"$T/state/status.json\")).get(\"parked\") or []
+print(any(e.get(\"what\") == \"order\" and e.get(\"reason\") for e in p))")" = True ]'
+check "and the journal says why"               'grep -qi "parked" "$T/out"'
+
+echo "a refusal that clears is not parked:"
+# The ordinary case: an order naming a session the hub has not ingested yet. It must not be
+# counted out while it is still on its way.
+rm -f "$T/work/hub-rejects" "$T/state/sent.json" "$T/work/posted.json" "$T/work/seen.json"
+run
+check "once it is accepted the count is cleared" '[ "$(parked)" = "{}" ]' 
+check "and nothing is left counting against it"  '[ "$(python3 -c "import json;print(len(json.load(open(\"$T/state/sent.json\")).get(\"tries\") or {}))")" = 0 ]'
+check "releasing a parked item is possible"      'grep -q "GATBOX_SYNC_UNPARK" "$REPO/backend/gatbox-sync"'
+
 echo "sync: $pass passed, $fail failed"
 [ "$fail" = 0 ]

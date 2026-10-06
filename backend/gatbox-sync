@@ -94,6 +94,14 @@ USER_AGENT = "gatbox-sync/1 (+https://github.com/digitalunconciousness/Gatbox)"
 
 DRYRUN = bool(os.environ.get("GATBOX_SYNC_DRYRUN"))
 IGNORE_LEDGER = bool(os.environ.get("GATBOX_SYNC_ONCE"))
+# How many refusals of the same item before it stops being offered. Rejections used to be
+# retried for ever: most of what could be refused before Phase 6 cleared on its own -- a
+# session the hub had not ingested yet -- but an order for a machine the hub's roster does
+# not have never clears, and nothing said so. Five is ten minutes at the usual timer, long
+# enough that anything genuinely on its way gets through.
+MAX_TRIES = int(os.environ.get("GATBOX_SYNC_MAX_TRIES", "5"))
+# Offer the parked ones again, once: the way back after fixing the roster at the hub.
+UNPARK = bool(os.environ.get("GATBOX_SYNC_UNPARK"))
 
 
 def log(msg):
@@ -347,9 +355,16 @@ def ledger(raw):
     if not isinstance(raw, dict):
         return {"files": {}, "outbox": {}}
     if "files" in raw or "outbox" in raw:
-        return {"files": dict(raw.get("files") or {}),
-                "outbox": dict(raw.get("outbox") or {})}
-    return {"files": dict(raw), "outbox": {}}
+        d = {"files": dict(raw.get("files") or {}),
+             "outbox": dict(raw.get("outbox") or {}),
+             "tries": dict(raw.get("tries") or {}),
+             "parked": dict(raw.get("parked") or {})}
+    else:
+        d = {"files": dict(raw), "outbox": {}, "tries": {}, "parked": {}}
+    if UNPARK and d["parked"]:
+        log(f"  releasing {len(d['parked'])} parked item(s) to be tried again")
+        d["parked"], d["tries"] = {}, {}
+    return d
 
 
 def outbox_items(dev, web_entries, sent):
@@ -363,7 +378,7 @@ def outbox_items(dev, web_entries, sent):
     for e in web_entries:
         uid = e.get("uid")
         kind = e.get("kind")
-        if not uid or uid in sent["outbox"]:
+        if not uid or uid in sent["outbox"] or uid in sent["parked"]:
             continue
         if kind == "order":
             item = {"kind": "order", "uid": uid, "machine": e.get("machine"),
@@ -428,7 +443,8 @@ def main():
     present = {s.get("file") for s in sessions}
     sent["files"] = {k: v for k, v in sent["files"].items() if k in present}
 
-    queue = eligible(sessions, sent["files"])
+    queue = [n for n in eligible(sessions, sent["files"])
+             if uid_session(dev, n) not in sent["parked"]]
     log(f"  {len(sessions)} sessions on the Pi, {len(queue)} to send")
 
     try:
@@ -438,6 +454,14 @@ def main():
         log(f"  outbox unreadable ({exc}); sessions only this run")
         outbox = []
     pending = outbox_items(dev, outbox, sent)
+    # Forget the counters for anything no longer on offer, so neither map grows for ever.
+    known = ({uid_session(dev, s["file"]) for s in sessions if s.get("file")}
+             | {e["uid"] for e in outbox if e.get("uid")})
+    sent["tries"] = {k: v for k, v in sent["tries"].items() if k in known}
+    sent["parked"] = {k: v for k, v in sent["parked"].items() if k in known}
+    if sent["parked"]:
+        log(f"  {len(sent['parked'])} item(s) parked after {MAX_TRIES} refusals; "
+            "GATBOX_SYNC_UNPARK=1 offers them again")
     if pending:
         log(f"  {len(pending)} order item(s) queued")
 
@@ -446,7 +470,11 @@ def main():
         # 7" read, and they go stale whether or not there is anything to push.
         hub = pick_hub(urls, token)
         status = {"at": time.time(), "ok": bool(hub), "hub": hub, "queued": 0,
-                  "sent_total": len(sent["files"]) + len(sent["outbox"])}
+                  "sent_total": len(sent["files"]) + len(sent["outbox"]),
+                  # Listed here too: the run that has nothing to send is exactly the run
+                  # after something was parked, and that is when someone goes looking.
+                  "parked": [{"what": v.get("what"), "reason": v.get("reason")}
+                             for v in sent["parked"].values()]}
         if hub:
             refresh_caches(hub, token, sessions, status)
         save("status.json", status)
@@ -531,11 +559,25 @@ def main():
                 sent["files"][name] = now
             elif item.get("uid"):
                 sent["outbox"][item["uid"]] = now
+            sent["tries"].pop(result.get("uid"), None)
             created += state == "created"
             duplicate += state == "duplicate"
         else:
             rejected += 1
-            log(f"  rejected {name or result.get('uid')}: {result.get('reason')}")
+            uid = result.get("uid")
+            reason = result.get("reason")
+            log(f"  rejected {name or uid}: {reason}")
+            if uid:
+                n = sent["tries"].get(uid, 0) + 1
+                sent["tries"][uid] = n
+                if n >= MAX_TRIES:
+                    # It is not going to be accepted by being asked again. Keep the reason:
+                    # it is the only thing that tells anyone what to fix.
+                    sent["parked"][uid] = {"n": n, "reason": reason,
+                                           "what": name or item.get("kind") or "item",
+                                           "at": now}
+                    sent["tries"].pop(uid, None)
+                    log(f"  parked {name or uid} after {n} refusals: {reason}")
 
     log(f"  {created} created, {duplicate} duplicate, {rejected} rejected")
     status = {"at": now, "ok": rejected == 0, "hub": hub,
@@ -544,7 +586,11 @@ def main():
               # than making it open the ledger as well.
               "sent_total": len(sent["files"]) + len(sent["outbox"]),
               "last_created": created, "last_duplicate": duplicate,
-              "last_rejected": rejected, "skipped": skipped}
+              "last_rejected": rejected, "skipped": skipped,
+              # The panel reads this alone, so parked items are listed here rather than
+              # left for someone to find in the journal.
+              "parked": [{"what": v.get("what"), "reason": v.get("reason")}
+                         for v in sent["parked"].values()]}
     refresh_caches(hub, token, sessions, status)
     save("sent.json", sent)
     save("status.json", status)

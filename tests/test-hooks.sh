@@ -66,6 +66,35 @@ out=$(run_hook); rc=$?
 check "a key-shaped added line is refused"        '[ $rc = 1 ] && [[ $out == *"forbidden content"* ]]'
 git reset -q --hard "$base"
 
+# A literal is a secret; an expression is code. A module about Wi-Fi assigns a variable called
+# psk, and the generic pattern matched that -- so every branch carrying Wi-Fi code was refused.
+# Values are assembled at runtime, as the api_key case above is, because this file is itself
+# pushed through the hook it tests.
+VALUE=Sup3rSecretValue
+{ printf 'psk = body.get("psk")\n'
+  printf 'psk = unescape(fields.get("P", ""))\n'
+  printf 'body["psk"] = psk\n'
+  printf '# nmcli necessarily receives it, as password <psk>\n'; } > code.py
+git add code.py; commit -m "code that handles a key"
+out=$(run_hook); rc=$?
+check "an expression assigned to psk is not a secret" '[ $rc = 0 ] && [[ $out == *clean* ]]'
+git reset -q --hard "$base"
+
+printf 'psk=%s\n' "$VALUE" > wifi.conf; git add wifi.conf; commit -m "a keyfile"
+out=$(run_hook); rc=$?
+check "a bare psk= literal is refused"            '[ $rc = 1 ] && [[ $out == *"forbidden content"* ]]'
+git reset -q --hard "$base"
+
+printf '{"ssid": "Somewhere", "psk": "%s"}\n' "$VALUE" > req.json; git add req.json; commit -m "a request"
+out=$(run_hook); rc=$?
+check "a quoted psk literal is refused"           '[ $rc = 1 ] && [[ $out == *"forbidden content"* ]]'
+git reset -q --hard "$base"
+
+printf 'password: %s   # the bench box\n' "$VALUE" > notes.md; git add notes.md; commit -m "a note"
+out=$(run_hook); rc=$?
+check "a trailing comment does not hide one"      '[ $rc = 1 ] && [[ $out == *"forbidden content"* ]]'
+git reset -q --hard "$base"
+
 echo ok > tz.txt; git add tz.txt
 # Etc/GMT-6 is +0600 and, unlike a city name, is not something a privacy pattern looks for.
 TZ=Etc/GMT-6 git commit -q --date="2026-01-01T12:00:00+0600" -m "local timestamp"

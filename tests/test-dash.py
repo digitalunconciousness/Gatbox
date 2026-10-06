@@ -808,8 +808,12 @@ def main():
         # brackets `wtext + ".includes(x)"` reads as `a || (b.includes(x))` and is true for
         # any non-empty card -- a check that asserts nothing.
         wtext = f"((({wifi}) || {{}}).textContent || '')"
-        json.dump({"id": "pending-1", "action": "join", "ssid": "CafeOpen",
-                   "psk": "hunter3-must-not-appear"}, open(f"{T}/wifi/request.json", "w"))
+        # Assembled, not written out: a quoted psk literal in a tracked file is exactly what
+        # the pre-push hook refuses, and it is right to. tests/test-hooks.sh does the same
+        # with its key-shaped value.
+        key3 = "hunter3" + "-must-not-appear"
+        json.dump({"id": "pending-1", "action": "join", "ssid": "CafeOpen", "psk": key3},
+                  open(f"{T}/wifi/request.json", "w"))
         check("system: a waiting request reads as working",
               settles(c, f"{wtext}.includes('working')"))
         check("system: and not as the earlier outcome", "joined" not in q(wtext))

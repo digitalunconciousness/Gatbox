@@ -20,7 +20,8 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from . import captures, config, devices, dump, mame, manuals, meter, phone, report, roster, sessions, system, wifi
+from . import (captures, config, devices, dump, mame, manuals, meter, orders, phone, report,
+               roster, sessions, system, wifi)
 from .live import LIVE
 from .meter import Bad
 
@@ -318,6 +319,52 @@ def api_wifi_delete(h, m, q):
         raise Bad(400, "ssid: required")
     rid = _ask(wifi.request, "forget", ssid.strip())
     h.json(202, {"ok": True, "action": "forget", "ssid": ssid.strip(), "id": rid})
+
+
+def _order_call(fn, *args):
+    """Run an outbox call, turning its refusal into the API's own error shape."""
+    try:
+        return fn(*args)
+    except orders.Bad as e:
+        raise Bad(e.code, e.msg)
+
+
+def api_orders_get(h, m, q):
+    """GET /api/orders: the outbox, each entry queued or sent."""
+    if not h.is_local():
+        raise Bad(403, "the Pi's own screen only: an order goes to the hub as this box")
+    h.json(200, orders.listing())
+
+
+def api_orders_post(h, m, q):
+    """POST /api/orders {"issue", "priority", "attach"}: raise one for the machine set.
+
+    Loopback only. An order reaches the hub under this box's device identity, so without the
+    gate anyone on the network could file orders attributed to the bench.
+    """
+    if not h.is_local():
+        raise Bad(403, "the Pi's own screen only: an order goes to the hub as this box")
+    entry = _order_call(orders.add, h.body())
+    h.log_line(f"order: {entry['machine']} {entry['priority']} {entry['uid'][:8]}")
+    h.json(201, entry)
+
+
+def api_orders_tag(h, m, q):
+    """POST /api/orders/tag {"order", "session_file", "note"}: attach a trace to an order the
+    hub already has, instead of filing a duplicate."""
+    if not h.is_local():
+        raise Bad(403, "the Pi's own screen only: an order goes to the hub as this box")
+    entry = _order_call(orders.tag, h.body())
+    h.log_line(f"order tag: #{entry['order']} {entry['session_file']}")
+    h.json(201, entry)
+
+
+def api_orders_delete(h, m, q):
+    """DELETE /api/orders/<uid>: cancel one that has not gone yet. The only undo there is --
+    once the hub has an order there is no API to withdraw it."""
+    if not h.is_local():
+        raise Bad(403, "the Pi's own screen only: an order goes to the hub as this box")
+    h.json(200, _order_call(orders.cancel, urllib.parse.unquote(m["uid"])))
 
 
 def api_scan(h, m, q):
@@ -677,6 +724,10 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("GET", r"/api/captures", api_captures_get),
     ("POST", r"/api/captures", api_captures_post),
     ("GET", r"/api/devices", api_devices),
+    ("GET", r"/api/orders", api_orders_get),
+    ("POST", r"/api/orders", api_orders_post),
+    ("POST", r"/api/orders/tag", api_orders_tag),
+    ("DELETE", r"/api/orders/(?P<uid>[^/]+)", api_orders_delete),
     ("GET", r"/api/wifi", api_wifi_get),
     ("POST", r"/api/wifi", api_wifi_post),
     ("DELETE", r"/api/wifi/(?P<ssid>[^/]+)", api_wifi_delete),

@@ -737,6 +737,13 @@ def main():
             click(f'[data-view="{v}"]')
             time.sleep(2)
             shot(f"17-{v}")
+        # Back to SYSTEM, and it matters: loadSystem() rebuilds #sy-grid only while that view
+        # is the open one, and a hidden view keeps its DOM. Asserting from here with the view
+        # left on "dump" reads a grid painted once and never repainted -- which is how the
+        # checks below that exist *because* of the 5 s repaint came to pass without one ever
+        # happening.
+        click('[data-view="system"]')
+        time.sleep(1)
         check("system: kiosk controls on the Pi's own screen", q("!document.querySelector('#sy-kiosk').classList.contains('hide')"))
         # The hub push (gatbox-sync). Nothing has run here and there is no
         # /var/lib/gatbox-sync, so the tile must say so plainly rather than read as a failure
@@ -781,7 +788,6 @@ def main():
               q("!document.querySelector('#sheet').classList.contains('hide')" + " && !!document.querySelector('#pane .keys')"))
         q("(() => { const b = [...document.querySelectorAll('#pane .keys button')]"
           "   .find(b => b.textContent === 'CANCEL'); if (b) b.click(); return true; })()")
-        # The one thing that must never appear anywhere on this page.
         check("system: no key anywhere on the page",
               "hunter2" not in q("document.body.textContent")
               and "hunter2" not in q("document.documentElement.outerHTML"))

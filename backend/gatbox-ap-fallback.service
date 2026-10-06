@@ -6,6 +6,12 @@ After=NetworkManager.service
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/gatbox-ap-fallback
+# Type=oneshot disables the start timeout by default, and while this unit is still
+# "activating" OnUnitActiveSec will not start it again -- so one hung nmcli would
+# disable the recurring recovery permanently, on the unit whose job is reachability.
+TimeoutStartSec=150
+# nmcli's state strings are localized; the predicate matches them.
+Environment=LC_ALL=C
 
 # No [Install] section: gatbox-ap-fallback.timer owns when this runs. It used to install
 # itself into multi-user.target and ran exactly once, at boot.

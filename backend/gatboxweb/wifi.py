@@ -126,6 +126,17 @@ def in_range():
     return {"ssids": d.get("ssids", []), "at": d.get("at")}
 
 
+# What the API will pass through from the helper's status file. A fixed list, not the file:
+# `detail` is nmcli's own free text, and the one field that could ever carry a key. It stays
+# in the journal, which is where docs/network.md sends you to diagnose a join, and out of
+# every HTTP response. gatbox-wifi already scrubs before writing; this is the second wall,
+# and it does not depend on every future writer of that file remembering to.
+OUTCOME_FIELDS = ("at", "action", "ssid", "ok", "state")
+
+
 def last_outcome():
-    """What the helper last did. Never carries a key: gatbox-wifi does not write one there."""
-    return read_json("status.json")
+    """What the helper last did, as a known set of fields rather than whatever is on disk."""
+    d = read_json("status.json")
+    if not isinstance(d, dict):
+        return None
+    return {k: d.get(k) for k in OUTCOME_FIELDS if k in d}

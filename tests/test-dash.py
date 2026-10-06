@@ -757,12 +757,30 @@ def main():
             " return [...c.querySelectorAll('button')].some(b => b.textContent === 'SCAN'); })()"))
         check("system: it offers to join what is in range", q(
             "(() => { const c = " + wifi + "; if (!c) return false;"
-            " return [...c.querySelectorAll('button')].some(b => b.textContent === 'JOIN')"
-            "   && !!c.querySelector('input[type=password]'); })()"))
-        check("system: the key field is not remembered by the browser", q(
-            "(() => { const c = " + wifi + "; if (!c) return false;"
-            " const i = c.querySelector('input[type=password]');"
-            " return !!i && i.autocomplete === 'off'; })()"))
+            " return [...c.querySelectorAll('button')].some(b => b.textContent === 'JOIN'); })()"))
+        # The card must NOT hold a bare input. loadSystem() rebuilds #sy-grid every 5 s while
+        # the SYSTEM view is open, so anything typed into a field inside a tile is destroyed
+        # mid-entry -- and the kiosk has no on-screen keyboard, so there is nothing to type
+        # with anyway. Every other typed field here goes through keypad()/sheet(), which is
+        # an overlay outside the poll loop.
+        check("system: no bare input inside the polled grid",
+              q("!document.querySelector('#sy-grid input')"))
+        click_in_card = ("(() => { const c = " + wifi + "; if (!c) return false;"
+                         " const b = [...c.querySelectorAll('button')]"
+                         "   .find(b => b.textContent === 'JOIN'); if (!b) return false;"
+                         " b.click(); return true; })()")
+        check("system: JOIN opens the on-screen keypad", q(click_in_card)
+              and q("!document.querySelector('#sheet').classList.contains('hide')" + " && !!document.querySelector('#pane .keys')"))
+        check("system: the keypad offers the symbols a passphrase needs", q(
+            "(() => { const t = [...document.querySelectorAll('#pane .keys button')]"
+            "   .map(b => b.textContent).join('');"
+            " return ['@', '#', '_', '%', '*'].every(c => t.includes(c)); })()"))
+        # The whole point: it is an overlay, not a tile, so a repaint cannot eat it.
+        time.sleep(6)
+        check("system: it survives the 5 s repaint",
+              q("!document.querySelector('#sheet').classList.contains('hide')" + " && !!document.querySelector('#pane .keys')"))
+        q("(() => { const b = [...document.querySelectorAll('#pane .keys button')]"
+          "   .find(b => b.textContent === 'CANCEL'); if (b) b.click(); return true; })()")
         # The one thing that must never appear anywhere on this page.
         check("system: no key anywhere on the page",
               "hunter2" not in q("document.body.textContent")

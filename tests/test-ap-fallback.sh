@@ -106,5 +106,66 @@ SomeCafe
 run
 check "hotspot up and nothing saved in range: stays up" '! called "connection down gatbox-ap"'
 
+echo "the timer is the only grace period:"
+# The Task 1 ruling said GATBOX_AP_WAIT defaults to 0 and OnBootSec is the one place the
+# delay lives. It shipped defaulting to 60, so the hotspot came up ~150 s after boot (not the
+# ~90 s three documents claim) and every recurring run slept a minute before it would even
+# look at dropping the hotspot.
+check "GATBOX_AP_WAIT defaults to 0"            '! grep -q "GATBOX_AP_WAIT:-60" "$REPO/backend/gatbox-ap-fallback"'
+state 'wlan0:disconnected:'
+: > "$NMCLI_LOG"
+start=$SECONDS
+bash "$REPO/backend/gatbox-ap-fallback" > "$T/out" 2>&1
+check "an unset GATBOX_AP_WAIT does not sleep"  '[ $((SECONDS - start)) -lt 5 ]'
+
+echo "a connected state that nmcli qualifies:"
+# NM reports "connected (externally)" and localizes these strings. An exact match reads that
+# as offline, and with a recurring timer that no longer costs "an unnecessary hotspot" -- it
+# raises the AP on wlan0 and takes the radio off a working connection.
+state 'wlan0:connected (externally):HomeNetwork'
+check "connected (externally) is a real network" 'real_network_up'
+check "both units pin the locale"               'grep -q "LC_ALL=C" "$REPO/backend/gatbox-ap-fallback.service" && grep -q "LC_ALL=C" "$REPO/backend/gatbox-wifi.service"'
+check "the ap service bounds its start"         'grep -q "TimeoutStartSec" "$REPO/backend/gatbox-ap-fallback.service"'
+
+echo "the three hotspot branches, against a fake systemctl:"
+# Grepping the bootstrap's source cannot see which of three branches enables what, which is
+# how I7/I8/I9 all got through. This runs the branches.
+mkdir -p "$T/fake"
+cat > "$T/fake/systemctl" <<'STUB'
+#!/usr/bin/env bash
+printf '%s
+' "$*" >> "${SYSTEMCTL_LOG:?}"
+case "$*" in
+    *"is-enabled gatbox-ap-fallback.service"*) [ -n "${AP_SERVICE_ENABLED:-}" ] ;;
+    *"is-enabled gatbox-ap-fallback.timer"*)   [ -n "${AP_TIMER_ENABLED:-}" ] ;;
+    *) exit 0 ;;
+esac
+STUB
+chmod +x "$T/fake/systemctl"
+branch() {   # branch <AP value> [env...]: run just section 9 with a fake systemctl
+    : > "$T/sysctl-log"
+    sed -n '/^step "9\/9 optional: fallback hotspot"/,/^fi$/p' "$REPO/bootstrap/gatbox-bootstrap.sh" > "$T/sec9.sh"
+    env PATH="$T/fake:$T/bin:$PATH" SYSTEMCTL_LOG="$T/sysctl-log" AP="$1" "${@:2}"         bash -c 'step() { :; }; log() { :; }; warn() { :; }; set -u; source "$0"' "$T/sec9.sh" >/dev/null 2>&1
+}
+# -E and an optional --now: the patterns must not break the moment a unit is also
+# started rather than only enabled, which is the fix they exist to check.
+said() { grep -qE -- "$1" "$T/sysctl-log"; }
+
+branch off AP_SERVICE_ENABLED=1 AP_TIMER_ENABLED=1
+check "removing the hotspot disables the timer too" 'said "disable( --now)? gatbox-ap-fallback.timer"'
+
+branch "a-test-passphrase"
+check "arming enables the timer"                'said "enable( --now)? gatbox-ap-fallback.timer"'
+check "arming starts it, not just enables it"   'said -- "--now"'
+check "arming clears the old boot-time service" 'said "disable gatbox-ap-fallback.service"'
+
+# The documented upgrade path: git pull, re-run the bootstrap, no passphrase to hand.
+branch "" AP_SERVICE_ENABLED=1
+check "an already-armed Pi is migrated to the timer" 'said "enable( --now)? gatbox-ap-fallback.timer"'
+check "and its boot-only service is disabled"   'said "disable gatbox-ap-fallback.service"'
+
+branch "" AP_SERVICE_ENABLED=1 AP_TIMER_ENABLED=1
+check "an already-migrated Pi is left alone"    '! said "enable( --now)? gatbox-ap-fallback.timer"'
+
 echo "ap fallback: $pass passed, $fail failed"
 [ "$fail" = 0 ]

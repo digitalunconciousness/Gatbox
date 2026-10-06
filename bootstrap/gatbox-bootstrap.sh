@@ -535,6 +535,7 @@ fi
 # 9 ---------------------------------------------------------------------------
 step "9/9 optional: fallback hotspot"
 if [ "$AP" = off ]; then
+    systemctl disable --now gatbox-ap-fallback.timer >/dev/null 2>&1 || true
     systemctl disable gatbox-ap-fallback.service >/dev/null 2>&1 || true
     nmcli connection delete gatbox-ap >/dev/null 2>&1 || true
     log "hotspot fallback removed"
@@ -548,11 +549,24 @@ elif [ -n "$AP" ]; then
     # The service used to carry its own [Install] and run once at boot. Disable that first,
     # or an upgraded Pi keeps a dangling boot-time symlink alongside the timer.
     systemctl disable gatbox-ap-fallback.service >/dev/null 2>&1 || true
-    systemctl enable gatbox-ap-fallback.timer >/dev/null
+    systemctl enable --now gatbox-ap-fallback.timer >/dev/null
     log "hotspot 'GATBOX' armed: comes up ~90 s after boot if no known Wi-Fi/Ethernet, and
         drops again when a saved network comes back into range"
-elif systemctl -q is-enabled gatbox-ap-fallback.service 2>/dev/null; then
+elif systemctl -q is-enabled gatbox-ap-fallback.timer 2>/dev/null; then
+    # Already on the timer. Clear a leftover service enablement if one is still there --
+    # idempotent, and a half-migrated Pi is exactly what a re-run should tidy -- but do not
+    # re-enable what is already enabled.
+    systemctl disable gatbox-ap-fallback.service >/dev/null 2>&1 || true
     log "hotspot fallback already armed (left as is; GATBOX_AP_PSK=off removes it)"
+elif systemctl -q is-enabled gatbox-ap-fallback.service 2>/dev/null; then
+    # Armed the old way, by the service's own [Install]. Move it to the timer: a re-run
+    # after a git pull is the documented upgrade path and has no passphrase to hand, and
+    # migrating needs none. Without this the box keeps the boot-only behaviour -- the
+    # dangling multi-user.target.wants symlink still works -- and the recurring recovery
+    # this phase exists for never happens.
+    systemctl disable gatbox-ap-fallback.service >/dev/null 2>&1 || true
+    systemctl enable --now gatbox-ap-fallback.timer >/dev/null
+    log "hotspot fallback moved from boot-only to the 2-minute timer (GATBOX_AP_PSK=off removes it)"
 else
     log "skipped (set GATBOX_AP_PSK to enable)"
 fi

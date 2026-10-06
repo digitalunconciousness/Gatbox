@@ -10,6 +10,8 @@ ExecStart=/usr/local/sbin/gatbox-wifi
 # with no D-Bus and cannot reach nmcli at all, which is why this job exists.
 # TimeoutStartSec, not RuntimeMaxSec: for Type=oneshot the whole run counts as "starting".
 TimeoutStartSec=180
+# nmcli's output is parsed; its strings are localized.
+Environment=LC_ALL=C
 # The request file holds a plaintext key until this job takes it, which it does before doing
 # anything else. PrivateTmp so nothing it runs leaves traces in a shared /tmp.
 PrivateTmp=yes

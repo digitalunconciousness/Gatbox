@@ -8,7 +8,9 @@
 # "Reboot near known Wi-Fi to go back" -- which strands a box inside a cabinet that loses its
 # network, and is the whole reason this is now idempotent and recurring.
 set -u
-WAIT="${GATBOX_AP_WAIT:-60}"
+# 0 by default: gatbox-ap-fallback.timer's OnBootSec is the grace period, and one
+# delay in one place is the whole point. Set it only to wait by hand.
+WAIT="${GATBOX_AP_WAIT:-0}"
 AP_PROFILE="${GATBOX_AP_PROFILE:-gatbox-ap}"
 
 # Is the box on a network that is not its own hotspot?
@@ -31,7 +33,10 @@ real_network_up() {
         line=${line#*:}
         state=${line%%:*}
         name=${line#*:}
-        [ "$state" = connected ] || continue
+        # connected*, not = connected: NM reports "connected (externally)" and these
+        # strings are localized. Reading a working connection as offline now costs the
+        # network, because the recurring timer raises the AP on that same radio.
+        case "$state" in connected*) ;; *) continue ;; esac
         case "$device" in wlan0 | eth0) ;; *) continue ;; esac
         [ "$name" = "$ap" ] && continue
         return 0
@@ -47,7 +52,8 @@ hotspot_up() {
         line=${line#*:}
         state=${line%%:*}
         name=${line#*:}
-        [ "$state" = connected ] && [ "$name" = "$ap" ] && [ "$device" = wlan0 ] && return 0
+        case "$state" in connected*) ;; *) continue ;; esac
+        [ "$name" = "$ap" ] && [ "$device" = wlan0 ] && return 0
     done <<< "$out"
     return 1
 }

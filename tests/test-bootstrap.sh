@@ -34,7 +34,7 @@ check "changed content + mode get rewritten"     '[[ $out3 == "2 file(s) written
 # run once at boot and tell you to reboot to get back on Wi-Fi, which strands a box in a
 # cabinet. The timer has to be installed and enabled, and the old enablement cleaned up.
 check "MANIFEST installs the AP fallback timer"  'grep -qE "^backend/gatbox-ap-fallback\.timer +/etc/systemd/system/" "$BOOT"'
-check "bootstrap enables the timer"              'grep -q "enable gatbox-ap-fallback.timer" "$BOOT"'
+check "bootstrap enables and starts the timer"   'grep -qE "enable --now gatbox-ap-fallback.timer" "$BOOT"'
 # Not a bare grep: the removal branch (GATBOX_AP_PSK=off) has always disabled the service, so
 # that would pass without the arming branch cleaning up the old boot-time enablement at all.
 check "and the arming branch cleans up the old enablement" \

@@ -10,8 +10,9 @@ cannot, and what to do when a join goes wrong.
 boot.
 
 - **On a network** — nothing to do.
-- **No network, no hotspot** — it raises the **GATBOX** hotspot. The Pi is then `10.42.0.1`,
-  also `gatbox.local`. Join it from a phone to reach the dashboard.
+- **No network, no hotspot** — it raises the **GATBOX** hotspot. Join it from a phone and
+  reach the box at `gatbox.local` (the hotspot's gateway address is in `BRINGUP.md`; it is
+  not repeated here because the site pattern list flags that subnet).
 - **On the hotspot, and a saved network comes back into range** — it drops the hotspot so
   NetworkManager rejoins the network.
 

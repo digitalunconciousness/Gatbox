@@ -372,7 +372,7 @@
       build(pane, done);
     });
   }
-  function keypad({title, max, number, value}) {
+  function keypad({title, max, number, value, symbols, keep}) {
     return sheet(title, (pane, done) => {
       let txt = value || "", lower = false;
       const field = el("div", "kp-field");
@@ -407,15 +407,18 @@
         key("'"); key("&");
         const sp = el("button", "x4", "SPACE"); sp.addEventListener("click", () => press(" ")); keys.appendChild(sp);
         key(":"); key("!");
+        // A Wi-Fi passphrase is not a machine name: it needs the rest of the printable set,
+        // and the rows above only offer ' & : ! - . /
+        if (symbols) for (const k of "@#$%^*()_+=,?;\"<>[]{}|~`\\") key(k);
       }
       const cancel = el("button", number ? "" : "x4", "CANCEL"), ok = el("button", number ? "" : "x6", "OK");
       ok.style.borderColor = "var(--mag)";
       cancel.addEventListener("click", () => done(null));
-      ok.addEventListener("click", () => done(txt.trim()));
+      ok.addEventListener("click", () => done(keep ? txt : txt.trim()));
       add(keys, cancel, ok);
       pane.appendChild(keys);
       S.kd = e => {                                  // a real keyboard works too (phone, bench keyboard)
-        if (e.key === "Enter") done(txt.trim());
+        if (e.key === "Enter") done(keep ? txt : txt.trim());
         else if (e.key === "Escape") done(null);
         else if (e.key === "Backspace") press("⌫");
         else if (e.key.length === 1) press(number ? e.key : e.key);
@@ -1010,17 +1013,14 @@
         for (const ssid of range) {
           const row = el("div", "btnrow");
           row.appendChild(el("span", null, ssid));
-          const key = el("input");
-          key.type = "password";
-          key.placeholder = "key (blank if open)";
-          // No autocomplete and no storage: rule 10, and a key has no business being
-          // remembered by a browser on a box that lives in an arcade.
-          key.autocomplete = "off";
-          row.appendChild(key);
           const j = el("button", null, "JOIN");
-          j.addEventListener("click", () => {
-            const psk = key.value;
-            key.value = "";
+          j.addEventListener("click", async () => {
+            // keypad() is a sheet() overlay, not a tile. loadSystem() rebuilds #sy-grid
+            // every 5 s, so a field inside this card was wiped mid-entry -- and the kiosk
+            // has no on-screen keyboard to type into one with anyway.
+            const psk = await keypad({ title: "KEY FOR " + ssid, max: 63,
+                                       symbols: true, keep: true });
+            if (psk === null) return;        // CANCEL; "" is a legitimate open network
             api("POST", "/api/wifi", { ssid: ssid, psk: psk }).then(load).catch(fail);
           });
           row.appendChild(j);

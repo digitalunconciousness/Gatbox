@@ -20,6 +20,10 @@ secrets/
 *.local.md
 *.local
 .githooks/patterns.local
+# ...and anything derived from it. A .bak made while editing it was picked up by
+# `git add -A` on 2026-10-06 and reached a commit: the exact file the pattern list
+# exists to keep out of this repo.
+.githooks/patterns.local.*
 data/gatbox-barcade-roster.json
 data/gatbox-mame-sets.json
 data/gatbox-manuals.json

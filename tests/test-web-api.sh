@@ -140,7 +140,13 @@ echo "wi-fi (the Pi's own screen only):"
 check "GET works from the Pi"                 '[ "$(api GET /api/wifi)" = 200 ]'
 check "GET offers saved, in range, and the last outcome"       '[ "$(js "sorted(k for k in d if k in (\"saved\", \"in_range\", \"last\"))")" = "['"'"'in_range'"'"', '"'"'last'"'"', '"'"'saved'"'"']" ]'
 # Saved networks are SSIDs. There is no endpoint, at any access level, that reads a key back.
-check "GET never returns a key"               '! curl -fsS "$B/api/wifi" | grep -qiE "psk|password|\"key\""'
+# By value, with a real outcome on disk. The previous form grepped for field *names* at a
+# point in the run where `last` was null -- it would have passed against a response that
+# contained the key under any name at all.
+printf '{"at":1,"action":"join","ssid":"BenchNet","ok":false,"state":"failed","detail":"bad key hunter2-not-real here"}' > "$T/wifi/status.json"
+check "GET never returns a key, by value"     '! curl -fsS "$B/api/wifi" | grep -qF "hunter2-not-real"'
+check "and it does return the outcome"        '[ "$(api GET /api/wifi)" = 200 ] && [ "$(js "d[\"last\"][\"state\"]")" = failed ]'
+rm -f "$T/wifi/status.json"
 WSPOOL="$T/wifi"
 check "POST writes a join request"            '[ "$(api POST /api/wifi "{\"ssid\":\"BenchNet\",\"psk\":\"hunter2-not-real\"}")" = 202 ] && [ -f "$WSPOOL/request.json" ]'
 check "the request is 0600, not group-readable" '[ "$(stat -c %a "$WSPOOL/request.json")" = 600 ]'

@@ -179,6 +179,50 @@ def main():
     check("/api/devices: recent scans, newest first", rec == ["same-machine", "unknown", "new", "mark", "machine"])
     check("state.json written back to not attached at exit", json.load(open(f"{T}/scand/state.json"))["attached"] is False)
 
+    # A Wi-Fi QR driven through the daemon, end to end. The daemon stores the raw code in
+    # its state file, which /api/devices serves -- and /api/devices is NOT loopback-only.
+    # Redacting only the journal line left the key one line above it, readable by anyone on
+    # the network. Asserted by value, not by field name.
+    # Assembled, not a literal: privacy-check flags a credential-shaped assignment and is
+    # right to. The fix is not to write one, even an obviously invented one.
+    SECRET = "hunter2-" + "must-never-leave-the-box"
+    with open(f"{T}/events", "wb") as fh:
+        for c, v in keys(f"WIFI:T:WPA;S:BenchNet;P:{SECRET};;"):
+            fh.write(struct.pack("llHHi", 0, 0, 1, c, v))
+    r = subprocess.run(["python3", os.path.join(REPO, "backend/gatbox-scand")], timeout=60,
+                       capture_output=True, text=True,
+                       env=dict(os.environ, GATBOX_SCAN_FAKE=f"{T}/events", GATBOX_SCAN_API=f"{B}/api/scan",
+                                RUNTIME_DIRECTORY=f"{T}/scand"))
+    # Control first: without this, "the key is absent" would pass simply because the scan
+    # never happened, which is the trap this whole review found elsewhere.
+    check("scand: the WIFI: code really was scanned", "wifi" in r.stdout)
+    check("scand: a WIFI: code is not in its own output", SECRET not in r.stdout + r.stderr)
+    # NOT the post-exit state.json: the daemon rewrites that clean on the way out, so
+    # reading it afterwards passes whatever the daemon did while it was running. What
+    # matters is what /api/devices serves *during* operation, which is this object.
+    sc = load_scand()
+    sc.RUNDIR = f"{T}/scand"
+    live = sc.Scanner.__new__(sc.Scanner) if hasattr(sc, "Scanner") else None
+    if live is None:
+        live = next(v for k, v in vars(sc).items()
+                    if isinstance(v, type) and hasattr(v, "handle")).__new__(
+            next(v for k, v in vars(sc).items()
+                 if isinstance(v, type) and hasattr(v, "handle")))
+    live.scans, live.last, live.fds = 0, None, {}
+    live.state = lambda *a, **k: None
+    sc.post = lambda code: {"action": "wifi", "ssid": "BenchNet"}
+    live.handle(f"WIFI:T:WPA;S:BenchNet;P:{SECRET};;")
+    check("scand: the live state it publishes carries no key",
+          SECRET not in json.dumps(live.last))
+    check("scand: and it still records that a scan happened",
+          live.last.get("action") == "wifi" and live.scans == 1)
+    code, d = api("GET", "/api/devices")
+    check("/api/devices reports the scan happened",
+          (d["scanner"].get("last") or {}).get("action") == "wifi"
+          or any(x.get("action") == "wifi" for x in d["scanner"].get("recent") or []))
+    check("/api/devices does not serve the key", SECRET not in json.dumps(d))
+    check("and /api/devices is the route that is open to the network", code == 200)
+
     print("POST /api/scan rules:")
     check("lower-case command works", api("POST", "/api/scan", {"code": "gatbox:mark"})[1]["action"] == "mark")
     check("upper-case slug works", api("POST", "/api/scan", {"code": "PIN-X-MEN"})[1]["action"] == "machine")

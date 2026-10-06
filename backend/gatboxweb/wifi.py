@@ -109,3 +109,23 @@ def read_json(name, default=None):
             return json.load(fh)
     except (OSError, ValueError):
         return default
+
+
+def saved():
+    """SSIDs we have a profile for. **Names only — there is no endpoint that reads a key.**
+
+    The helper writes this alongside its scan; it cannot be read here, because this process
+    has no D-Bus and nmcli fails in it.
+    """
+    return read_json("saved.json", {}).get("ssids", [])
+
+
+def in_range():
+    """What the helper last saw in range, and when."""
+    d = read_json("scan.json", {})
+    return {"ssids": d.get("ssids", []), "at": d.get("at")}
+
+
+def last_outcome():
+    """What the helper last did. Never carries a key: gatbox-wifi does not write one there."""
+    return read_json("status.json")

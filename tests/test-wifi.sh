@@ -22,6 +22,7 @@ cat > "$T/nmcli" <<'STUB'
 { printf '%s\n' "--- $#"; printf '%s\n' "$@"; } >> "${NMCLI_LOG:?}"
 case "$*" in
     *"device wifi list"*) cat "${NMCLI_SSIDS:-/dev/null}" ;;
+    *"connection show"*)  cat "${NMCLI_SAVED:-/dev/null}" ;;
 esac
 exit "${NMCLI_RC:-0}"
 STUB
@@ -123,6 +124,15 @@ check "writes scan.json"                        '[ -f "$SPOOL/scan.json" ]'
 check "with the ssids, deduplicated, no blanks" '[ "$(python3 -c "
 import json; print(json.load(open(\"$SPOOL/scan.json\"))[\"ssids\"])")" = "['"'"'CafeOpen'"'"', '"'"'HomeNetwork'"'"']" ]'
 check "and no key anywhere in it"               '! grep -qF -- "$KEY" "$SPOOL/scan.json"'
+# The dashboard also needs to know what is already saved, and it cannot ask nmcli either --
+# so the same scan records it. Names only: there is no path anywhere that reads a key back.
+printf 'HomeNetwork\ngatbox-ap\nOldArcade\n' > "$T/saved"
+req_py scan ""
+NMCLI_SSIDS="$T/ssids" NMCLI_SAVED="$T/saved" run
+check "writes saved.json"                       '[ -f "$SPOOL/saved.json" ]'
+check "with the saved profiles, ours excluded"  '[ "$(python3 -c "
+import json; print(json.load(open(\"$SPOOL/saved.json\"))[\"ssids\"])")" = "['"'"'HomeNetwork'"'"', '"'"'OldArcade'"'"']" ]'
+check "and no key in it"                        '! grep -qF -- "$KEY" "$SPOOL/saved.json"'
 
 echo "a request that is not usable:"
 printf 'not json at all' > "$SPOOL/request.json"; run

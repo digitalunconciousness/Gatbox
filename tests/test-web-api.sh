@@ -51,14 +51,17 @@ newest() { ls -1 "$T/log" | LC_ALL=C sort | tail -1; }   # C order: _2 after the
 # api <METHOD> <path> [json]: prints the HTTP code; the body lands in $T/body
 api() { curl -s -o "$T/body" -w '%{http_code}' -X "$1" -H 'Content-Type: application/json' ${3:+--data "$3"} "$B$2"; }
 js() { python3 -c "import json,sys; d=json.load(open('$T/body')); print($1)"; }
+js2() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($2)" "$1"; }
 
 # an old-format session (no profile lines) and a copy of the 09-25 fixture, if this Pi has it
 mkcsv "$T/log/rail_20260921_000000.csv" "5.01,V,DC AUTO" "5.02,V,DC AUTO" "5.03,V,DC AUTO" "4.99,V,DC AUTO"
+mkdir -p "$T/wifi"
 FX=/var/log/gatbox/rail_20260925_021402.csv
 [ -r "$FX" ] && cp "$FX" "$T/log/"
 
 GATBOX_WEB_PORT=$PORT STATE_DIRECTORY="$T/ctrl" CACHE_DIRECTORY="$T/cache" GATBOX_LOGDIR="$T/log" GATBOX_RUNDIR="$T/run" \
 GATBOX_REPORT="$REPO/tools/gatbox-rail-report" GATBOX_WEB_HEARTBEAT=1 MPLCONFIGDIR="$T/cache/mpl" \
+GATBOX_WIFI_SPOOL="$T/wifi" \
     setsid python3 "$REPO/backend/gatbox-web" > "$T/web.log" 2>&1 &
 echo $! > "$T/web.pid"
 waitfor 'curl -fs -o /dev/null "$B/kiosk/state"' 50 || { echo "gatbox-web didn't start"; cat "$T/web.log"; exit 1; }
@@ -129,6 +132,26 @@ check "OHM file: no alarm evaluation"         '[ "$(ev "{D(e)[\"alarm\"] for e i
 check "heartbeats"                            '[ "$(ev "sum(e[\"event\"] == \"heartbeat\" for e in evs) >= 2")" = True ]'
 check "event ids increase"                    '[ "$(ev "(lambda i: i == sorted(i) and len(set(i)) == len(i))([int(e[\"id\"]) for e in evs if \"id\" in e])")" = True ]'
 A1=$(ls -1 "$T/log" | LC_ALL=C sort | grep -v "^$O$\|20260925" | head -1)
+
+echo "wi-fi (the Pi's own screen only):"
+# The loopback refusals live in tests/test-scan.py, beside /api/scan's: that is where the
+# LAN-address machinery already is, and a second copy of it here would be a second thing to
+# keep right.
+check "GET works from the Pi"                 '[ "$(api GET /api/wifi)" = 200 ]'
+check "GET offers saved, in range, and the last outcome"       '[ "$(js "sorted(k for k in d if k in (\"saved\", \"in_range\", \"last\"))")" = "['"'"'in_range'"'"', '"'"'last'"'"', '"'"'saved'"'"']" ]'
+# Saved networks are SSIDs. There is no endpoint, at any access level, that reads a key back.
+check "GET never returns a key"               '! curl -fsS "$B/api/wifi" | grep -qiE "psk|password|\"key\""'
+WSPOOL="$T/wifi"
+check "POST writes a join request"            '[ "$(api POST /api/wifi "{\"ssid\":\"BenchNet\",\"psk\":\"hunter2-not-real\"}")" = 202 ] && [ -f "$WSPOOL/request.json" ]'
+check "the request is 0600, not group-readable" '[ "$(stat -c %a "$WSPOOL/request.json")" = 600 ]'
+check "it carries the ssid and the key"       '[ "$(js2 "$WSPOOL/request.json" "d[\"action\"], d[\"ssid\"], d[\"psk\"]")" = "join BenchNet hunter2-not-real" ]'
+rm -f "$WSPOOL/request.json"
+check "POST with no ssid is 400"              '[ "$(api POST /api/wifi "{\"psk\":\"x\"}")" = 400 ]'
+check "POST with a 33-byte ssid is 400"       '[ "$(api POST /api/wifi "{\"ssid\":\"'"$(printf 'x%.0s' {1..33})"'\"}")" = 400 ]'
+check "DELETE writes a forget request"        '[ "$(api DELETE /api/wifi/OldArcade)" = 202 ] && [ "$(js2 "$WSPOOL/request.json" "d[\"action\"], d[\"ssid\"]")" = "forget OldArcade" ]'
+rm -f "$WSPOOL/request.json"
+check "a refresh asks the helper to scan"     '[ "$(api POST /api/wifi "{\"action\":\"scan\"}")" = 202 ] && [ "$(js2 "$WSPOOL/request.json" "d[\"action\"]")" = scan ]'
+rm -f "$WSPOOL/request.json"
 
 echo "sessions + report:"
 api GET /api/rail/sessions >/dev/null

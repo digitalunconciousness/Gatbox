@@ -81,17 +81,35 @@ def forget(ssid):
     return 1
 
 
+AP_PROFILE = os.environ.get("GATBOX_AP_PROFILE", "gatbox-ap")
+
+
+def _write(name, body):
+    tmp = os.path.join(SPOOL, name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(body, fh, indent=1, sort_keys=True)
+    os.replace(tmp, os.path.join(SPOOL, name))
+
+
 def scan():
-    """What is in range, for the dashboard -- which cannot ask nmcli itself either."""
+    """What is in range and what is already saved, for the dashboard.
+
+    Both, because the web process cannot ask nmcli either of them -- it has no D-Bus. Names
+    only: nothing here reads a key back out of NetworkManager, and no endpoint offers one.
+    """
     rc, out = nmcli("-t", "-f", "SSID", "device", "wifi", "list", "--rescan", "yes",
                     timeout=60)
     seen = sorted({line.strip() for line in out.splitlines() if line.strip()})
-    tmp = os.path.join(SPOOL, "scan.json.tmp")
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump({"at": time.time(), "ssids": seen}, fh, indent=1, sort_keys=True)
-    os.replace(tmp, os.path.join(SPOOL, "scan.json"))
-    log(f"gatbox-wifi: {len(seen)} network(s) in range")
-    return 0 if rc == 0 else 1
+    _write("scan.json", {"at": time.time(), "ssids": seen})
+
+    rc2, out2 = nmcli("-t", "-f", "NAME", "connection", "show")
+    # Our own hotspot is not somewhere to connect to, so it is not offered as one.
+    profiles = sorted({line.strip() for line in out2.splitlines()
+                       if line.strip() and line.strip() != AP_PROFILE})
+    _write("saved.json", {"at": time.time(), "ssids": profiles})
+
+    log(f"gatbox-wifi: {len(seen)} network(s) in range, {len(profiles)} saved")
+    return 0 if rc == 0 and rc2 == 0 else 1
 
 
 def join(ssid, psk):

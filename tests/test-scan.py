@@ -257,6 +257,12 @@ def main():
                 if "." in a), None)
     if lan:
         check("from the network -> 403", api("POST", "/api/scan", {"code": "GATBOX:NEW"}, host=lan)[0] == 403)
+        # The Wi-Fi endpoints follow the same rule, and for a second reason: a join asked
+        # for over the hotspot would cut the connection making the request.
+        check("wifi GET from the network -> 403", api("GET", "/api/wifi", host=lan)[0] == 403)
+        check("wifi POST from the network -> 403",
+              api("POST", "/api/wifi", {"ssid": "x"}, host=lan)[0] == 403)
+        check("wifi DELETE from the network -> 403", api("DELETE", "/api/wifi/x", host=lan)[0] == 403)
 
     print("labels:")
     try:

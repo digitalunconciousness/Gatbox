@@ -165,8 +165,15 @@ class Scand:
         self.scans += 1
         r = post(code)
         action = r.get("action") or "error"
-        self.last = {"code": code[:80], "action": action, "at": round(time.time(), 3)}
-        log(f"scan {code[:80]!r}: {action}" + (f" ({r.get('detail') or r.get('error')})" if r.get("detail") or r.get("error") else ""))
+        # A WIFI: code is a password. Redacted once, here, before it reaches anything that
+        # keeps or publishes it -- the journal line below, and self.last, which goes into
+        # state.json and out through GET /api/devices. That route is NOT loopback-only, so
+        # the raw code here was readable by anyone who could reach port 80. Redacting only
+        # the log left the key on the line above it.
+        safe = "WIFI:<redacted>" if code[:5].upper() == "WIFI:" else code[:80]
+        self.last = {"code": safe, "action": action, "at": round(time.time(), 3)}
+        shown = safe if safe.startswith("WIFI:") else repr(safe)
+        log(f"scan {shown}: {action}" + (f" ({r.get('detail') or r.get('error')})" if r.get("detail") or r.get("error") else ""))
         self.state(True)
 
     def attach(self):

@@ -1,0 +1,9 @@
+[Unit]
+Description=GATBOX: run a Wi-Fi request when the dashboard or a scan leaves one
+
+[Path]
+PathExists=/var/spool/gatbox-wifi/request.json
+Unit=gatbox-wifi.service
+
+[Install]
+WantedBy=multi-user.target

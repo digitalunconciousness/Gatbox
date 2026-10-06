@@ -58,7 +58,11 @@ backend/gatbox-ap-fallback                      /usr/local/sbin/gatbox-ap-fallba
 backend/gatbox-sync                              /usr/local/bin/gatbox-sync                            755
 backend/gatbox-sync.service                      /etc/systemd/system/gatbox-sync.service               644
 backend/gatbox-sync.timer                        /etc/systemd/system/gatbox-sync.timer                 644
+backend/gatbox-wifi                              /usr/local/sbin/gatbox-wifi                           755
+backend/gatbox-wifi.service                      /etc/systemd/system/gatbox-wifi.service               644
+backend/gatbox-wifi.path                         /etc/systemd/system/gatbox-wifi.path                  644
 backend/gatbox-ap-fallback.service              /etc/systemd/system/gatbox-ap-fallback.service        644
+backend/gatbox-ap-fallback.timer                /etc/systemd/system/gatbox-ap-fallback.timer          644
 tools/gatbox-status                             /usr/local/bin/gatbox-status                          755
 tools/gatbox-rail-report                        /usr/local/bin/gatbox-rail-report                     755
 tools/gatbox-kiosk                              /usr/local/bin/gatbox-kiosk                           755
@@ -88,6 +92,7 @@ backend/gatboxweb/devices.py                    /usr/local/lib/gatbox/gatboxweb/
 backend/gatboxweb/dump.py                       /usr/local/lib/gatbox/gatboxweb/dump.py               644
 backend/gatboxweb/mame.py                       /usr/local/lib/gatbox/gatboxweb/mame.py               644
 backend/gatboxweb/manuals.py                    /usr/local/lib/gatbox/gatboxweb/manuals.py            644
+backend/gatboxweb/wifi.py                       /usr/local/lib/gatbox/gatboxweb/wifi.py               644
 web/dash/index.html                             /usr/local/share/gatbox-web/dash/index.html           644
 web/dash/dash.css                               /usr/local/share/gatbox-web/dash/dash.css             644
 web/dash/dash.js                                /usr/local/share/gatbox-web/dash/dash.js              644
@@ -242,8 +247,16 @@ if [ "${1:-}" = "--check" ]; then
         systemctl -q is-enabled "$u" 2>/dev/null || DIFFS+=("enable     $u"); done
     getent passwd gatbox-dump >/dev/null || DIFFS+=("create     user gatbox-dump (sysusers.d)")
     getent passwd gatbox-sync >/dev/null || DIFFS+=("create     user gatbox-sync (sysusers.d)")
+    getent group gatbox-wifi >/dev/null || DIFFS+=("create     group gatbox-wifi (sysusers.d)")
+    [ -d /var/spool/gatbox-wifi ] || DIFFS+=("create     /var/spool/gatbox-wifi (tmpfiles.d)")
     [ -d /srv/gatbox/roms ] && [ -d /var/spool/gatbox-dump ] || DIFFS+=("create     /srv/gatbox/roms + /var/spool/gatbox-dump (tmpfiles.d)")
     [ -d /etc/gatbox ] || DIFFS+=("create     /etc/gatbox (tmpfiles.d; hub.conf goes in by hand)")
+    # Only when the hotspot is armed at all: an unarmed Pi is not missing anything.
+    if systemctl -q is-enabled gatbox-ap-fallback.service 2>/dev/null \
+       || systemctl -q is-enabled gatbox-ap-fallback.timer 2>/dev/null; then
+        systemctl -q is-enabled gatbox-ap-fallback.timer 2>/dev/null \
+            || DIFFS+=("enable     gatbox-ap-fallback.timer (replaces the boot-only service)")
+    fi
     id -nG "$(id -un)" | grep -qw gatbox-dump || DIFFS+=("group      $(id -un) += gatbox-dump (the dump archive)")
     getent group gatbox-manuals >/dev/null || DIFFS+=("create     group gatbox-manuals (sysusers.d)")
     [ -d /srv/gatbox/manuals ] || DIFFS+=("create     /srv/gatbox/manuals (tmpfiles.d)")
@@ -420,10 +433,10 @@ svc() {   # <unit> <installed path glob>...: enable it; restart only if its file
 }
 # the dump job's user, the archive and the spool (before gatbox-web, which joins the gatbox-dump group)
 if changed /etc/sysusers.d/gatbox.conf || ! getent passwd gatbox-dump >/dev/null || ! getent group gatbox-manuals >/dev/null \
-   || ! getent passwd gatbox-sync >/dev/null; then
+   || ! getent passwd gatbox-sync >/dev/null || ! getent group gatbox-wifi >/dev/null; then
     systemd-sysusers /etc/sysusers.d/gatbox.conf && log "users gatbox-dump (T48 dumps, group plugdev) and gatbox-sync (hub push), group gatbox-manuals"
 fi
-if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ] || [ ! -d /srv/gatbox/manuals ] || [ ! -d /etc/gatbox ]; then
+if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ] || [ ! -d /srv/gatbox/manuals ] || [ ! -d /etc/gatbox ] || [ ! -d /var/spool/gatbox-wifi ]; then
     systemd-tmpfiles --create /etc/tmpfiles.d/gatbox.conf && log "/srv/gatbox/roms + /srv/gatbox/manuals + /var/spool/gatbox-dump + /etc/gatbox"
 fi
 if ! id -nG "$U" | grep -qw gatbox-dump; then
@@ -437,6 +450,9 @@ svc gatbox-web.service /usr/local/bin/gatbox-web /etc/systemd/system/gatbox-web.
     '/usr/local/lib/gatbox/gatboxweb/*' '/usr/local/lib/gatbox/gatboxlib/*'   # its package and the shared lib
 svc gatbox-scand.service /usr/local/bin/gatbox-scand /etc/systemd/system/gatbox-scand.service   # after gatbox-web
 svc gatbox-dump.path /etc/systemd/system/gatbox-dump.path /etc/systemd/system/gatbox-dump.service   # dashboard dumps
+# Wi-Fi requests from the dashboard and from a scanned code; the helper is the only thing
+# here that can change the network.
+svc gatbox-wifi.path /usr/local/sbin/gatbox-wifi '/etc/systemd/system/gatbox-wifi.*'
 fetch_font() {   # <path in google/fonts> <local name> <sha256>
     local f="$FONTDIR/$2"
     echo "$3  $f" | sha256sum -c --status 2>/dev/null && return 0
@@ -519,6 +535,7 @@ fi
 # 9 ---------------------------------------------------------------------------
 step "9/9 optional: fallback hotspot"
 if [ "$AP" = off ]; then
+    systemctl disable --now gatbox-ap-fallback.timer >/dev/null 2>&1 || true
     systemctl disable gatbox-ap-fallback.service >/dev/null 2>&1 || true
     nmcli connection delete gatbox-ap >/dev/null 2>&1 || true
     log "hotspot fallback removed"
@@ -529,10 +546,27 @@ elif [ -n "$AP" ]; then
         ipv4.method shared ipv6.method disabled \
         wifi-sec.key-mgmt wpa-psk wifi-sec.proto rsn wifi-sec.pairwise ccmp wifi-sec.group ccmp \
         wifi-sec.psk "$AP" >/dev/null
-    systemctl enable gatbox-ap-fallback.service >/dev/null
-    log "hotspot 'GATBOX' armed: comes up ~60 s after boot only if no known Wi-Fi/Ethernet"
-elif systemctl -q is-enabled gatbox-ap-fallback.service 2>/dev/null; then
+    # The service used to carry its own [Install] and run once at boot. Disable that first,
+    # or an upgraded Pi keeps a dangling boot-time symlink alongside the timer.
+    systemctl disable gatbox-ap-fallback.service >/dev/null 2>&1 || true
+    systemctl enable --now gatbox-ap-fallback.timer >/dev/null
+    log "hotspot 'GATBOX' armed: comes up ~90 s after boot if no known Wi-Fi/Ethernet, and
+        drops again when a saved network comes back into range"
+elif systemctl -q is-enabled gatbox-ap-fallback.timer 2>/dev/null; then
+    # Already on the timer. Clear a leftover service enablement if one is still there --
+    # idempotent, and a half-migrated Pi is exactly what a re-run should tidy -- but do not
+    # re-enable what is already enabled.
+    systemctl disable gatbox-ap-fallback.service >/dev/null 2>&1 || true
     log "hotspot fallback already armed (left as is; GATBOX_AP_PSK=off removes it)"
+elif systemctl -q is-enabled gatbox-ap-fallback.service 2>/dev/null; then
+    # Armed the old way, by the service's own [Install]. Move it to the timer: a re-run
+    # after a git pull is the documented upgrade path and has no passphrase to hand, and
+    # migrating needs none. Without this the box keeps the boot-only behaviour -- the
+    # dangling multi-user.target.wants symlink still works -- and the recurring recovery
+    # this phase exists for never happens.
+    systemctl disable gatbox-ap-fallback.service >/dev/null 2>&1 || true
+    systemctl enable --now gatbox-ap-fallback.timer >/dev/null
+    log "hotspot fallback moved from boot-only to the 2-minute timer (GATBOX_AP_PSK=off removes it)"
 else
     log "skipped (set GATBOX_AP_PSK to enable)"
 fi

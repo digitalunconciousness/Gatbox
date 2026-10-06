@@ -14,12 +14,13 @@ import re
 import sys
 import subprocess
 import threading
+import urllib.parse
 import time
 import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from . import captures, config, devices, dump, mame, manuals, meter, phone, report, roster, sessions, system
+from . import captures, config, devices, dump, mame, manuals, meter, phone, report, roster, sessions, system, wifi
 from .live import LIVE
 from .meter import Bad
 
@@ -254,6 +255,69 @@ def api_mark(h, m, q):
 
 
 _scans, _scans_lock = [], threading.Lock()      # the last few scans, for the DEVICES panel
+
+
+def _ask(fn, *args):
+    """Leave a Wi-Fi request, or 409 if one is already waiting. The spool is a single slot,
+    and overwriting it loses the first request with nothing said."""
+    try:
+        return fn(*args)
+    except wifi.Busy as e:
+        raise Bad(409, str(e))
+
+
+def api_wifi_get(h, m, q):
+    """GET /api/wifi: saved SSIDs, what is in range, and the last outcome.
+
+    The Pi's own screen only, like POST /api/burn. **No key is ever returned, at any level:
+    there is no endpoint here that reads one back.**
+    """
+    if not h.is_local():
+        raise Bad(403, "the Pi's own screen only: changing the network needs someone at the box")
+    # `pending` is also what sweeps an abandoned request off the spool -- see wifi.pending().
+    h.json(200, {"saved": wifi.saved(), "in_range": wifi.in_range(),
+                 "last": wifi.last_outcome(), "pending": wifi.pending()})
+
+
+def api_wifi_post(h, m, q):
+    """POST /api/wifi {"ssid", "psk"} to join, or {"action": "scan"} to refresh what is in
+    range. 202: gatbox-wifi does the work, because this process cannot.
+
+    Loopback is not only authorization here. A join asked for over the hotspot would cut the
+    connection making the request, and the 7" screen has no such problem.
+    """
+    if not h.is_local():
+        raise Bad(403, "the Pi's own screen only: changing the network needs someone at the box")
+    b = h.body()
+    if not isinstance(b, dict):
+        raise Bad(400, 'expected {"ssid": "<ssid>", "psk": "<key>"} or {"action": "scan"}')
+    if b.get("action") == "scan":
+        h.json(202, {"ok": True, "action": "scan", "id": _ask(wifi.request, "scan")})
+        return
+    ssid = b.get("ssid")
+    if not isinstance(ssid, str) or not ssid.strip():
+        raise Bad(400, "ssid: required")
+    ssid = ssid.strip()
+    if len(ssid.encode("utf-8")) > wifi.SSID_MAX:
+        raise Bad(400, f"ssid: at most {wifi.SSID_MAX} bytes")
+    psk = b.get("psk")
+    if psk is not None and not isinstance(psk, str):
+        raise Bad(400, "psk: text, or leave it out for an open network")
+    rid = _ask(wifi.request, "join", ssid, psk or "")
+    # The ssid is echoed; the key never is. The id is, so the card can tell this join's
+    # outcome from the one before it.
+    h.json(202, {"ok": True, "action": "join", "ssid": ssid, "id": rid})
+
+
+def api_wifi_delete(h, m, q):
+    """DELETE /api/wifi/<ssid>: forget a saved network. The Pi's own screen only."""
+    if not h.is_local():
+        raise Bad(403, "the Pi's own screen only: changing the network needs someone at the box")
+    ssid = urllib.parse.unquote(m["ssid"])
+    if not ssid.strip():
+        raise Bad(400, "ssid: required")
+    rid = _ask(wifi.request, "forget", ssid.strip())
+    h.json(202, {"ok": True, "action": "forget", "ssid": ssid.strip(), "id": rid})
 
 
 def api_scan(h, m, q):
@@ -613,6 +677,9 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("GET", r"/api/captures", api_captures_get),
     ("POST", r"/api/captures", api_captures_post),
     ("GET", r"/api/devices", api_devices),
+    ("GET", r"/api/wifi", api_wifi_get),
+    ("POST", r"/api/wifi", api_wifi_post),
+    ("DELETE", r"/api/wifi/(?P<ssid>[^/]+)", api_wifi_delete),
     ("GET", r"/api/dump", api_dump_get),
     ("POST", r"/api/dump", api_dump_post),
     ("GET", r"/api/dump/parts", api_dump_parts),

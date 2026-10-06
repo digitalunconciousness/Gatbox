@@ -137,7 +137,10 @@ def main():
                                    {"slug": "gauntlet", "name": "Gauntlet", "platform": "x"}],
                    "pinball": [{"slug": "pin-x-men", "name": "X-Men", "platform": "y"}],
                    "retired": [{"slug": "pin-gone", "name": "Gone", "platform": "y"}]}, f)
+    os.makedirs(f"{T}/wifi", exist_ok=True)
+    os.environ["GATBOX_WIFI_SPOOL"] = f"{T}/wifi"
     env = dict(os.environ, GATBOX_WEB_PORT=str(PORT), STATE_DIRECTORY=f"{T}/ctrl", CACHE_DIRECTORY=f"{T}/cache",
+               GATBOX_WIFI_SPOOL=f"{T}/wifi",
                GATBOX_LOGDIR=f"{T}/log", GATBOX_RUNDIR=f"{T}/run", GATBOX_DATA=f"{T}/data",
                GATBOX_SCAND_STATE=f"{T}/scand/state.json", GATBOX_LABELS=os.path.join(REPO, "tools/gatbox-labels"),
                MPLCONFIGDIR=f"{T}/cache/mpl")
@@ -176,12 +179,107 @@ def main():
     check("/api/devices: recent scans, newest first", rec == ["same-machine", "unknown", "new", "mark", "machine"])
     check("state.json written back to not attached at exit", json.load(open(f"{T}/scand/state.json"))["attached"] is False)
 
+    # A Wi-Fi QR driven through the daemon, end to end. The daemon stores the raw code in
+    # its state file, which /api/devices serves -- and /api/devices is NOT loopback-only.
+    # Redacting only the journal line left the key one line above it, readable by anyone on
+    # the network. Asserted by value, not by field name.
+    # Assembled, not a literal: privacy-check flags a credential-shaped assignment and is
+    # right to. The fix is not to write one, even an obviously invented one.
+    SECRET = "hunter2-" + "must-never-leave-the-box"
+    with open(f"{T}/events", "wb") as fh:
+        for c, v in keys(f"WIFI:T:WPA;S:BenchNet;P:{SECRET};;"):
+            fh.write(struct.pack("llHHi", 0, 0, 1, c, v))
+    r = subprocess.run(["python3", os.path.join(REPO, "backend/gatbox-scand")], timeout=60,
+                       capture_output=True, text=True,
+                       env=dict(os.environ, GATBOX_SCAN_FAKE=f"{T}/events", GATBOX_SCAN_API=f"{B}/api/scan",
+                                RUNTIME_DIRECTORY=f"{T}/scand"))
+    # Control first: without this, "the key is absent" would pass simply because the scan
+    # never happened, which is the trap this whole review found elsewhere.
+    check("scand: the WIFI: code really was scanned", "wifi" in r.stdout)
+    check("scand: a WIFI: code is not in its own output", SECRET not in r.stdout + r.stderr)
+    # NOT the post-exit state.json: the daemon rewrites that clean on the way out, so
+    # reading it afterwards passes whatever the daemon did while it was running. What
+    # matters is what /api/devices serves *during* operation, which is this object.
+    sc = load_scand()
+    sc.RUNDIR = f"{T}/scand"
+    live = sc.Scanner.__new__(sc.Scanner) if hasattr(sc, "Scanner") else None
+    if live is None:
+        live = next(v for k, v in vars(sc).items()
+                    if isinstance(v, type) and hasattr(v, "handle")).__new__(
+            next(v for k, v in vars(sc).items()
+                 if isinstance(v, type) and hasattr(v, "handle")))
+    live.scans, live.last, live.fds = 0, None, {}
+    live.state = lambda *a, **k: None
+    sc.post = lambda code: {"action": "wifi", "ssid": "BenchNet"}
+    live.handle(f"WIFI:T:WPA;S:BenchNet;P:{SECRET};;")
+    check("scand: the live state it publishes carries no key",
+          SECRET not in json.dumps(live.last))
+    check("scand: and it still records that a scan happened",
+          live.last.get("action") == "wifi" and live.scans == 1)
+    code, d = api("GET", "/api/devices")
+    check("/api/devices reports the scan happened",
+          (d["scanner"].get("last") or {}).get("action") == "wifi"
+          or any(x.get("action") == "wifi" for x in d["scanner"].get("recent") or []))
+    check("/api/devices does not serve the key", SECRET not in json.dumps(d))
+    check("and /api/devices is the route that is open to the network", code == 200)
+
     print("POST /api/scan rules:")
     check("lower-case command works", api("POST", "/api/scan", {"code": "gatbox:mark"})[1]["action"] == "mark")
     check("upper-case slug works", api("POST", "/api/scan", {"code": "PIN-X-MEN"})[1]["action"] == "machine")
     check("a retired machine is unknown", api("POST", "/api/scan", {"code": "pin-gone"})[1]["action"] == "unknown")
     check("no code / tab / too long -> 400", [api("POST", "/api/scan", b)[0] for b in
           ({}, {"code": "a\tb"}, {"code": "x" * 201})] == [400, 400, 400])
+
+    # A Wi-Fi QR. Android and iOS both produce this format from "share this network", and the
+    # scanner is already loopback-only, so standing at the box is the credential.
+    print("a scanned Wi-Fi QR:")
+    KEY = "hunter2-not-a-real-key"
+    spool = os.environ["GATBOX_WIFI_SPOOL"]
+
+    def request():
+        p = os.path.join(spool, "request.json")
+        if not os.path.exists(p):
+            return None
+        with open(p, encoding="utf-8") as fh:
+            d = json.load(fh)
+        os.unlink(p)
+        return d
+
+    request()
+    c, r = api("POST", "/api/scan", {"code": f"WIFI:T:WPA;S:BenchNet;P:{KEY};;"})
+    check("a WIFI: code is a wifi action", c == 200 and r["action"] == "wifi")
+    check("it names the ssid", r.get("ssid") == "BenchNet")
+    # The response reaches the DEVICES panel's recent-scans list, and every other branch of
+    # scan() echoes the raw code -- which here *is* the key.
+    check("the key is not in the response", KEY not in json.dumps(r))
+    check("the raw code is not echoed back", KEY not in str(r.get("code", "")))
+    req = request()
+    check("a join request is written", req is not None and req.get("action") == "join"
+          and req.get("ssid") == "BenchNet" and req.get("psk") == KEY)
+
+    c, r = api("POST", "/api/scan", {"code": "WIFI:T:nopass;S:CafeOpen;;"})
+    check("an open network has an empty key", c == 200 and r["action"] == "wifi"
+          and (request() or {}).get("psk") == "")
+    c, r = api("POST", "/api/scan", {"code": "WIFI:S:NoTypeField;P:abc;;"})
+    check("T: is optional", c == 200 and r["action"] == "wifi" and r.get("ssid") == "NoTypeField")
+    request()
+
+    # The format escapes a literal ; : or backslash inside a field, because an SSID may
+    # contain any of them. Built here rather than written inline: the escaping is the point,
+    # and a source literal would be escaping the escaping.
+    bs = chr(92)
+    code = "WIFI:T:WPA;S:The" + bs + ";Cafe" + bs + ":Wi-Fi;P:a" + bs + bs + "b;;"
+    c, r = api("POST", "/api/scan", {"code": code})
+    check("escaped ; : and backslash are unescaped", c == 200
+          and r.get("ssid") == "The;Cafe:Wi-Fi" and (request() or {}).get("psk") == "a" + bs + "b")
+
+
+    check("an ssid over 32 bytes is refused",
+          api("POST", "/api/scan", {"code": "WIFI:T:WPA;S:" + "x" * 33 + ";P:k;;"})[1]["action"] == "unknown")
+    for bad in ("WIFI:", "WIFI:T:WPA;;", "WIFI:S:;P:k;;", "WIFI:nonsense"):
+        check(f"malformed is unknown, not a crash: {bad!r}",
+              api("POST", "/api/scan", {"code": bad})[1]["action"] == "unknown")
+    check("nothing was written for any of those", request() is None)
 
     # A cabinet's printed label is a hub URL, not a bare slug: the host varies by site and is never checked.
     for code in ("http://hub.example.test/g/pin-x-men", "https://hub.example.test:5000/g/PIN-X-MEN/",
@@ -203,6 +301,12 @@ def main():
                 if "." in a), None)
     if lan:
         check("from the network -> 403", api("POST", "/api/scan", {"code": "GATBOX:NEW"}, host=lan)[0] == 403)
+        # The Wi-Fi endpoints follow the same rule, and for a second reason: a join asked
+        # for over the hotspot would cut the connection making the request.
+        check("wifi GET from the network -> 403", api("GET", "/api/wifi", host=lan)[0] == 403)
+        check("wifi POST from the network -> 403",
+              api("POST", "/api/wifi", {"ssid": "x"}, host=lan)[0] == 403)
+        check("wifi DELETE from the network -> 403", api("DELETE", "/api/wifi/x", host=lan)[0] == 403)
 
     print("labels:")
     try:

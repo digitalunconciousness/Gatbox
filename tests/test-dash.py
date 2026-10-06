@@ -35,6 +35,18 @@ passed = failed = 0
 procs = {}
 
 
+def settles(c, js, timeout=20):
+    """True once *js* is, or False after *timeout*. Chrome.wait raises; a check wants a
+    boolean -- and these assertions wait on the SYSTEM view's own repaint rather than on a
+    sleep that has to guess its period."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if c.eval(f"!!({js})"):
+            return True
+        time.sleep(0.25)
+    return False
+
+
 def check(name, ok):
     global passed, failed
     if ok:
@@ -153,7 +165,18 @@ def setup():
         "specs": {"rails": [{"rail": "+5V", "lo": 4.75, "hi": 5.25, "doc": "gl-manual", "page": 2, "quote": "+5 VDC 4.75 to 5.25 V"}],
                   "sheet": [{"what": "Fuse F1", "value": "5 A slow-blow", "doc": "gl-manual", "page": 2, "quote": "FUSE F1 5A SLO-BLO"}]}}}},
               open(f"{T}/data/gatbox-manuals.json", "w"))
+    # A spool with something already in it, so the card has saved networks to show. The key
+    # is here deliberately: the test asserts it reaches no part of the page.
+    os.makedirs(f"{T}/wifi", exist_ok=True)
+    json.dump({"at": 1790000000.0, "ssids": ["HomeNetwork", "OldArcade"]},
+              open(f"{T}/wifi/saved.json", "w"))
+    json.dump({"at": 1790000000.0, "ssids": ["HomeNetwork", "CafeOpen"]},
+              open(f"{T}/wifi/scan.json", "w"))
+    json.dump({"at": 1790000000.0, "action": "join", "ssid": "HomeNetwork", "ok": True,
+               "state": "joined", "detail": "hunter2-must-not-appear"},
+              open(f"{T}/wifi/status.json", "w"))
     env = dict(os.environ, GATBOX_WEB_PORT=str(PORT), STATE_DIRECTORY=f"{T}/ctrl", CACHE_DIRECTORY=f"{T}/cache",
+               GATBOX_WIFI_SPOOL=f"{T}/wifi",
                GATBOX_LOGDIR=f"{T}/log", GATBOX_RUNDIR=f"{T}/run", GATBOX_REPORT=os.path.join(REPO, "tools/gatbox-rail-report"),
                GATBOX_DATA=f"{T}/data", MPLCONFIGDIR=f"{T}/cache/mpl", GATBOX_DUMP_SPOOL=f"{T}/spool",
                GATBOX_ROMS=f"{T}/roms", GATBOX_MINIPRO_PARTS=f"{T}/parts.txt", GATBOX_MAME_ROMS=f"{T}/mame-roms.json",
@@ -726,6 +749,13 @@ def main():
             click(f'[data-view="{v}"]')
             time.sleep(2)
             shot(f"17-{v}")
+        # Back to SYSTEM, and it matters: loadSystem() rebuilds #sy-grid only while that view
+        # is the open one, and a hidden view keeps its DOM. Asserting from here with the view
+        # left on "dump" reads a grid painted once and never repainted -- which is how the
+        # checks below that exist *because* of the 5 s repaint came to pass without one ever
+        # happening.
+        click('[data-view="system"]')
+        time.sleep(1)
         check("system: kiosk controls on the Pi's own screen", q("!document.querySelector('#sy-kiosk').classList.contains('hide')"))
         # The hub push (gatbox-sync). Nothing has run here and there is no
         # /var/lib/gatbox-sync, so the tile must say so plainly rather than read as a failure
@@ -733,6 +763,80 @@ def main():
         hubcard = ("[...document.querySelectorAll('#sy-grid .card')]"
                    ".find(c => (c.querySelector('h2') || {}).textContent === 'Hub')")
         check("system: a Hub tile", q(f"!!({hubcard})"))
+        # Wi-Fi: joining a network nobody coded in, from the Pi's own screen. The card is
+        # here and not on a phone, because a join asked for over the hotspot would cut the
+        # connection making the request.
+        wifi = ("[...document.querySelectorAll('#sy-grid .card')]"
+                ".find(c => (c.querySelector('h2') || {}).textContent === 'Wi-Fi')")
+        check("system: a Wi-Fi card", q(f"!!({wifi})"))
+        check("system: it lists a saved network",
+              "HomeNetwork" in q(f"(({wifi}) || {{}}).textContent || ''"))
+        check("system: it offers a scan", q(
+            "(() => { const c = " + wifi + "; if (!c) return false;"
+            " return [...c.querySelectorAll('button')].some(b => b.textContent === 'SCAN'); })()"))
+        check("system: it offers to join what is in range", q(
+            "(() => { const c = " + wifi + "; if (!c) return false;"
+            " return [...c.querySelectorAll('button')].some(b => b.textContent === 'JOIN'); })()"))
+        # The card must NOT hold a bare input. loadSystem() rebuilds #sy-grid every 5 s while
+        # the SYSTEM view is open, so anything typed into a field inside a tile is destroyed
+        # mid-entry -- and the kiosk has no on-screen keyboard, so there is nothing to type
+        # with anyway. Every other typed field here goes through keypad()/sheet(), which is
+        # an overlay outside the poll loop.
+        check("system: no bare input inside the polled grid",
+              q("!document.querySelector('#sy-grid input')"))
+        click_in_card = ("(() => { const c = " + wifi + "; if (!c) return false;"
+                         " const b = [...c.querySelectorAll('button')]"
+                         "   .find(b => b.textContent === 'JOIN'); if (!b) return false;"
+                         " b.click(); return true; })()")
+        check("system: JOIN opens the on-screen keypad", q(click_in_card)
+              and q("!document.querySelector('#sheet').classList.contains('hide')" + " && !!document.querySelector('#pane .keys')"))
+        check("system: the keypad offers the symbols a passphrase needs", q(
+            "(() => { const t = [...document.querySelectorAll('#pane .keys button')]"
+            "   .map(b => b.textContent).join('');"
+            " return ['@', '#', '_', '%', '*'].every(c => t.includes(c)); })()"))
+        # The whole point: it is an overlay, not a tile, so a repaint cannot eat it.
+        time.sleep(6)
+        check("system: it survives the 5 s repaint",
+              q("!document.querySelector('#sheet').classList.contains('hide')" + " && !!document.querySelector('#pane .keys')"))
+        q("(() => { const b = [...document.querySelectorAll('#pane .keys button')]"
+          "   .find(b => b.textContent === 'CANCEL'); if (b) b.click(); return true; })()")
+        # A request waiting in the spool must read as "working", not as the previous join's
+        # outcome. The spool is one slot and status.json is one outcome, so before the
+        # request carried an id the card showed the earlier result under the button just
+        # pressed -- "failed" under a JOIN that was still running.
+        # Parenthesised as a whole: `a || b` binds looser than `.`, so without the outer
+        # brackets `wtext + ".includes(x)"` reads as `a || (b.includes(x))` and is true for
+        # any non-empty card -- a check that asserts nothing.
+        wtext = f"((({wifi}) || {{}}).textContent || '')"
+        # Assembled, not written out: a quoted psk literal in a tracked file is exactly what
+        # the pre-push hook refuses, and it is right to. tests/test-hooks.sh does the same
+        # with its key-shaped value.
+        key3 = "hunter3" + "-must-not-appear"
+        json.dump({"id": "pending-1", "action": "join", "ssid": "CafeOpen", "psk": key3},
+                  open(f"{T}/wifi/request.json", "w"))
+        check("system: a waiting request reads as working",
+              settles(c, f"{wtext}.includes('working')"))
+        check("system: and not as the earlier outcome", "joined" not in q(wtext))
+        check("system: a waiting key reaches no part of the page",
+              "hunter3" not in q("document.body.textContent")
+              and "hunter3" not in q("document.documentElement.outerHTML"))
+        # Abandoned: nothing took it. The card has to say so, because the cause is an install
+        # problem (gatbox-wifi.path not enabled) that nothing else on this page would show --
+        # and it has to keep saying so. The GET that finds a stale request is also the one
+        # that sweeps it, so a card that only read the response would flash the warning once
+        # and lose it on the next repaint, five seconds later.
+        os.utime(f"{T}/wifi/request.json", (0, time.time() - 600))
+        check("system: an abandoned request is called out",
+              settles(c, f"{wtext}.includes('unanswered')"))
+        check("system: and the stale request is swept off the spool",
+              not os.path.exists(f"{T}/wifi/request.json"))
+        time.sleep(6)                                  # at least one more repaint
+        check("system: the warning survives the repaint that follows",
+              "unanswered" in q(wtext))
+        check("system: no key anywhere on the page",
+              not any(k in q("document.body.textContent") for k in ("hunter2", "hunter3"))
+              and not any(k in q("document.documentElement.outerHTML")
+                          for k in ("hunter2", "hunter3")))
         check("system: it says sync isn't configured, not that it failed",
               "not configured" in q(f"(({hubcard}) || {{}}).textContent || ''"))
         check("devices: NOT FITTED cards greyed", q("document.querySelectorAll('#dv-grid .notfit').length") == 3)

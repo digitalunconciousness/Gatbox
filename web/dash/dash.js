@@ -372,7 +372,7 @@
       build(pane, done);
     });
   }
-  function keypad({title, max, number, value}) {
+  function keypad({title, max, number, value, symbols, keep}) {
     return sheet(title, (pane, done) => {
       let txt = value || "", lower = false;
       const field = el("div", "kp-field");
@@ -407,15 +407,18 @@
         key("'"); key("&");
         const sp = el("button", "x4", "SPACE"); sp.addEventListener("click", () => press(" ")); keys.appendChild(sp);
         key(":"); key("!");
+        // A Wi-Fi passphrase is not a machine name: it needs the rest of the printable set,
+        // and the rows above only offer ' & : ! - . /
+        if (symbols) for (const k of "@#$%^*()_+=,?;\"<>[]{}|~`\\") key(k);
       }
       const cancel = el("button", number ? "" : "x4", "CANCEL"), ok = el("button", number ? "" : "x6", "OK");
       ok.style.borderColor = "var(--mag)";
       cancel.addEventListener("click", () => done(null));
-      ok.addEventListener("click", () => done(txt.trim()));
+      ok.addEventListener("click", () => done(keep ? txt : txt.trim()));
       add(keys, cancel, ok);
       pane.appendChild(keys);
       S.kd = e => {                                  // a real keyboard works too (phone, bench keyboard)
-        if (e.key === "Enter") done(txt.trim());
+        if (e.key === "Enter") done(keep ? txt : txt.trim());
         else if (e.key === "Escape") done(null);
         else if (e.key === "Backspace") press("⌫");
         else if (e.key.length === 1) press(number ? e.key : e.key);
@@ -492,6 +495,13 @@
 
   // --- SESSIONS -----------------------------------------------------------------------------
   let histChart = null;
+  // The Wi-Fi spool is a single slot and status.json is a single outcome, so the card has to
+  // remember two things across the SYSTEM view's 5 s repaint: which request it asked for, and
+  // that a request was once abandoned. Without the first it shows the previous join's
+  // "failed" under a JOIN that is still running, and someone retypes a key that was right.
+  // Without the second the warning flashes for one paint -- the GET that finds a stale
+  // request is the same one that sweeps it -- and is gone before anyone reads it.
+  let wifiReq = null, wifiStuck = null;
   async function loadSessions() {
     let d;
     try { d = await api("GET", "/api/rail/sessions?limit=200"); } catch (e) { return fail(e); }
@@ -967,6 +977,94 @@
         : "nothing yet", hb.last && hb.last.rejected ? "bad" : null],
       ["sent in all", hb.sent_total != null ? String(hb.sent_total) : "-"],
     ] : [["sync", "not configured (no /etc/gatbox/hub.conf)", "mut"]]);
+    // Wi-Fi. Fetched separately rather than folded into /api/system, because /api/system is
+    // readable from the network and these are not: a join needs someone at the box, and the
+    // saved list goes with it. On anything but the Pi's own screen the card says why.
+    const wcard = tile("Wi-Fi", [["on", (d.network && d.network.wifi)
+      ? `${d.network.wifi.ssid} (${d.network.wifi.device})`
+      : ((d.network && d.network.hotspot && d.network.hotspot.active)
+         ? "the GATBOX hotspot" : "nothing"),
+      (d.network && d.network.wifi) ? "ok" : "warn"]]);
+    if (!(d.client && d.client.local)) {
+      wcard.appendChild(el("div", "mut", "Joining a network needs the Pi's own screen: asking "
+        + "for it over the hotspot would cut the connection doing the asking."));
+    } else {
+      const body = el("div");
+      wcard.appendChild(body);
+      const paint = w => {
+        clear(body);
+        const p = w.pending;
+        if (p && p.stale) wifiStuck = p;
+        const working = p && !p.stale;
+        if (working) {
+          body.appendChild(el("div", "warn",
+            `${p.action}${p.ssid ? " " + p.ssid : ""}: working\u2026`));
+        } else if (wifiStuck) {
+          body.appendChild(el("div", "bad", `${wifiStuck.action}`
+            + `${wifiStuck.ssid ? " " + wifiStuck.ssid : ""}: left unanswered \u2014 `
+            + "nothing took it. Is gatbox-wifi.path enabled?"));
+        }
+        // Only once nothing is in flight: an outcome shown beside "working" is the previous
+        // one, and the two together read as a result.
+        const last = w.last;
+        if (last && !working) {
+          // mine: this card asked for it. An outcome with no id predates request ids; an
+          // outcome this page did not ask for is history, not an answer, so it is dimmed
+          // rather than presented as the result of the last button pressed.
+          const answered = !wifiReq || !last.id || last.id === wifiReq;
+          body.appendChild(el("div", answered ? (last.ok ? "ok" : "bad") : "mut",
+            `${answered ? "" : "earlier: "}${last.action} ${last.ssid || ""}: ${last.state}`));
+        }
+        const saved = w.saved || [], range = (w.in_range && w.in_range.ssids) || [];
+        if (saved.length) {
+          body.appendChild(el("h3", null, "Saved"));
+          for (const ssid of saved) {
+            const row = el("div", "btnrow");
+            row.appendChild(el("span", null, ssid));
+            const f = el("button", null, "FORGET");
+            f.addEventListener("click", async () => {
+              if (await confirmBox("FORGET " + ssid + "?",
+                    "The box will not rejoin it on its own.", "FORGET")) {
+                api("DELETE", "/api/wifi/" + encodeURIComponent(ssid)).then(asked).catch(fail);
+              }
+            });
+            row.appendChild(f);
+            body.appendChild(row);
+          }
+        }
+        body.appendChild(el("h3", null, "In range"));
+        if (!range.length) body.appendChild(el("div", "mut", "nothing seen yet — SCAN looks"));
+        for (const ssid of range) {
+          const row = el("div", "btnrow");
+          row.appendChild(el("span", null, ssid));
+          const j = el("button", null, "JOIN");
+          j.addEventListener("click", async () => {
+            // keypad() is a sheet() overlay, not a tile. loadSystem() rebuilds #sy-grid
+            // every 5 s, so a field inside this card was wiped mid-entry -- and the kiosk
+            // has no on-screen keyboard to type into one with anyway.
+            const psk = await keypad({ title: "KEY FOR " + ssid, max: 63,
+                                       symbols: true, keep: true });
+            if (psk === null) return;        // CANCEL; "" is a legitimate open network
+            api("POST", "/api/wifi", { ssid: ssid, psk: psk }).then(asked).catch(fail);
+          });
+          row.appendChild(j);
+          body.appendChild(row);
+        }
+        const row = el("div", "btnrow");
+        const scan = el("button", null, "SCAN");
+        scan.addEventListener("click", () =>
+          api("POST", "/api/wifi", { action: "scan" })
+            .then(r => { asked(r); setTimeout(load, 4000); }).catch(fail));
+        row.appendChild(scan);
+        body.appendChild(row);
+      };
+      const load = () => api("GET", "/api/wifi").then(paint).catch(() =>
+        body.appendChild(el("div", "mut", "could not read the Wi-Fi state")));
+      // One request accepted: its id is what the next outcome is matched against, and it
+      // supersedes any earlier complaint that a request went unanswered.
+      const asked = r => { wifiReq = (r && r.id) || null; wifiStuck = null; return load(); };
+      load();
+    }
     const v = d.versions || {};
     tile("Software", Object.entries(v).map(([k, x]) => [k, x]));
     if (d.errors && Object.keys(d.errors).length) tile("Couldn't read", Object.entries(d.errors).map(([k, x]) => [k, x, "warn"]));

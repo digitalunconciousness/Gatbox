@@ -1,13 +1,177 @@
 #!/usr/bin/env bash
-# gatbox-ap-fallback — if no known network shows up after boot, raise the GATBOX
-# hotspot so a phone or laptop can still reach the Pi inside a cabinet.
-# Pi is then 10.42.0.1 (also gatbox.local). Reboot near known Wi-Fi to go back.
+# gatbox-ap-fallback — keep the Pi reachable. If no known network is up, raise the GATBOX
+# hotspot so a phone or laptop can still reach it inside a cabinet; and when a saved network
+# comes back into range, drop the hotspot again so NetworkManager rejoins it.
+# Pi on the hotspot is 10.42.0.1 (also gatbox.local).
+#
+# Run repeatedly, from gatbox-ap-fallback.timer. It used to run once at boot and said so --
+# "Reboot near known Wi-Fi to go back" -- which strands a box inside a cabinet that loses its
+# network, and is the whole reason this is now idempotent and recurring.
 set -u
-WAIT="${GATBOX_AP_WAIT:-60}"
-online() { nmcli -t -f DEVICE,STATE device 2>/dev/null | grep -Eq '^(wlan0|eth0):connected$'; }
-for ((i = 0; i < WAIT; i += 5)); do
-    online && { echo "gatbox-ap: network up, hotspot not needed"; exit 0; }
-    sleep 5
-done
-echo "gatbox-ap: no known network after ${WAIT}s, raising hotspot"
-exec nmcli connection up gatbox-ap
+# 0 by default: gatbox-ap-fallback.timer's OnBootSec is the grace period, and one
+# delay in one place is the whole point. Set it only to wait by hand.
+WAIT="${GATBOX_AP_WAIT:-0}"
+AP_PROFILE="${GATBOX_AP_PROFILE:-gatbox-ap}"
+# Where the hold-off below is remembered. gatbox-ap-fallback.service declares
+# StateDirectory=gatbox-ap-fallback and systemd exports STATE_DIRECTORY; a run started by
+# gatbox-wifi's restore_hotspot has no such variable, so the path is also written out.
+STATE_DIR="${GATBOX_AP_STATE:-${STATE_DIRECTORY:-/var/lib/gatbox-ap-fallback}}"
+ATTEMPTS="$STATE_DIR/attempts"
+
+# Is the box on a network that is not its own hotspot?
+#
+# The obvious check -- "is wlan0 connected" -- says yes while the Pi is doing nothing but
+# running the GATBOX AP, because NetworkManager reports the AP device as connected like any
+# other. So the connection name has to be read too, and ours excluded. Terse -t output is
+# DEVICE:STATE:CONNECTION, and a connection name may contain spaces, so the name is whatever
+# follows the second colon.
+real_network_up() {
+    # Self-contained: tests/test-ap-fallback.sh sources this function on its own, the way
+    # tests/test-modes.sh sources mode_key, so it cannot read a variable set further up.
+    local line device state name ap=${GATBOX_AP_PROFILE:-gatbox-ap} out
+    # Conservative on purpose, and the asymmetry is the reason: a wrong "yes" leaves the box
+    # with no network and no hotspot, stranded until someone power-cycles it, while a wrong
+    # "no" costs an unnecessary hotspot. So nmcli failing, or missing, is not a network.
+    out=$(nmcli -t -f DEVICE,STATE,CONNECTION device 2>/dev/null) || return 1
+    while IFS= read -r line; do
+        device=${line%%:*}
+        line=${line#*:}
+        state=${line%%:*}
+        name=${line#*:}
+        # connected*, not = connected: NM reports "connected (externally)" and these
+        # strings are localized. Reading a working connection as offline now costs the
+        # network, because the recurring timer raises the AP on that same radio.
+        case "$state" in connected*) ;; *) continue ;; esac
+        case "$device" in wlan0 | eth0) ;; *) continue ;; esac
+        [ "$name" = "$ap" ] && continue
+        return 0
+    done <<< "$out"
+    return 1
+}
+# Is our own hotspot the thing that is up?
+hotspot_up() {
+    local line device state name ap=${GATBOX_AP_PROFILE:-gatbox-ap} out
+    out=$(nmcli -t -f DEVICE,STATE,CONNECTION device 2>/dev/null) || return 1
+    while IFS= read -r line; do
+        device=${line%%:*}
+        line=${line#*:}
+        state=${line%%:*}
+        name=${line#*:}
+        case "$state" in connected*) ;; *) continue ;; esac
+        [ "$name" = "$ap" ] && [ "$device" = wlan0 ] && return 0
+    done <<< "$out"
+    return 1
+}
+
+# Is a network we already have a profile for within reach? Compared by profile name, which is
+# the SSID for anything added the ordinary way -- by the desktop, by a scanned code, or by the
+# dashboard. A profile whose name was changed by hand will not match, and the cost of that is
+# only that the hotspot stays up.
+saved_in_range() {
+    local ap=${GATBOX_AP_PROFILE:-gatbox-ap} saved ssid
+    saved=$(nmcli -t -f NAME connection show 2>/dev/null) || return 1
+    while IFS= read -r ssid; do
+        [ -n "$ssid" ] || continue
+        [ "$ssid" = "$ap" ] && continue
+        # Prints the match: the caller needs the name to hold off that one network rather
+        # than every network, and grep -qxF is otherwise silent.
+        printf '%s\n' "$saved" | grep -qxF -- "$ssid" && { printf '%s\n' "$ssid"; return 0; }
+    done <<< "$(nmcli -t -f SSID device wifi list --rescan yes 2>/dev/null)"
+    return 1
+}
+
+# A saved profile whose password changed -- the ordinary thing to happen at a venue -- used
+# to cost the hotspot every two minutes for ever: the SSID is in range, so drop the AP to
+# rejoin; the join fails; the next run finds no network and raises the AP; repeat. Anyone on
+# GATBOX is cut each cycle, which is the opposite of what this script is for. So each attempt
+# to rejoin an SSID is remembered and the next one waits longer.
+#
+# Remembered per SSID rather than globally: a box that cannot rejoin the office network must
+# still take the first chance it gets at a different one.
+hold_for() {        # hold_for COUNT -> seconds to leave that SSID alone for
+    case "$1" in
+        0) echo 0 ;;
+        1) echo 600 ;;
+        2) echo 1800 ;;
+        *) echo 3600 ;;
+    esac
+}
+
+attempt_for() {     # attempt_for SSID -> "COUNT EPOCH", or "0 0" for one never tried
+    # `name`, not `ssid`: the caller's variable is called that, and a local of the same name
+    # here would shadow it silently for anything added below.
+    local count epoch name
+    if [ -r "$ATTEMPTS" ]; then
+        # The ssid is the last field, so one containing spaces needs no quoting; and it is
+        # compared with = rather than matched, so one containing a regex character cannot
+        # match the wrong row.
+        while read -r count epoch name; do
+            [ "$name" = "$1" ] || continue
+            # A record this script did not write is not a reason to strand the box on its
+            # own hotspot, so anything non-numeric reads as "never tried".
+            case "$count$epoch" in '' | *[!0-9]*) continue ;; esac
+            echo "$count $epoch"
+            return
+        done < "$ATTEMPTS"
+    fi
+    echo "0 0"
+}
+
+note_attempt() {    # note_attempt SSID COUNT
+    local tmp c e s
+    mkdir -p "$STATE_DIR" 2>/dev/null || return 0
+    tmp="$ATTEMPTS.$$"
+    : > "$tmp" || return 0
+    if [ -r "$ATTEMPTS" ]; then
+        while read -r c e s; do
+            [ -n "$e" ] || continue
+            [ "$s" = "$1" ] && continue
+            printf '%s %s %s\n' "$c" "$e" "$s"
+        done < "$ATTEMPTS" | tail -n 19 >> "$tmp"
+    fi
+    printf '%s %s %s\n' "$(($2 + 1))" "$(date +%s)" "$1" >> "$tmp"
+    mv -f "$tmp" "$ATTEMPTS" 2>/dev/null || rm -f "$tmp"
+}
+
+clear_attempts() { rm -f "$ATTEMPTS" 2>/dev/null || :; }
+
+# The boot-time grace period, for the run started at boot. The recurring runs pass 0: a
+# network that is going to come up has had two minutes already.
+if [ "$WAIT" -gt 0 ]; then
+    for ((i = 0; i < WAIT; i += 5)); do
+        real_network_up && { echo "gatbox-ap: network up, hotspot not needed"; exit 0; }
+        sleep 5
+    done
+fi
+
+if real_network_up; then
+    echo "gatbox-ap: on a network, nothing to do"
+    # Whatever was being held off is moot now. Clearing here is what makes a hold-off
+    # temporary rather than a profile the box quietly gives up on.
+    clear_attempts
+    exit 0
+fi
+
+if hotspot_up; then
+    if ssid=$(saved_in_range); then
+        read -r count last <<< "$(attempt_for "$ssid")"
+        wait_for=$(hold_for "$count")
+        age=$(($(date +%s) - last))
+        # age >= 0: a record dated in the future means the clock moved, not that the attempt
+        # is pending. This box records "clock=unverified" as a real state and its RTC is
+        # deliberately not trickle-charged, so that is not hypothetical -- and a negative age
+        # would otherwise hold the hotspot up until the record aged out of the future.
+        if [ "$count" -gt 0 ] && [ "$age" -ge 0 ] && [ "$age" -lt "$wait_for" ]; then
+            echo "gatbox-ap: $ssid is in range but the last $count attempt(s) to rejoin it did not stick; holding the hotspot for another $((wait_for - age))s"
+            exit 0
+        fi
+        note_attempt "$ssid" "$count"
+        echo "gatbox-ap: a saved network is in range, dropping the hotspot to rejoin it"
+        exec nmcli connection down "$AP_PROFILE"
+    fi
+    echo "gatbox-ap: hotspot up, no saved network in range"
+    exit 0
+fi
+
+echo "gatbox-ap: no network, raising hotspot"
+exec nmcli connection up "$AP_PROFILE"

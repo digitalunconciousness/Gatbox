@@ -30,6 +30,40 @@ check "second --extract writes nothing"         '[[ $out2 == "0 file(s) written 
 echo tampered >> "$T/root/usr/local/bin/gatbox-status"; chmod 700 "$T/root/usr/local/bin/gatbox-web"
 out3=$(bash "$BOOT" --extract "$T/root" 2>&1)
 check "changed content + mode get rewritten"     '[[ $out3 == "2 file(s) written under $T/root" ]] && cmp -s "$REPO/tools/gatbox-status" "$T/root/usr/local/bin/gatbox-status"'
+# The hotspot fallback is driven by a timer, not by the service's own [Install]: it used to
+# run once at boot and tell you to reboot to get back on Wi-Fi, which strands a box in a
+# cabinet. The timer has to be installed and enabled, and the old enablement cleaned up.
+check "MANIFEST installs the AP fallback timer"  'grep -qE "^backend/gatbox-ap-fallback\.timer +/etc/systemd/system/" "$BOOT"'
+check "bootstrap enables and starts the timer"   'grep -qE "enable --now gatbox-ap-fallback.timer" "$BOOT"'
+# Not a bare grep: the removal branch (GATBOX_AP_PSK=off) has always disabled the service, so
+# that would pass without the arming branch cleaning up the old boot-time enablement at all.
+check "and the arming branch cleans up the old enablement" \
+    '[ "$(grep -c "disable gatbox-ap-fallback.service" "$BOOT")" -ge 2 ]'
+check "the service no longer installs itself"    '! grep -q "WantedBy" "$REPO/backend/gatbox-ap-fallback.service"'
+# Not the unconditional unit list: the hotspot is optional, so a Pi that deliberately has
+# none must not be told every run that it is missing a unit. --check reports the timer only
+# where the hotspot is armed at all.
+check "--check reports the timer only when armed" \
+    'grep -q "is-enabled gatbox-ap-fallback.timer" "$BOOT" && grep -q "replaces the boot-only service" "$BOOT"'
+
+# gatbox-wifi: the root helper, its .path trigger, the spool it watches, and the group
+# gatbox-web joins to write into that spool.
+for f in gatbox-wifi gatbox-wifi.service gatbox-wifi.path; do
+    check "MANIFEST installs $f"                 'grep -qE "^backend/$f +/" "$BOOT"'
+done
+# Without this the module never reaches the Pi and gatbox-web fails to import at startup.
+check "MANIFEST installs gatboxweb/wifi.py"      'grep -qE "^backend/gatboxweb/wifi\.py +/usr/local/lib/gatbox/gatboxweb/wifi\.py" "$BOOT"'
+check "the helper installs to sbin, 755"         'grep -qE "^backend/gatbox-wifi +/usr/local/sbin/gatbox-wifi +755" "$BOOT"'
+check "bootstrap enables the .path"              'grep -q "svc gatbox-wifi.path" "$BOOT"'
+check "sysusers creates the gatbox-wifi group"   'grep -q "^g gatbox-wifi" "$REPO/bootstrap/files/sysusers-gatbox.conf"'
+# 2770: setgid so the dashboard's files keep the group, and not world-readable, because a
+# request file in here holds a plaintext Wi-Fi key until the helper takes it.
+check "tmpfiles creates the spool 2770 root:gatbox-wifi" \
+    'grep -qE "^d /var/spool/gatbox-wifi +2770 +root +gatbox-wifi" "$REPO/bootstrap/files/tmpfiles-gatbox.conf"'
+check "gatbox-web may write to the spool"        'grep -q "ReadWritePaths=-/var/spool/gatbox-wifi" "$REPO/backend/gatbox-web.service"'
+check "gatbox-web is in the gatbox-wifi group"   'grep -q "SupplementaryGroups=gatbox-wifi" "$REPO/backend/gatbox-web.service"'
+check "--check reports the spool"                'grep -q "/var/spool/gatbox-wifi" "$BOOT"'
+
 bash "$BOOT" --check > "$T/check" 2>&1; rc=$?
 check "--check runs without root (exit 0 or 3)" '[ $rc = 0 ] || [ $rc = 3 ]'
 out=$(bash "$BOOT" 2>&1); rc=$?

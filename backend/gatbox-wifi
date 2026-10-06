@@ -1,0 +1,284 @@
+#!/usr/bin/env python3
+"""gatbox-wifi — the only thing that changes which network this box is on.
+
+gatbox-web cannot do this itself. It runs DynamicUser with ProtectSystem=strict and has no
+D-Bus, so nmcli fails there -- documented in gatboxweb/system.py since 2026-09-28. So the
+dashboard, and a scanned Wi-Fi QR, write a request to a spool and this job acts on it: the
+shape gatbox-dump already uses for the T48.
+
+Driven by gatbox-wifi.path watching the request file. Runs as root, because it drives
+NetworkManager.
+
+**A Wi-Fi key is never logged and never written to the status file.** nmcli necessarily
+receives it; nothing else here does. That is the one rule worth stating twice.
+
+Environment (the unit sets none; tests set these):
+    GATBOX_NMCLI        the nmcli to run (default: nmcli), as gatbox-raillog takes GATBOX_SIGROK
+    GATBOX_WIFI_SPOOL   the spool directory (default: /var/spool/gatbox-wifi)
+    GATBOX_AP_FALLBACK  the hotspot script to fall back to (default: the installed one)
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+
+NMCLI = os.environ.get("GATBOX_NMCLI", "nmcli")
+SPOOL = os.environ.get("GATBOX_WIFI_SPOOL", "/var/spool/gatbox-wifi")
+REQUEST = os.path.join(SPOOL, "request.json")
+STATUS = os.path.join(SPOOL, "status.json")
+
+# nmcli's own -w, so a bad key fails rather than hangs. Overridable so a test can reach the
+# timeout path in a second instead of a minute.
+CONNECT_TIMEOUT = int(os.environ.get("GATBOX_WIFI_CONNECT_TIMEOUT", "45"))
+# Restoring the hotspot is gatbox-ap-fallback's job, not a second copy of it here: it owns
+# both "is a real network up" and "raise the hotspot if needed", and two copies of a
+# predicate that must agree is the bug class tests/test-modes.sh exists to catch elsewhere.
+AP_FALLBACK = os.environ.get("GATBOX_AP_FALLBACK", "/usr/local/sbin/gatbox-ap-fallback")
+AP_PROFILE = os.environ.get("GATBOX_AP_PROFILE", "gatbox-ap")
+
+# The id of the request being acted on, copied into the outcome so the dashboard can tell the
+# answer to the button just pressed from the outcome of an earlier one. The spool is a single
+# slot: without this, a card polling every few seconds shows the *previous* join's "failed"
+# under a JOIN that is still running, and someone retypes a key that was right.
+REQUEST_ID = ""
+# Ours is 16 hex characters. The spool is writable by the gatbox-wifi group, so what comes
+# back out of it is clamped rather than trusted.
+ID_MAX = 48
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def write_status(**fields):
+    """The outcome, for the dashboard. Never carries a key: the caller passes no psk here,
+    and this is the only writer of the file."""
+    fields.setdefault("at", time.time())
+    if REQUEST_ID:
+        fields.setdefault("id", REQUEST_ID)
+    tmp = STATUS + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(fields, fh, indent=1, sort_keys=True)
+    os.replace(tmp, STATUS)
+
+
+def nmcli(*args, timeout=60):
+    """(returncode, stdout, stderr). A list, never a shell: an SSID is someone else's text.
+
+    **The exception is never stringified.** TimeoutExpired.__str__ is "Command '<argv>' timed
+    out after N seconds" and that argv holds `password <psk>` -- so the obvious str(exc)
+    puts the key into whatever the caller writes next, which here is status.json and then
+    GET /api/wifi. Reachable whenever NetworkManager wedges, which is exactly when someone
+    goes looking at the status.
+    """
+    try:
+        r = subprocess.run([NMCLI, *args], capture_output=True, text=True,
+                           errors="replace", timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return 1, "", f"nmcli did not answer within {timeout}s"
+    except OSError as exc:
+        return 1, "", f"could not run nmcli: {exc.strerror or exc.__class__.__name__}"
+    return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+
+def both(out, err):
+    """stdout and stderr together, for a human-readable detail line."""
+    return " ".join(x for x in (out, err) if x)
+
+
+def scrub(text, *secrets):
+    """Remove a secret from text we are about to write down.
+
+    Belt and braces behind nmcli(): its own stderr is written verbatim, and whether some
+    version of it echoes an invalid key back in a validation error is not something this
+    code can know. Scrubbing by value is the only answer that does not depend on that.
+    """
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "<redacted>")
+    return text
+
+
+def restore_hotspot():
+    """After a failed join, get the box reachable again rather than leaving it stranded."""
+    try:
+        r = subprocess.run([AP_FALLBACK], capture_output=True, text=True, timeout=120,
+                           errors="replace",
+                           env={**os.environ, "GATBOX_AP_WAIT": "0"})
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log(f"gatbox-wifi: could not restore the hotspot ({type(exc).__name__})")
+        return False
+    # Running is not succeeding. The script exits non-zero when there is no gatbox-ap
+    # profile -- the hotspot was never armed, or was removed -- and reporting
+    # "restored-hotspot" then leaves the box off its network with nothing to fall back to
+    # while the status and the runbook both say it came back.
+    if r.returncode != 0:
+        log(f"gatbox-wifi: the hotspot did not come back: {both(r.stdout.strip(), r.stderr.strip())[:200]}")
+        return False
+    return True
+
+
+def forget(ssid):
+    # Loopback-only means "any process on the Pi", not "only the FORGET button". The hotspot
+    # profile is how someone reaches a box with no network, and its passphrase is
+    # deliberately not in the repo -- deleting it costs a trip and the owner's passphrase.
+    if ssid == AP_PROFILE:
+        log(f"gatbox-wifi: refusing to forget {ssid!r}: it is the way back in")
+        write_status(action="forget", ssid=ssid, ok=False, state="refused",
+                     detail="that is the GATBOX hotspot, not a network to forget")
+        return 1
+    rc, out, err = nmcli("connection", "delete", ssid)
+    if rc == 0:
+        log(f"gatbox-wifi: forgot {ssid!r}")
+        write_status(action="forget", ssid=ssid, ok=True, state="forgotten",
+                     detail=both(out, err)[:200])
+        return 0
+    # An SSID that was never saved is a normal thing to ask for, not a crash.
+    log(f"gatbox-wifi: could not forget {ssid!r}")
+    write_status(action="forget", ssid=ssid, ok=False, state="failed",
+                 detail=both(out, err)[:200])
+    return 1
+
+
+def _write(name, body):
+    tmp = os.path.join(SPOOL, name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(body, fh, indent=1, sort_keys=True)
+    os.replace(tmp, os.path.join(SPOOL, name))
+
+
+def scan():
+    """What is in range and what is already saved, for the dashboard.
+
+    Both, because the web process cannot ask nmcli either of them -- it has no D-Bus. Names
+    only: nothing here reads a key back out of NetworkManager, and no endpoint offers one.
+    """
+    # -e no: terse output otherwise backslash-escapes a : or a \\ inside a value, so
+    # "Cafe:Wifi" arrives as "Cafe\\:Wifi", is shown that way, and the join that follows
+    # sends the backslash to nmcli and matches nothing.
+    rc, out, err = nmcli("-t", "-e", "no", "-f", "SSID", "device", "wifi", "list",
+                         "--rescan", "yes", timeout=60)
+    if rc != 0:
+        # stdout only, never stderr: parsing them together made "Error: NetworkManager is
+        # not running." a network with a JOIN button, and replaced a good list with it.
+        log(f"gatbox-wifi: could not list networks: {err[:200]}")
+        write_status(action="scan", ok=False, state="failed", detail=err[:200])
+        return 1
+    seen = sorted({line.strip() for line in out.splitlines() if line.strip()})
+    _write("scan.json", {"at": time.time(), "ssids": seen})
+
+    rc2, out2, err2 = nmcli("-t", "-e", "no", "-f", "NAME", "connection", "show")
+    if rc2 != 0:
+        log(f"gatbox-wifi: could not list saved profiles: {err2[:200]}")
+        write_status(action="scan", ok=False, state="partial", detail=err2[:200])
+        return 1
+    # Our own hotspot is not somewhere to connect to, so it is not offered as one.
+    profiles = sorted({line.strip() for line in out2.splitlines()
+                       if line.strip() and line.strip() != AP_PROFILE})
+    _write("saved.json", {"at": time.time(), "ssids": profiles})
+
+    log(f"gatbox-wifi: {len(seen)} network(s) in range, {len(profiles)} saved")
+    write_status(action="scan", ok=True, state="scanned",
+                 detail=f"{len(seen)} in range, {len(profiles)} saved")
+    return 0
+
+
+def hotspot_up():
+    """Is wlan0 carrying our own AP rather than a network?"""
+    rc, out, _ = nmcli("-t", "-e", "no", "-f", "DEVICE,STATE,CONNECTION", "device")
+    if rc != 0:
+        return False
+    for line in out.splitlines():
+        parts = line.split(":", 2)
+        if len(parts) == 3 and parts[0] == "wlan0" and parts[1].startswith("connected") \
+                and parts[2] == AP_PROFILE:
+            return True
+    return False
+
+
+def join(ssid, psk):
+    # One radio: the hotspot and a client connection are mutually exclusive, and a wlan0 in
+    # AP mode cannot scan, so `device wifi connect` issued while the AP is up resolves
+    # against an empty scan list and answers "No network with SSID found". That is the
+    # primary scenario -- box in a cabinet, no network, hotspot up, someone arrives with a
+    # QR -- so the AP comes down first. If the join then fails, restore_hotspot brings it
+    # back, which is why dropping it here is safe.
+    if hotspot_up():
+        log("gatbox-wifi: taking the hotspot down to free the radio")
+        nmcli("connection", "down", AP_PROFILE, timeout=30)
+    args = ["-w", str(CONNECT_TIMEOUT), "device", "wifi", "connect", ssid]
+    if psk:
+        args += ["password", psk]
+    rc, out, err = nmcli(*args, timeout=CONNECT_TIMEOUT + 15 if CONNECT_TIMEOUT > 5
+                         else CONNECT_TIMEOUT)
+    detail = both(out, err)
+    if rc == 0:
+        log(f"gatbox-wifi: joined {ssid!r}")
+        write_status(action="join", ssid=ssid, ok=True, state="joined",
+                     detail=scrub(detail, psk)[:200])
+        return 0
+    # A wrong key must cost thirty seconds, not a trip to wherever the box is: bring the
+    # hotspot back so it is reachable again.
+    log(f"gatbox-wifi: could not join {ssid!r}; restoring the hotspot")
+    state = "restored-hotspot" if restore_hotspot() else "failed"
+    write_status(action="join", ssid=ssid, ok=False, state=state,
+                 detail=scrub(detail, psk)[:200])
+    return 1
+
+
+def take_request():
+    """Read the request and remove it, whatever happens next.
+
+    Removed first, and always: the file holds a key, and leaving it behind after a failure
+    would keep a plaintext secret on disk until the next request happened to overwrite it.
+    The .path unit also re-triggers on a file that is still there, so a request that cannot
+    be parsed would otherwise spin.
+    """
+    try:
+        with open(REQUEST, encoding="utf-8") as fh:
+            raw = fh.read()
+    except OSError:
+        return None
+    finally:
+        try:
+            os.unlink(REQUEST)
+        except OSError:
+            pass
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return False          # present but unusable, which is not the same as absent
+
+
+def main():
+    global REQUEST_ID
+    req = take_request()
+    if req is None:
+        log("gatbox-wifi: no request to act on")
+        return 0              # the .path unit can fire on a file already taken; not a fault
+    if req is False or not isinstance(req, dict):
+        log("gatbox-wifi: the request was not usable JSON; discarded")
+        return 1
+    action = req.get("action")
+    ssid = req.get("ssid") or ""
+    rid = req.get("id")
+    REQUEST_ID = rid[:ID_MAX] if isinstance(rid, str) else ""
+    if action == "join":
+        if not ssid:
+            log("gatbox-wifi: a join needs an ssid")
+            return 1
+        return join(ssid, req.get("psk") or "")
+    if action == "forget":
+        if not ssid:
+            log("gatbox-wifi: a forget needs an ssid")
+            return 1
+        return forget(ssid)
+    if action == "scan":
+        return scan()
+    log(f"gatbox-wifi: unknown action {action!r}")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

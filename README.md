@@ -15,6 +15,7 @@ sudo bash bootstrap/gatbox-bootstrap.sh
 Re-run it after every `git pull`. It changes only what differs from the checkout and restarts only the services
 whose files changed. `bash bootstrap/gatbox-bootstrap.sh --check` shows what a run would change without root.
 `GATBOX_AP_PSK='…'` arms the fallback hotspot (the passphrase is never stored in this repo).
+Joining a network — by QR, from the 7" screen, or from the desktop — is `docs/network.md`.
 
 ## Layout
 

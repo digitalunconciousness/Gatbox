@@ -72,6 +72,19 @@ the box stays reachable — join **GATBOX** again and try another key.
 The dashboard's Wi-Fi card shows what the helper last did. `journalctl -u gatbox-wifi` has the
 detail. A key never appears in either.
 
+## What a key is, and is not, protected from
+
+A Wi-Fi key is never logged, never written to the status file and never returned by any
+endpoint. It exists in two places: the request file in `/var/spool/gatbox-wifi` (mode 600,
+removed before the helper does anything else), and nmcli.
+
+**One known gap.** nmcli receives the key as a command-line argument, so for the few seconds a
+join takes it is visible in `/proc/<pid>/cmdline` — which is to say, to `ps`, to anyone with a
+login on the Pi. That is the bench box's owner, so it is recorded here rather than treated as
+urgent. Closing it means persisting the key through NetworkManager some other way (a keyfile
+this code writes itself, or `nmcli connection edit` fed on stdin), which rewrites the one path
+that has to work and can only honestly be tested against the real nmcli on the Pi.
+
 ## If the box seems unreachable
 
 1. Is the hotspot armed at all? `systemctl is-enabled gatbox-ap-fallback.timer`.

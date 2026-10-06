@@ -153,7 +153,18 @@ def setup():
         "specs": {"rails": [{"rail": "+5V", "lo": 4.75, "hi": 5.25, "doc": "gl-manual", "page": 2, "quote": "+5 VDC 4.75 to 5.25 V"}],
                   "sheet": [{"what": "Fuse F1", "value": "5 A slow-blow", "doc": "gl-manual", "page": 2, "quote": "FUSE F1 5A SLO-BLO"}]}}}},
               open(f"{T}/data/gatbox-manuals.json", "w"))
+    # A spool with something already in it, so the card has saved networks to show. The key
+    # is here deliberately: the test asserts it reaches no part of the page.
+    os.makedirs(f"{T}/wifi", exist_ok=True)
+    json.dump({"at": 1790000000.0, "ssids": ["HomeNetwork", "OldArcade"]},
+              open(f"{T}/wifi/saved.json", "w"))
+    json.dump({"at": 1790000000.0, "ssids": ["HomeNetwork", "CafeOpen"]},
+              open(f"{T}/wifi/scan.json", "w"))
+    json.dump({"at": 1790000000.0, "action": "join", "ssid": "HomeNetwork", "ok": True,
+               "state": "joined", "detail": "hunter2-must-not-appear"},
+              open(f"{T}/wifi/status.json", "w"))
     env = dict(os.environ, GATBOX_WEB_PORT=str(PORT), STATE_DIRECTORY=f"{T}/ctrl", CACHE_DIRECTORY=f"{T}/cache",
+               GATBOX_WIFI_SPOOL=f"{T}/wifi",
                GATBOX_LOGDIR=f"{T}/log", GATBOX_RUNDIR=f"{T}/run", GATBOX_REPORT=os.path.join(REPO, "tools/gatbox-rail-report"),
                GATBOX_DATA=f"{T}/data", MPLCONFIGDIR=f"{T}/cache/mpl", GATBOX_DUMP_SPOOL=f"{T}/spool",
                GATBOX_ROMS=f"{T}/roms", GATBOX_MINIPRO_PARTS=f"{T}/parts.txt", GATBOX_MAME_ROMS=f"{T}/mame-roms.json",
@@ -733,6 +744,29 @@ def main():
         hubcard = ("[...document.querySelectorAll('#sy-grid .card')]"
                    ".find(c => (c.querySelector('h2') || {}).textContent === 'Hub')")
         check("system: a Hub tile", q(f"!!({hubcard})"))
+        # Wi-Fi: joining a network nobody coded in, from the Pi's own screen. The card is
+        # here and not on a phone, because a join asked for over the hotspot would cut the
+        # connection making the request.
+        wifi = ("[...document.querySelectorAll('#sy-grid .card')]"
+                ".find(c => (c.querySelector('h2') || {}).textContent === 'Wi-Fi')")
+        check("system: a Wi-Fi card", q(f"!!({wifi})"))
+        check("system: it lists a saved network",
+              "HomeNetwork" in q(f"(({wifi}) || {{}}).textContent || ''"))
+        check("system: it offers a scan", q(
+            "(() => { const c = " + wifi + "; if (!c) return false;"
+            " return [...c.querySelectorAll('button')].some(b => b.textContent === 'SCAN'); })()"))
+        check("system: it offers to join what is in range", q(
+            "(() => { const c = " + wifi + "; if (!c) return false;"
+            " return [...c.querySelectorAll('button')].some(b => b.textContent === 'JOIN')"
+            "   && !!c.querySelector('input[type=password]'); })()"))
+        check("system: the key field is not remembered by the browser", q(
+            "(() => { const c = " + wifi + "; if (!c) return false;"
+            " const i = c.querySelector('input[type=password]');"
+            " return !!i && i.autocomplete === 'off'; })()"))
+        # The one thing that must never appear anywhere on this page.
+        check("system: no key anywhere on the page",
+              "hunter2" not in q("document.body.textContent")
+              and "hunter2" not in q("document.documentElement.outerHTML"))
         check("system: it says sync isn't configured, not that it failed",
               "not configured" in q(f"(({hubcard}) || {{}}).textContent || ''"))
         check("devices: NOT FITTED cards greyed", q("document.querySelectorAll('#dv-grid .notfit').length") == 3)

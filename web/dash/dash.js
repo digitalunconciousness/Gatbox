@@ -967,6 +967,77 @@
         : "nothing yet", hb.last && hb.last.rejected ? "bad" : null],
       ["sent in all", hb.sent_total != null ? String(hb.sent_total) : "-"],
     ] : [["sync", "not configured (no /etc/gatbox/hub.conf)", "mut"]]);
+    // Wi-Fi. Fetched separately rather than folded into /api/system, because /api/system is
+    // readable from the network and these are not: a join needs someone at the box, and the
+    // saved list goes with it. On anything but the Pi's own screen the card says why.
+    const wcard = tile("Wi-Fi", [["on", (d.network && d.network.wifi)
+      ? `${d.network.wifi.ssid} (${d.network.wifi.device})`
+      : ((d.network && d.network.hotspot && d.network.hotspot.active)
+         ? "the GATBOX hotspot" : "nothing"),
+      (d.network && d.network.wifi) ? "ok" : "warn"]]);
+    if (!(d.client && d.client.local)) {
+      wcard.appendChild(el("div", "mut", "Joining a network needs the Pi's own screen: asking "
+        + "for it over the hotspot would cut the connection doing the asking."));
+    } else {
+      const body = el("div");
+      wcard.appendChild(body);
+      const paint = w => {
+        clear(body);
+        const last = w.last;
+        if (last) {
+          body.appendChild(el("div", last.ok ? "ok" : "bad",
+            `${last.action} ${last.ssid || ""}: ${last.state}`));
+        }
+        const saved = w.saved || [], range = (w.in_range && w.in_range.ssids) || [];
+        if (saved.length) {
+          body.appendChild(el("h3", null, "Saved"));
+          for (const ssid of saved) {
+            const row = el("div", "btnrow");
+            row.appendChild(el("span", null, ssid));
+            const f = el("button", null, "FORGET");
+            f.addEventListener("click", async () => {
+              if (await confirmBox("FORGET " + ssid + "?",
+                    "The box will not rejoin it on its own.", "FORGET")) {
+                api("DELETE", "/api/wifi/" + encodeURIComponent(ssid)).then(load).catch(fail);
+              }
+            });
+            row.appendChild(f);
+            body.appendChild(row);
+          }
+        }
+        body.appendChild(el("h3", null, "In range"));
+        if (!range.length) body.appendChild(el("div", "mut", "nothing seen yet — SCAN looks"));
+        for (const ssid of range) {
+          const row = el("div", "btnrow");
+          row.appendChild(el("span", null, ssid));
+          const key = el("input");
+          key.type = "password";
+          key.placeholder = "key (blank if open)";
+          // No autocomplete and no storage: rule 10, and a key has no business being
+          // remembered by a browser on a box that lives in an arcade.
+          key.autocomplete = "off";
+          row.appendChild(key);
+          const j = el("button", null, "JOIN");
+          j.addEventListener("click", () => {
+            const psk = key.value;
+            key.value = "";
+            api("POST", "/api/wifi", { ssid: ssid, psk: psk }).then(load).catch(fail);
+          });
+          row.appendChild(j);
+          body.appendChild(row);
+        }
+        const row = el("div", "btnrow");
+        const scan = el("button", null, "SCAN");
+        scan.addEventListener("click", () =>
+          api("POST", "/api/wifi", { action: "scan" })
+            .then(() => setTimeout(load, 4000)).catch(fail));
+        row.appendChild(scan);
+        body.appendChild(row);
+      };
+      const load = () => api("GET", "/api/wifi").then(paint).catch(() =>
+        body.appendChild(el("div", "mut", "could not read the Wi-Fi state")));
+      load();
+    }
     const v = d.versions || {};
     tile("Software", Object.entries(v).map(([k, x]) => [k, x]));
     if (d.errors && Object.keys(d.errors).length) tile("Couldn't read", Object.entries(d.errors).map(([k, x]) => [k, x, "warn"]));

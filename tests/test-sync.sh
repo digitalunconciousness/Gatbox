@@ -70,6 +70,10 @@ class H(BaseHTTPRequestHandler):
                 return self.reply(200, report(path.rsplit("/", 1)[-1]))
             if path.startswith("/api/rail/samples/"):
                 return self.reply(200, samples(path.rsplit("/", 1)[-1]))
+            if path == "/api/orders":
+                p = os.path.join(WORK, "orders.json")
+                return self.reply(200, json.load(open(p)) if os.path.exists(p)
+                                  else {"orders": []})
             return self.reply(404, {"error": "not found"})
         # the hub
         if path == "/api/v1/health":
@@ -353,7 +357,8 @@ check "but the hub falling over exits 0"       '[ "$(cat "$T/rc")" = 0 ]'
 check "because that clears on its own"         'grep -q "ingest failed: HTTP 500" "$T/out"'
 rm -f "$T/work/hub-500"
 check "nothing was recorded as sent either way" '[ ! -f "$T/state/sent.json" ] || [ "$(python3 -c "
-import json; print(len(json.load(open(\"$T/state/sent.json\"))))")" = 0 ]'
+import json; d = json.load(open(\"$T/state/sent.json\"))
+print(len(d.get(\"files\", d)) + len(d.get(\"outbox\", {})))")" = 0 ]'
 
 echo "a bad token:"
 MALFORMED=not-of-the-right-shape
@@ -363,6 +368,71 @@ HUB_TOKEN=$MALFORMED
 CONF
 run
 check "exits 1 and says what is wrong"         '[ "$(cat "$T/rc")" = 1 ] && grep -q "not of the form" "$T/out"'
+
+echo "the order outbox (phase 6):"
+# gatbox-web owns the outbox; this fetches it over HTTP, because it cannot read that
+# process's files. An entry names a session by *file*, and only this side can turn that into
+# a uid -- the device id comes from the token, which gatbox-web cannot read.
+# The sections above leave the stubs in whatever failure mode they were testing, and the
+# last of them rewrites hub.conf with a malformed token.
+rm -f "$T/work/hub-"* "$T/state/sent.json" "$T/work/posted.json" "$T/work/seen.json" \
+      "$T/work/web.log" "$T/work/hub.log"
+cat > "$T/hub.conf" <<CONF
+HUB_URLS=http://127.0.0.1:$PORT_HUB
+HUB_TOKEN=$BEARER
+CONF
+cat > "$T/work/orders.json" <<'JSON'
+{"orders": [
+  {"uid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "kind": "order", "state": "queued",
+   "created": 1790000100.0, "machine": "widget-wars", "issue": "Rail sags under load",
+   "priority": "High", "session_file": "rail_20260920_010000.csv"},
+  {"uid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "kind": "order", "state": "queued",
+   "created": 1790000200.0, "machine": "widget-wars", "issue": "No session attached",
+   "priority": "Medium"},
+  {"uid": "cccccccccccccccccccccccccccccccc", "kind": "session_tag", "state": "queued",
+   "created": 1790000300.0, "order": 412, "session_file": "rail_20260920_010000.csv",
+   "note": "second pass, cold"}
+]}
+JSON
+run
+posted() { python3 - "$T/work/posted.json" "$@" <<'PY'
+import json, sys
+items = [i for line in open(sys.argv[1]) for i in json.loads(line).get("items") or []]
+print(eval(sys.argv[2]))
+PY
+}
+check "the outbox is fetched"                  'grep -q "GET /api/orders" "$T/work/web.log"'
+check "all three entries are posted"           '[ "$(posted "len([i for i in items if i[\"kind\"] in (\"order\", \"session_tag\")])")" = 3 ]'
+check "sessions come before orders and tags"   '[ "$(posted "[i[\"kind\"] for i in items].index(\"rail_session\") < min([i[\"kind\"] for i in items].index(\"order\"), [i[\"kind\"] for i in items].index(\"session_tag\"))")" = True ]'
+check "an order carries the contract's fields" '[ "$(posted "sorted(set(k for i in items if i[\"kind\"] == \"order\" for k in i) - {\"rail_session\"})")" = "['"'"'created'"'"', '"'"'issue'"'"', '"'"'kind'"'"', '"'"'machine'"'"', '"'"'priority'"'"', '"'"'technician'"'"', '"'"'uid'"'"']" ]'
+# The translation only this side can do.
+SUID=$(python3 -c "import hashlib; print(hashlib.sha256(b'$DEV_ID|rail_session|rail_20260920_010000.csv').hexdigest()[:32])")
+check "session_file became the session's uid"  '[ "$(posted "[i.get(\"rail_session\") for i in items if i[\"kind\"] == \"order\"]")" = "['"'"'$SUID'"'"', None]" ]'
+check "the tag names the same session"         '[ "$(posted "[i[\"rail_session\"] for i in items if i[\"kind\"] == \"session_tag\"]")" = "['"'"'$SUID'"'"']" ]'
+check "an order with nothing attached omits it, not null" '[ "$(posted "[\"rail_session\" in i for i in items if i[\"kind\"] == \"order\"]")" = "[True, False]" ]'
+check "the tag keeps its order id and note"    '[ "$(posted "[(i[\"order\"], i[\"note\"]) for i in items if i[\"kind\"] == \"session_tag\"]")" = "[(412, '"'"'second pass, cold'"'"')]" ]'
+
+echo "the ledger has two namespaces:"
+# main() prunes the ledger against the session files still on the Pi. Outbox uids are not
+# file names, so a single flat ledger would drop every one of them on the next run and
+# re-send for ever -- harmless to the hub, which dedupes, but nothing could ever be shown
+# as sent.
+check "outbox uids are recorded"               '[ "$(python3 -c "import json;print(sorted(json.load(open(\"$T/state/sent.json\"))[\"outbox\"]))")" = "['"'"'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'"'"', '"'"'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'"'"', '"'"'cccccccccccccccccccccccccccccccc'"'"']" ]'
+check "session files are recorded apart"       '[ "$(python3 -c "import json;print(len(json.load(open(\"$T/state/sent.json\"))[\"files\"]) > 0)")" = True ]'
+rm -f "$T/work/posted.json"
+run
+# Sessions the cap left behind are legitimately still going, so this is about the outbox
+# only: an acknowledged entry must not be sent a second time.
+check "an acknowledged entry is not re-sent"   '[ ! -s "$T/work/posted.json" ] || [ "$(posted "len([i for i in items if i[\"kind\"] in (\"order\", \"session_tag\")])")" = 0 ]'
+check "and the outbox entries survived the prune" '[ "$(python3 -c "import json;print(len(json.load(open(\"$T/state/sent.json\"))[\"outbox\"]))")" = 3 ]'
+
+echo "an old flat ledger is migrated, not thrown away:"
+# Re-sending ten thousand readings because the file's shape changed would be a poor trade.
+rm -f "$T/work/posted.json"
+python3 -c "import json;json.dump({'rail_20260920_010000.csv': 1790000000.0}, open('$T/state/sent.json','w'))"
+rm -f "$T/work/orders.json"
+run
+check "a file in the old flat ledger is not re-sent" '[ ! -s "$T/work/posted.json" ] || [ "$(posted "len([i for i in items if i.get(\"file\") == \"rail_20260920_010000.csv\"])")" = 0 ]'
 
 echo "sync: $pass passed, $fail failed"
 [ "$fail" = 0 ]

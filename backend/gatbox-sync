@@ -336,6 +336,54 @@ def build_item(dev, file_name, report, samples):
 # the run
 # ---------------------------------------------------------------------------
 
+def ledger(raw):
+    """The sent ledger in its two-namespace form, migrating the old flat one.
+
+    It used to be {file: when}. Phase 6 added outbox entries, whose ids are not file names.
+    Reading an old file as "all of it is session files" costs nothing; treating it as empty
+    would re-send every reading on the Pi to be told "duplicate", which for ten sessions is
+    ten thousand rows.
+    """
+    if not isinstance(raw, dict):
+        return {"files": {}, "outbox": {}}
+    if "files" in raw or "outbox" in raw:
+        return {"files": dict(raw.get("files") or {}),
+                "outbox": dict(raw.get("outbox") or {})}
+    return {"files": dict(raw), "outbox": {}}
+
+
+def outbox_items(dev, web_entries, sent):
+    """gatbox-web's outbox, as contract items. Never the entries already acknowledged.
+
+    This is the one place that can turn an entry's `session_file` into a session uid: the
+    rule is sha256(f"{device}|rail_session|{file}") and gatbox-web cannot read the device id,
+    which comes from the token this process holds through LoadCredential.
+    """
+    items = []
+    for e in web_entries:
+        uid = e.get("uid")
+        kind = e.get("kind")
+        if not uid or uid in sent["outbox"]:
+            continue
+        if kind == "order":
+            item = {"kind": "order", "uid": uid, "machine": e.get("machine"),
+                    "issue": e.get("issue"), "priority": e.get("priority") or "Medium",
+                    "created": e.get("created"), "technician": "bench"}
+            if e.get("session_file"):
+                item["rail_session"] = uid_session(dev, e["session_file"])
+            # Omitted rather than sent as null when nothing is attached: the hub treats a
+            # present rail_session as a link it must resolve, and null is not a link.
+            items.append(item)
+        elif kind == "session_tag":
+            item = {"kind": "session_tag", "uid": uid, "order": e.get("order"),
+                    "rail_session": uid_session(dev, e.get("session_file") or ""),
+                    "created": e.get("created")}
+            if e.get("note"):
+                item["note"] = e["note"]
+            items.append(item)
+    return items
+
+
 def eligible(sessions, sent):
     """Finished sessions the hub has not acknowledged, oldest first.
 
@@ -372,20 +420,33 @@ def main():
         return 0           # it is Restart=always; the next timer will find it
     sessions = listing.get("sessions") or []
 
-    sent = {} if IGNORE_LEDGER else load("sent.json", {})
-    # Prune the ledger against what still exists, so it cannot grow for ever as old CSVs go.
+    sent = ledger({} if IGNORE_LEDGER else load("sent.json", {}))
+    # Prune the session half against what still exists, so it cannot grow for ever as old
+    # CSVs go. **Only that half.** Outbox uids are not file names, and a single flat ledger
+    # dropped every one of them here -- re-sending for ever, harmless to the hub because it
+    # dedupes, but nothing could ever be reported as sent.
     present = {s.get("file") for s in sessions}
-    sent = {k: v for k, v in sent.items() if k in present}
+    sent["files"] = {k: v for k, v in sent["files"].items() if k in present}
 
-    queue = eligible(sessions, sent)
+    queue = eligible(sessions, sent["files"])
     log(f"  {len(sessions)} sessions on the Pi, {len(queue)} to send")
 
-    if not queue:
+    try:
+        outbox = (get_json(f"{WEB}/api/orders", WEB_TIMEOUT).get("orders") or [])
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        # Not fatal: sessions are the main job and an order waits for the next run.
+        log(f"  outbox unreadable ({exc}); sessions only this run")
+        outbox = []
+    pending = outbox_items(dev, outbox, sent)
+    if pending:
+        log(f"  {len(pending)} order item(s) queued")
+
+    if not queue and not pending:
         # Still refresh the caches: the roster and open orders are what the dashboard and the
         # 7" read, and they go stale whether or not there is anything to push.
         hub = pick_hub(urls, token)
         status = {"at": time.time(), "ok": bool(hub), "hub": hub, "queued": 0,
-                  "sent_total": len(sent)}
+                  "sent_total": len(sent["files"]) + len(sent["outbox"])}
         if hub:
             refresh_caches(hub, token, sessions, status)
         save("status.json", status)
@@ -421,6 +482,11 @@ def main():
             continue
         batch.append(build_item(dev, name, report, samples))
 
+    # After the sessions, always. An order naming a session the hub has not ingested is
+    # rejected, so putting both in one request is what lets a session and the order attached
+    # to it land together instead of the order waiting a run.
+    batch.extend(pending)
+
     if not batch:
         log("  nothing could be built from the queue; see the lines above")
         save("status.json", {"at": time.time(), "ok": False, "hub": hub,
@@ -428,7 +494,7 @@ def main():
         save("sent.json", sent)
         return 0           # visible in the journal and the panel; failing every 2 min is not
 
-    total_readings = sum(len(i["readings"]) for i in batch)
+    total_readings = sum(len(i.get("readings") or []) for i in batch)
     log(f"  posting {len(batch)} session(s), {total_readings} readings")
     if DRYRUN:
         log("  dry run: posting nothing")
@@ -453,15 +519,18 @@ def main():
 
     now = time.time()
     created = duplicate = rejected = 0
+    by_uid = {i["uid"]: i for i in batch}
     for result in body.get("results") or []:
-        by_uid = {i["uid"]: i["file"] for i in batch}
-        name = by_uid.get(result.get("uid"))
+        item = by_uid.get(result.get("uid")) or {}
+        name = item.get("file")
         state = result.get("status")
         if state in ("created", "duplicate"):
             # Both mean the hub has it. Only then does the ledger record it -- a rejected
             # item must stay queued so a fixed roster lets the retry through.
             if name:
-                sent[name] = now
+                sent["files"][name] = now
+            elif item.get("uid"):
+                sent["outbox"][item["uid"]] = now
             created += state == "created"
             duplicate += state == "duplicate"
         else:
@@ -473,7 +542,7 @@ def main():
               "queued": max(len(queue) - created - duplicate, 0),
               # The panel reads status.json alone, so the running total goes in here rather
               # than making it open the ledger as well.
-              "sent_total": len(sent),
+              "sent_total": len(sent["files"]) + len(sent["outbox"]),
               "last_created": created, "last_duplicate": duplicate,
               "last_rejected": rejected, "skipped": skipped}
     refresh_caches(hub, token, sessions, status)

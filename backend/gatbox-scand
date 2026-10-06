@@ -166,7 +166,9 @@ class Scand:
         r = post(code)
         action = r.get("action") or "error"
         self.last = {"code": code[:80], "action": action, "at": round(time.time(), 3)}
-        log(f"scan {code[:80]!r}: {action}" + (f" ({r.get('detail') or r.get('error')})" if r.get("detail") or r.get("error") else ""))
+        # A WIFI: code is a password. It is the one code that never reaches the journal.
+        shown = "WIFI:<redacted>" if code[:5].upper() == "WIFI:" else repr(code[:80])
+        log(f"scan {shown}: {action}" + (f" ({r.get('detail') or r.get('error')})" if r.get("detail") or r.get("error") else ""))
         self.state(True)
 
     def attach(self):

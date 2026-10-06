@@ -51,6 +51,8 @@ check "--check reports the timer only when armed" \
 for f in gatbox-wifi gatbox-wifi.service gatbox-wifi.path; do
     check "MANIFEST installs $f"                 'grep -qE "^backend/$f +/" "$BOOT"'
 done
+# Without this the module never reaches the Pi and gatbox-web fails to import at startup.
+check "MANIFEST installs gatboxweb/wifi.py"      'grep -qE "^backend/gatboxweb/wifi\.py +/usr/local/lib/gatbox/gatboxweb/wifi\.py" "$BOOT"'
 check "the helper installs to sbin, 755"         'grep -qE "^backend/gatbox-wifi +/usr/local/sbin/gatbox-wifi +755" "$BOOT"'
 check "bootstrap enables the .path"              'grep -q "svc gatbox-wifi.path" "$BOOT"'
 check "sysusers creates the gatbox-wifi group"   'grep -q "^g gatbox-wifi" "$REPO/bootstrap/files/sysusers-gatbox.conf"'

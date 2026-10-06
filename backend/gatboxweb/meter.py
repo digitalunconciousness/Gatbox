@@ -22,7 +22,7 @@ import time
 
 from gatboxlib import profiles
 
-from . import config, roster
+from . import config, roster, wifi
 from .live import LIVE, uptime
 
 LABEL_MAX = 40
@@ -269,6 +269,15 @@ def scan(code):
     if not code or len(code) > SCAN_MAX or not code.isprintable():
         raise Bad(400, f"code: 1 to {SCAN_MAX} printable characters")
     up = code.upper()
+    # A Wi-Fi QR. The code *is* the key, so neither it nor any part of it goes into the
+    # result: this reaches the DEVICES panel's recent-scans list.
+    if up.startswith(wifi.PREFIX):
+        parsed = wifi.parse(code)
+        if parsed is None:
+            return {"action": "unknown", "code": wifi.REDACTED,
+                    "detail": "not a usable Wi-Fi code"}
+        wifi.request("join", parsed["ssid"], parsed["psk"])
+        return {"action": "wifi", "code": wifi.REDACTED, "ssid": parsed["ssid"]}
     if up == SCAN_MARK:
         return {"action": "mark", "code": code, "mark": add_mark({"source": "scan"})}
     if up == SCAN_NEW:

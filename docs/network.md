@@ -15,8 +15,15 @@ boot.
   not repeated here because the site pattern list flags that subnet).
 - **On the hotspot, and a saved network comes back into range** — it drops the hotspot so
   NetworkManager rejoins the network.
+- **…and that rejoin keeps failing** — it waits before trying again: ten minutes, then half
+  an hour, then an hour. A password that changed at the router is the ordinary cause, and
+  without the wait the box drops its hotspot every two minutes for ever, cutting anyone
+  connected to GATBOX each time. The count is per network and lives in
+  `/var/lib/gatbox-ap-fallback/attempts`; getting onto any network clears it, so fixing the
+  password does not need a reboot. `journalctl -u gatbox-ap-fallback` says how long it is
+  holding for and why.
 
-That last one is why there is a timer at all. This used to run once at boot and the
+That last pair is why there is a timer at all. This used to run once at boot and the
 instruction was "reboot near known Wi-Fi to go back", which is not something you can do to a
 Pi sitting in a cabinet across town.
 
@@ -39,6 +46,14 @@ and never echoed back: the journal and the recent-scans list both say `WIFI:<red
 SYSTEM → the **Wi-Fi** card. SCAN looks for what is in range, then type the key and JOIN.
 FORGET removes a saved network.
 
+While the helper is working the card says so, and it says which request it is answering, so
+an outcome from a minute ago is never shown as the result of the button you just pressed.
+There is one request slot: press JOIN while one is in flight and the second is refused out
+loud rather than replacing the first.
+
+If the card says a request was **left unanswered**, nothing took it — the job runs because
+`gatbox-wifi.path` saw the file appear, so check `systemctl is-enabled gatbox-wifi.path`.
+
 **Only on the Pi's own screen.** Not because the dashboard is precious about it, but because
 asking for a join over the hotspot would cut the connection making the request, and you would
 never learn whether it worked.
@@ -60,7 +75,9 @@ detail. A key never appears in either.
 ## If the box seems unreachable
 
 1. Is the hotspot armed at all? `systemctl is-enabled gatbox-ap-fallback.timer`.
-2. `journalctl -u gatbox-ap-fallback -n 20` says what it decided and why.
+2. `journalctl -u gatbox-ap-fallback -n 20` says what it decided and why — including
+   whether it is deliberately holding the hotspot up because a saved network keeps refusing
+   it. To clear that immediately: `sudo rm /var/lib/gatbox-ap-fallback/attempts`.
 3. Plug in a keyboard and a monitor and use the desktop. Nothing here is a trap you cannot
    get out of at the box itself.
 

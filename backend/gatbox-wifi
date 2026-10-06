@@ -37,6 +37,15 @@ CONNECT_TIMEOUT = int(os.environ.get("GATBOX_WIFI_CONNECT_TIMEOUT", "45"))
 AP_FALLBACK = os.environ.get("GATBOX_AP_FALLBACK", "/usr/local/sbin/gatbox-ap-fallback")
 AP_PROFILE = os.environ.get("GATBOX_AP_PROFILE", "gatbox-ap")
 
+# The id of the request being acted on, copied into the outcome so the dashboard can tell the
+# answer to the button just pressed from the outcome of an earlier one. The spool is a single
+# slot: without this, a card polling every few seconds shows the *previous* join's "failed"
+# under a JOIN that is still running, and someone retypes a key that was right.
+REQUEST_ID = ""
+# Ours is 16 hex characters. The spool is writable by the gatbox-wifi group, so what comes
+# back out of it is clamped rather than trusted.
+ID_MAX = 48
+
 
 def log(msg):
     print(msg, flush=True)
@@ -46,6 +55,8 @@ def write_status(**fields):
     """The outcome, for the dashboard. Never carries a key: the caller passes no psk here,
     and this is the only writer of the file."""
     fields.setdefault("at", time.time())
+    if REQUEST_ID:
+        fields.setdefault("id", REQUEST_ID)
     tmp = STATUS + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(fields, fh, indent=1, sort_keys=True)
@@ -241,6 +252,7 @@ def take_request():
 
 
 def main():
+    global REQUEST_ID
     req = take_request()
     if req is None:
         log("gatbox-wifi: no request to act on")
@@ -250,6 +262,8 @@ def main():
         return 1
     action = req.get("action")
     ssid = req.get("ssid") or ""
+    rid = req.get("id")
+    REQUEST_ID = rid[:ID_MAX] if isinstance(rid, str) else ""
     if action == "join":
         if not ssid:
             log("gatbox-wifi: a join needs an ssid")

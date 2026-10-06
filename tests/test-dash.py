@@ -35,6 +35,18 @@ passed = failed = 0
 procs = {}
 
 
+def settles(c, js, timeout=20):
+    """True once *js* is, or False after *timeout*. Chrome.wait raises; a check wants a
+    boolean -- and these assertions wait on the SYSTEM view's own repaint rather than on a
+    sleep that has to guess its period."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if c.eval(f"!!({js})"):
+            return True
+        time.sleep(0.25)
+    return False
+
+
 def check(name, ok):
     global passed, failed
     if ok:
@@ -788,9 +800,39 @@ def main():
               q("!document.querySelector('#sheet').classList.contains('hide')" + " && !!document.querySelector('#pane .keys')"))
         q("(() => { const b = [...document.querySelectorAll('#pane .keys button')]"
           "   .find(b => b.textContent === 'CANCEL'); if (b) b.click(); return true; })()")
+        # A request waiting in the spool must read as "working", not as the previous join's
+        # outcome. The spool is one slot and status.json is one outcome, so before the
+        # request carried an id the card showed the earlier result under the button just
+        # pressed -- "failed" under a JOIN that was still running.
+        # Parenthesised as a whole: `a || b` binds looser than `.`, so without the outer
+        # brackets `wtext + ".includes(x)"` reads as `a || (b.includes(x))` and is true for
+        # any non-empty card -- a check that asserts nothing.
+        wtext = f"((({wifi}) || {{}}).textContent || '')"
+        json.dump({"id": "pending-1", "action": "join", "ssid": "CafeOpen",
+                   "psk": "hunter3-must-not-appear"}, open(f"{T}/wifi/request.json", "w"))
+        check("system: a waiting request reads as working",
+              settles(c, f"{wtext}.includes('working')"))
+        check("system: and not as the earlier outcome", "joined" not in q(wtext))
+        check("system: a waiting key reaches no part of the page",
+              "hunter3" not in q("document.body.textContent")
+              and "hunter3" not in q("document.documentElement.outerHTML"))
+        # Abandoned: nothing took it. The card has to say so, because the cause is an install
+        # problem (gatbox-wifi.path not enabled) that nothing else on this page would show --
+        # and it has to keep saying so. The GET that finds a stale request is also the one
+        # that sweeps it, so a card that only read the response would flash the warning once
+        # and lose it on the next repaint, five seconds later.
+        os.utime(f"{T}/wifi/request.json", (0, time.time() - 600))
+        check("system: an abandoned request is called out",
+              settles(c, f"{wtext}.includes('unanswered')"))
+        check("system: and the stale request is swept off the spool",
+              not os.path.exists(f"{T}/wifi/request.json"))
+        time.sleep(6)                                  # at least one more repaint
+        check("system: the warning survives the repaint that follows",
+              "unanswered" in q(wtext))
         check("system: no key anywhere on the page",
-              "hunter2" not in q("document.body.textContent")
-              and "hunter2" not in q("document.documentElement.outerHTML"))
+              not any(k in q("document.body.textContent") for k in ("hunter2", "hunter3"))
+              and not any(k in q("document.documentElement.outerHTML")
+                          for k in ("hunter2", "hunter3")))
         check("system: it says sync isn't configured, not that it failed",
               "not configured" in q(f"(({hubcard}) || {{}}).textContent || ''"))
         check("devices: NOT FITTED cards greyed", q("document.querySelectorAll('#dv-grid .notfit').length") == 3)

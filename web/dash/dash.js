@@ -495,6 +495,13 @@
 
   // --- SESSIONS -----------------------------------------------------------------------------
   let histChart = null;
+  // The Wi-Fi spool is a single slot and status.json is a single outcome, so the card has to
+  // remember two things across the SYSTEM view's 5 s repaint: which request it asked for, and
+  // that a request was once abandoned. Without the first it shows the previous join's
+  // "failed" under a JOIN that is still running, and someone retypes a key that was right.
+  // Without the second the warning flashes for one paint -- the GET that finds a stale
+  // request is the same one that sweeps it -- and is gone before anyone reads it.
+  let wifiReq = null, wifiStuck = null;
   async function loadSessions() {
     let d;
     try { d = await api("GET", "/api/rail/sessions?limit=200"); } catch (e) { return fail(e); }
@@ -986,10 +993,27 @@
       wcard.appendChild(body);
       const paint = w => {
         clear(body);
+        const p = w.pending;
+        if (p && p.stale) wifiStuck = p;
+        const working = p && !p.stale;
+        if (working) {
+          body.appendChild(el("div", "warn",
+            `${p.action}${p.ssid ? " " + p.ssid : ""}: working\u2026`));
+        } else if (wifiStuck) {
+          body.appendChild(el("div", "bad", `${wifiStuck.action}`
+            + `${wifiStuck.ssid ? " " + wifiStuck.ssid : ""}: left unanswered \u2014 `
+            + "nothing took it. Is gatbox-wifi.path enabled?"));
+        }
+        // Only once nothing is in flight: an outcome shown beside "working" is the previous
+        // one, and the two together read as a result.
         const last = w.last;
-        if (last) {
-          body.appendChild(el("div", last.ok ? "ok" : "bad",
-            `${last.action} ${last.ssid || ""}: ${last.state}`));
+        if (last && !working) {
+          // mine: this card asked for it. An outcome with no id predates request ids; an
+          // outcome this page did not ask for is history, not an answer, so it is dimmed
+          // rather than presented as the result of the last button pressed.
+          const answered = !wifiReq || !last.id || last.id === wifiReq;
+          body.appendChild(el("div", answered ? (last.ok ? "ok" : "bad") : "mut",
+            `${answered ? "" : "earlier: "}${last.action} ${last.ssid || ""}: ${last.state}`));
         }
         const saved = w.saved || [], range = (w.in_range && w.in_range.ssids) || [];
         if (saved.length) {
@@ -1001,7 +1025,7 @@
             f.addEventListener("click", async () => {
               if (await confirmBox("FORGET " + ssid + "?",
                     "The box will not rejoin it on its own.", "FORGET")) {
-                api("DELETE", "/api/wifi/" + encodeURIComponent(ssid)).then(load).catch(fail);
+                api("DELETE", "/api/wifi/" + encodeURIComponent(ssid)).then(asked).catch(fail);
               }
             });
             row.appendChild(f);
@@ -1021,7 +1045,7 @@
             const psk = await keypad({ title: "KEY FOR " + ssid, max: 63,
                                        symbols: true, keep: true });
             if (psk === null) return;        // CANCEL; "" is a legitimate open network
-            api("POST", "/api/wifi", { ssid: ssid, psk: psk }).then(load).catch(fail);
+            api("POST", "/api/wifi", { ssid: ssid, psk: psk }).then(asked).catch(fail);
           });
           row.appendChild(j);
           body.appendChild(row);
@@ -1030,12 +1054,15 @@
         const scan = el("button", null, "SCAN");
         scan.addEventListener("click", () =>
           api("POST", "/api/wifi", { action: "scan" })
-            .then(() => setTimeout(load, 4000)).catch(fail));
+            .then(r => { asked(r); setTimeout(load, 4000); }).catch(fail));
         row.appendChild(scan);
         body.appendChild(row);
       };
       const load = () => api("GET", "/api/wifi").then(paint).catch(() =>
         body.appendChild(el("div", "mut", "could not read the Wi-Fi state")));
+      // One request accepted: its id is what the next outcome is matched against, and it
+      // supersedes any earlier complaint that a request went unanswered.
+      const asked = r => { wifiReq = (r && r.id) || null; wifiStuck = null; return load(); };
       load();
     }
     const v = d.versions || {};

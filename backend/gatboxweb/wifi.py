@@ -14,8 +14,14 @@ import os
 import time
 
 SPOOL = os.environ.get("GATBOX_WIFI_SPOOL", "/var/spool/gatbox-wifi")
+REQUEST = "request.json"
 SSID_MAX = 32          # 802.11: an SSID is at most 32 bytes
 PREFIX = "WIFI:"
+
+# How long a request may sit unread before it is treated as abandoned rather than waiting.
+# Generously longer than a join takes: gatbox-wifi.path fires the moment the file appears, so
+# anything still here after this means nothing is going to take it.
+REQUEST_TTL = 120
 
 # What a scan result says instead of the code, because the code is the key.
 REDACTED = "WIFI:<redacted>"
@@ -83,15 +89,68 @@ def parse(code):
     return {"ssid": ssid, "psk": psk}
 
 
+class Busy(Exception):
+    """A request is already waiting for gatbox-wifi to take it."""
+
+
+# What may be read back out of a waiting request. A fixed list, like OUTCOME_FIELDS below,
+# and for the same reason: `psk` is in that file and must not leave this function.
+PENDING_FIELDS = ("id", "action", "ssid", "at")
+
+
+def pending():
+    """The request waiting for gatbox-wifi, if any -- never its key. Also what clears an
+    abandoned one.
+
+    The request file holds a plaintext key until the helper takes it, and the helper only
+    runs because gatbox-wifi.path saw the file appear. On a box where that unit is not
+    enabled nothing would ever take it, so the key would sit there until someone happened to
+    ask for another join. This is polled from the Pi's own screen -- exactly where a stuck
+    request is noticed -- so a request older than REQUEST_TTL is swept here, and the sweep
+    says so once rather than silently.
+    """
+    path = os.path.join(SPOOL, REQUEST)
+    try:
+        age = time.time() - os.stat(path).st_mtime
+    except OSError:
+        return None
+    d = read_json(REQUEST, {})
+    if not isinstance(d, dict):
+        d = {}
+    out = {k: d.get(k) for k in PENDING_FIELDS if k in d}
+    # mtime, not the body's `at`: the body is what a writer claimed, and a request that
+    # cannot be parsed has no `at` at all but still holds a key.
+    out["stale"] = age > REQUEST_TTL
+    if out["stale"]:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    return out
+
+
 def request(action, ssid="", psk=""):
-    """Leave a request for gatbox-wifi. 0600: it may hold a key until the helper takes it."""
+    """Leave a request for gatbox-wifi and return its id. 0600: it may hold a key until the
+    helper takes it.
+
+    One slot, so a second request while one is waiting used to overwrite the first -- lost
+    with nothing said, while the card showed an outcome that answered neither. Raises Busy
+    instead. An abandoned request is not a waiting one, and pending() has already swept it.
+    """
     os.makedirs(SPOOL, exist_ok=True)
-    body = {"action": action, "at": time.time()}
+    waiting = pending()
+    if waiting and not waiting["stale"]:
+        raise Busy(f"a {waiting.get('action') or 'wi-fi'} request is already waiting; "
+                   "give it a moment")
+    # Identifies the outcome this request produces, so the dashboard can tell the answer to
+    # the button just pressed from the one before it.
+    rid = os.urandom(8).hex()
+    body = {"id": rid, "action": action, "at": time.time()}
     if ssid:
         body["ssid"] = ssid
     if action == "join":
         body["psk"] = psk
-    path = os.path.join(SPOOL, "request.json")
+    path = os.path.join(SPOOL, REQUEST)
     tmp = path + ".tmp"
     # Opened 0600 from the start, not chmod-ed after: between creation and chmod the key
     # would be readable by the group.
@@ -99,7 +158,7 @@ def request(action, ssid="", psk=""):
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         json.dump(body, fh)
     os.replace(tmp, path)
-    return True
+    return rid
 
 
 def read_json(name, default=None):
@@ -131,7 +190,7 @@ def in_range():
 # in the journal, which is where docs/network.md sends you to diagnose a join, and out of
 # every HTTP response. gatbox-wifi already scrubs before writing; this is the second wall,
 # and it does not depend on every future writer of that file remembering to.
-OUTCOME_FIELDS = ("at", "action", "ssid", "ok", "state")
+OUTCOME_FIELDS = ("id", "at", "action", "ssid", "ok", "state")
 
 
 def last_outcome():

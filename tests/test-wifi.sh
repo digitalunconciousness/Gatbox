@@ -13,6 +13,8 @@ pass=0; fail=0
 check() { if eval "$2"; then pass=$((pass + 1)); echo "  ok    $1"; else fail=$((fail + 1)); echo "  FAIL  $1"; fi; }
 
 KEY='hunter2-not-a-real-key'
+# The id req_py puts in every request. It has to come back out again in the outcome.
+REQ_ID='req-0001'
 SPOOL="$T/spool"; mkdir -p "$SPOOL"
 
 # A stub nmcli that records its arguments one per line (so an SSID containing a space stays
@@ -41,7 +43,7 @@ req() { : > "$NMCLI_LOG"; printf '%s' "$1" > "$SPOOL/request.json"; chmod 600 "$
 req_py() { : > "$NMCLI_LOG"; python3 -c '
 import json, sys
 action, ssid, psk, path = sys.argv[1:5]
-d = {"action": action, "at": 1790000000.0}
+d = {"action": action, "at": 1790000000.0, "id": "req-0001"}
 if ssid:
     d["ssid"] = ssid
 if psk != "<none>":
@@ -236,6 +238,30 @@ check "missing: exits without a traceback"      '! grep -q Traceback "$T/out"'
 req_py reboot-everything ""; run
 check "an unknown action is refused"            '[ "$(cat "$T/rc")" != 0 ] && grep -qi "unknown action" "$T/out"'
 check "and its request is removed"              '[ ! -e "$SPOOL/request.json" ]'
+
+echo "the outcome says which request it answers:"
+# The spool is one slot and the outcome had no id, so the card could show the previous join's
+# result as though it answered the button just pressed -- "failed" under a JOIN that was in
+# fact still running. The id travels request -> status.json -> GET /api/wifi.
+req_py scan ""; run
+check "a scan outcome carries the request id"   '[ "$(status id)" = "$REQ_ID" ]'
+req_py join BenchNet "$KEY"; run
+check "a join outcome carries it too"           '[ "$(status id)" = "$REQ_ID" ]'
+check "and the key still is not in there"       '! grep -qF -- "$KEY" "$SPOOL/status.json"'
+req_py join BenchNet wrong-key; NMCLI_RC=1 run
+check "a failed join carries it as well"        '[ "$(status id)" = "$REQ_ID" ]'
+req_py forget OldArcade; run
+check "so does a forget"                        '[ "$(status id)" = "$REQ_ID" ]'
+# The id is ours, but the file is writable by the gatbox-wifi group, so it is not trusted to
+# be short or to be a string.
+req '{"action":"forget","ssid":"OldArcade","id":"'"$(printf 'x%.0s' {1..500})"'"}'; run
+check "an absurd id is clamped, not echoed"     '[ "$(status id | wc -c)" -lt 64 ]'
+req '{"action":"forget","ssid":"OldArcade","id":{"not":"a string"}}'; run
+check "an id that is not a string does not crash" '! grep -q Traceback "$T/out"'
+# A request written by hand has no id at all. That is not a failure.
+req '{"action":"forget","ssid":"OldArcade"}'; run
+check "no id in, no id out"                     '[ "$(status id)" = "<missing>" ]'
+check "and the forget still happened"           '[ "$(status action)" = forget ]'
 
 echo "wifi: $pass passed, $fail failed"
 [ "$fail" = 0 ]

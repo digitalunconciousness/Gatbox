@@ -159,6 +159,34 @@ rm -f "$WSPOOL/request.json"
 check "a refresh asks the helper to scan"     '[ "$(api POST /api/wifi "{\"action\":\"scan\"}")" = 202 ] && [ "$(js2 "$WSPOOL/request.json" "d[\"action\"]")" = scan ]'
 rm -f "$WSPOOL/request.json"
 
+echo "one slot, so a request is identified and not quietly overwritten:"
+# The spool holds one request. A second one used to overwrite the first, which was then lost
+# with nothing said -- and the card, polling the single status file, could show the previous
+# join's outcome as the answer to the button just pressed.
+check "POST answers 202 with an id"           '[ "$(api POST /api/wifi "{\"ssid\":\"BenchNet\",\"psk\":\"hunter2-not-real\"}")" = 202 ]'
+RID=$(js 'd["id"]')
+check "the id is not empty"                   '[ -n "$RID" ]'
+check "the request on disk carries that id"   '[ "$(js2 "$WSPOOL/request.json" "d[\"id\"]")" = "$RID" ]'
+check "a second request is refused"           '[ "$(api POST /api/wifi "{\"ssid\":\"Other\",\"psk\":\"x\"}")" = 409 ]'
+check "and the first is still waiting"        '[ "$(js2 "$WSPOOL/request.json" "d[\"ssid\"]")" = BenchNet ]'
+check "GET says a join is waiting"            '[ "$(api GET /api/wifi)" = 200 ] && [ "$(js "d[\"pending\"][\"action\"]")" = join ]'
+check "waiting, not stale"                    '[ "$(js "d[\"pending\"][\"stale\"]")" = False ]'
+check "and pending never carries the key"     '! curl -fsS "$B/api/wifi" | grep -qF "hunter2-not-real"'
+# An abandoned request is a plaintext key sitting on disk: gatbox-wifi only runs because
+# gatbox-wifi.path saw the file appear, so where that unit is not enabled nothing would ever
+# take it. This endpoint is polled from the Pi's own screen, which is where a stuck request
+# gets noticed, so it is what sweeps one.
+python3 -c "import os, sys, time; os.utime(sys.argv[1], (0, time.time() - 600))" "$WSPOOL/request.json"
+check "an abandoned request reads as stale"   '[ "$(api GET /api/wifi)" = 200 ] && [ "$(js "d[\"pending\"][\"stale\"]")" = True ]'
+check "and is swept off disk with its key"    '[ ! -e "$WSPOOL/request.json" ]'
+check "so the next request is accepted"       '[ "$(api POST /api/wifi "{\"ssid\":\"BenchNet\",\"psk\":\"hunter2-not-real\"}")" = 202 ]'
+rm -f "$WSPOOL/request.json"
+check "nothing waiting reads as nothing"      '[ "$(api GET /api/wifi)" = 200 ] && [ "$(js "d[\"pending\"]")" = None ]'
+check "DELETE answers with an id too"         '[ "$(api DELETE /api/wifi/OldArcade)" = 202 ] && [ -n "$(js "d[\"id\"]")" ]'
+rm -f "$WSPOOL/request.json"
+check "a scan answers with one as well"       '[ "$(api POST /api/wifi "{\"action\":\"scan\"}")" = 202 ] && [ -n "$(js "d[\"id\"]")" ]'
+rm -f "$WSPOOL/request.json"
+
 echo "sessions + report:"
 api GET /api/rail/sessions >/dev/null
 check "sessions: newest first, both new files" '[ "$(js "len(d[\"sessions\"]) >= 3 and d[\"sessions\"][0][\"file\"] > d[\"sessions\"][-1][\"file\"]")" = True ]'

@@ -257,6 +257,15 @@ def api_mark(h, m, q):
 _scans, _scans_lock = [], threading.Lock()      # the last few scans, for the DEVICES panel
 
 
+def _ask(fn, *args):
+    """Leave a Wi-Fi request, or 409 if one is already waiting. The spool is a single slot,
+    and overwriting it loses the first request with nothing said."""
+    try:
+        return fn(*args)
+    except wifi.Busy as e:
+        raise Bad(409, str(e))
+
+
 def api_wifi_get(h, m, q):
     """GET /api/wifi: saved SSIDs, what is in range, and the last outcome.
 
@@ -265,7 +274,9 @@ def api_wifi_get(h, m, q):
     """
     if not h.is_local():
         raise Bad(403, "the Pi's own screen only: changing the network needs someone at the box")
-    h.json(200, {"saved": wifi.saved(), "in_range": wifi.in_range(), "last": wifi.last_outcome()})
+    # `pending` is also what sweeps an abandoned request off the spool -- see wifi.pending().
+    h.json(200, {"saved": wifi.saved(), "in_range": wifi.in_range(),
+                 "last": wifi.last_outcome(), "pending": wifi.pending()})
 
 
 def api_wifi_post(h, m, q):
@@ -281,8 +292,7 @@ def api_wifi_post(h, m, q):
     if not isinstance(b, dict):
         raise Bad(400, 'expected {"ssid": "<ssid>", "psk": "<key>"} or {"action": "scan"}')
     if b.get("action") == "scan":
-        wifi.request("scan")
-        h.json(202, {"ok": True, "action": "scan"})
+        h.json(202, {"ok": True, "action": "scan", "id": _ask(wifi.request, "scan")})
         return
     ssid = b.get("ssid")
     if not isinstance(ssid, str) or not ssid.strip():
@@ -293,9 +303,10 @@ def api_wifi_post(h, m, q):
     psk = b.get("psk")
     if psk is not None and not isinstance(psk, str):
         raise Bad(400, "psk: text, or leave it out for an open network")
-    wifi.request("join", ssid, psk or "")
-    # The ssid is echoed; the key never is.
-    h.json(202, {"ok": True, "action": "join", "ssid": ssid})
+    rid = _ask(wifi.request, "join", ssid, psk or "")
+    # The ssid is echoed; the key never is. The id is, so the card can tell this join's
+    # outcome from the one before it.
+    h.json(202, {"ok": True, "action": "join", "ssid": ssid, "id": rid})
 
 
 def api_wifi_delete(h, m, q):
@@ -305,8 +316,8 @@ def api_wifi_delete(h, m, q):
     ssid = urllib.parse.unquote(m["ssid"])
     if not ssid.strip():
         raise Bad(400, "ssid: required")
-    wifi.request("forget", ssid.strip())
-    h.json(202, {"ok": True, "action": "forget", "ssid": ssid.strip()})
+    rid = _ask(wifi.request, "forget", ssid.strip())
+    h.json(202, {"ok": True, "action": "forget", "ssid": ssid.strip(), "id": rid})
 
 
 def api_scan(h, m, q):

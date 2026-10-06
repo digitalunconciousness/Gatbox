@@ -50,6 +50,8 @@ Config, /etc/gatbox/hub.conf (mode 600, root), reached through LoadCredential= s
 itself never becomes readable by this job's user:
 
     HUB_URLS=https://tracker.example   one or more, space-separated, tried in order
+                                       (no LAN entry by default: the hub binds to loopback
+                                        in its own container and is reached by its tunnel)
     HUB_TOKEN=gbx_<public_id>.<secret>
 
 Environment (the unit sets CREDENTIALS_DIRECTORY and STATE_DIRECTORY; tests set the rest):

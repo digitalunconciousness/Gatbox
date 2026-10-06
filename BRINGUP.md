@@ -530,8 +530,10 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   Check `vcgencmd get_throttled` after long runs.
 - **Logger gap: confirmed and fixed in bring-up 2** (see below).
 - `gatbox-rail-report` defaults to a 5 V ±5% window. For the AA bench test, use `--lo 1.2 --hi 1.7`.
-- In a cabinet with no known Wi-Fi (no barcade profile yet), the hotspot comes up ~60 s after boot:
-  join **GATBOX**, Pi at `10.42.0.1` / `gatbox.local`.
+- In a cabinet with no known Wi-Fi, the hotspot comes up ~90 s after boot: join **GATBOX**,
+  Pi at `10.42.0.1` / `gatbox.local`. Since 2026-10-05 it also drops again by itself when a
+  saved network comes back into range, and there are three ways to join a new one — see
+  `docs/network.md`. (This used to say 60 s and "reboot near known Wi-Fi to go back".)
 
 ## Bring-up 2: bench test — 2026-09-23
 

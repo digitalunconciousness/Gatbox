@@ -1,0 +1,85 @@
+# Getting GATBOX onto a network
+
+GATBOX is portable. It lives at home, goes to the arcade, and sometimes sits inside a cabinet
+where nobody can reach a keyboard. This is how it joins a network, what happens when it
+cannot, and what to do when a join goes wrong.
+
+## What it does on its own
+
+`gatbox-ap-fallback.timer` runs every two minutes, and the first time about 90 seconds after
+boot.
+
+- **On a network** — nothing to do.
+- **No network, no hotspot** — it raises the **GATBOX** hotspot. The Pi is then `10.42.0.1`,
+  also `gatbox.local`. Join it from a phone to reach the dashboard.
+- **On the hotspot, and a saved network comes back into range** — it drops the hotspot so
+  NetworkManager rejoins the network.
+
+That last one is why there is a timer at all. This used to run once at boot and the
+instruction was "reboot near known Wi-Fi to go back", which is not something you can do to a
+Pi sitting in a cabinet across town.
+
+The hotspot only exists if it was armed: `sudo GATBOX_AP_PSK='…' bash
+bootstrap/gatbox-bootstrap.sh`. `GATBOX_AP_PSK=off` removes it.
+
+## Three ways to join a network nobody coded in
+
+### 1. Scan a Wi-Fi QR — easiest at the bench
+
+Both Android and iOS can show a QR for a network you are already on: **share this network**.
+Scan it with GATBOX's scanner and it joins.
+
+The scanner is loopback-only, so this needs someone standing at the box — which is the
+authorization. The code is the password, so it is never logged, never shown on the dashboard
+and never echoed back: the journal and the recent-scans list both say `WIFI:<redacted>`.
+
+### 2. The dashboard, on the 7″ screen
+
+SYSTEM → the **Wi-Fi** card. SCAN looks for what is in range, then type the key and JOIN.
+FORGET removes a saved network.
+
+**Only on the Pi's own screen.** Not because the dashboard is precious about it, but because
+asking for a join over the hotspot would cut the connection making the request, and you would
+never learn whether it worked.
+
+### 3. The desktop — the one that always works
+
+GATBOX runs a desktop. Exit the kiosk, use NetworkManager's applet as on any other machine,
+and go back. No part of this phase can break it, which is exactly why it is worth knowing:
+if anything above misbehaves, this is the way in.
+
+## When a join fails
+
+It costs about thirty seconds, not a trip. A failed join brings the hotspot back by itself, so
+the box stays reachable — join **GATBOX** again and try another key.
+
+The dashboard's Wi-Fi card shows what the helper last did. `journalctl -u gatbox-wifi` has the
+detail. A key never appears in either.
+
+## If the box seems unreachable
+
+1. Is the hotspot armed at all? `systemctl is-enabled gatbox-ap-fallback.timer`.
+2. `journalctl -u gatbox-ap-fallback -n 20` says what it decided and why.
+3. Plug in a keyboard and a monitor and use the desktop. Nothing here is a trap you cannot
+   get out of at the box itself.
+
+## Reaching the hub
+
+`/etc/gatbox/hub.conf`, mode 600, root-owned. `gatbox-sync` reads it through `LoadCredential`,
+so the file itself is never readable by the job's own user.
+
+```
+HUB_URLS=https://tracker.example
+HUB_TOKEN=gbx_<public_id>.<secret>
+```
+
+`HUB_URLS` is a list, tried in order, and the first to answer `/api/v1/health` wins. An
+unreachable entry costs one failed connect on a two-second timeout, so listing several is
+safe — the choice is made per run and deliberately not remembered, because a box that travels
+is somewhere different each time.
+
+**A LAN address is not listed, on purpose** (2026-10-05). The hub binds to loopback inside its
+own container and is reachable only through its tunnel, which is a posture worth keeping. Add
+a LAN entry only if that changes.
+
+Mint a token on the hub with `scripts/create_device.py --name gatbox-01`; it is shown once.

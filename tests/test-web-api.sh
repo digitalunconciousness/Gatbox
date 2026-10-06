@@ -315,7 +315,12 @@ check "DELETE of an unknown uid is 404"          '[ "$(api DELETE "/api/orders/$
 
 echo "tagging a trace onto an order the hub already has:"
 check "a tag needs an order id"                  '[ "$(api POST /api/orders/tag "{\"session_file\":\"'"$O"'\"}")" = 400 ]'
-check "a tag needs a session file"               '[ "$(api POST /api/orders/tag "{\"order\":412}")" = 400 ]'
+# No session_file means "the last finished one", which is what the 7"'s ATTACH LAST TRACE
+# says -- that page cannot name the file without listing every session to find it.
+check "a tag with no file takes the last one"    '[ "$(api POST /api/orders/tag "{\"order\":412}")" = 201 ]'
+AUTOTAG=$(js 'd["uid"]'); AUTOFILE=$(js 'd["session_file"]')
+check "and it resolved to a real session"        '[ -n "$AUTOFILE" ]'
+api DELETE "/api/orders/$AUTOTAG" >/dev/null          # leave the counts below as they were
 check "a tag for an unknown session is refused"  '[ "$(api POST /api/orders/tag "{\"order\":412,\"session_file\":\"rail_19700101_000000.csv\"}")" = 400 ]'
 check "a tag is accepted"                        '[ "$(api POST /api/orders/tag "{\"order\":412,\"session_file\":\"'"$O"'\",\"note\":\"second pass\"}")" = 201 ]'
 check "and queued beside the orders"             '[ "$(api GET /api/orders)" = 200 ] && [ "$(js "sorted(o[\"kind\"] for o in d[\"orders\"])")" = "['"'"'order'"'"', '"'"'session_tag'"'"']" ]'
@@ -334,6 +339,18 @@ LEDGER
 check "one in the ledger is reported sent"       '[ "$(api GET /api/orders)" = 200 ] && [ "$(js "[o[\"state\"] for o in d[\"orders\"] if o[\"uid\"] == \"'"$TUID"'\"]")" = "['"'"'sent'"'"']" ]'
 check "the others are still queued"              '[ "$(js "sorted(o[\"state\"] for o in d[\"orders\"])")" = "['"'"'queued'"'"', '"'"'queued'"'"', '"'"'sent'"'"']" ]'
 check "and a sent order cannot be cancelled"     '[ "$(api DELETE "/api/orders/$TUID")" = 409 ]'
+
+echo "what the hub already has open for this machine:"
+# From gatbox-sync's cache, so the card can offer to attach a trace to an order that exists
+# instead of filing a second one for the same fault.
+check "nothing cached reads as nothing"          '[ "$(api GET /api/orders)" = 200 ] && [ "$(js "d[\"hub_open\"]")" = "[]" ]'
+cat > "$T/sync/orders.json" <<'CACHE'
+{"at": 1790000000.0, "open": {"gauntlet-legends": [
+  {"id": 412, "external_id": null, "issue": "Rail sags under load", "priority": "High",
+   "status": "Open", "source": "web", "reported": 1790000000.0}]}}
+CACHE
+check "a cached open order is offered"           '[ "$(api GET /api/orders)" = 200 ] && [ "$(js "[(o[\"id\"], o[\"issue\"]) for o in d[\"hub_open\"]]")" = "[(412, '"'"'Rail sags under load'"'"')]" ]'
+check "and it names the machine it is for"       '[ "$(js "d[\"machine\"]")" = gauntlet-legends ]'
 
 check "server log: no errors"                 '! grep -q "Traceback\|error on\|^live: \|^warm-up: " "$T/web.log"'
 

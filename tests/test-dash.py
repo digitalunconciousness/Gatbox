@@ -168,6 +168,13 @@ def setup():
     # A spool with something already in it, so the card has saved networks to show. The key
     # is here deliberately: the test asserts it reaches no part of the page.
     os.makedirs(f"{T}/wifi", exist_ok=True)
+    # gatbox-sync's cache: one order already open on the hub for this machine, so the card
+    # has something to offer attaching a trace to.
+    os.makedirs(f"{T}/sync", exist_ok=True)
+    json.dump({"at": 1790000000.0, "open": {"gauntlet-legends": [
+        {"id": 412, "external_id": None, "issue": "Rail sags under load",
+         "priority": "High", "status": "Open", "source": "web",
+         "reported": 1790000000.0}]}}, open(f"{T}/sync/orders.json", "w"))
     json.dump({"at": 1790000000.0, "ssids": ["HomeNetwork", "OldArcade"]},
               open(f"{T}/wifi/saved.json", "w"))
     json.dump({"at": 1790000000.0, "ssids": ["HomeNetwork", "CafeOpen"]},
@@ -176,7 +183,7 @@ def setup():
                "state": "joined", "detail": "hunter2-must-not-appear"},
               open(f"{T}/wifi/status.json", "w"))
     env = dict(os.environ, GATBOX_WEB_PORT=str(PORT), STATE_DIRECTORY=f"{T}/ctrl", CACHE_DIRECTORY=f"{T}/cache",
-               GATBOX_WIFI_SPOOL=f"{T}/wifi",
+               GATBOX_WIFI_SPOOL=f"{T}/wifi", GATBOX_SYNC_STATE=f"{T}/sync",
                GATBOX_LOGDIR=f"{T}/log", GATBOX_RUNDIR=f"{T}/run", GATBOX_REPORT=os.path.join(REPO, "tools/gatbox-rail-report"),
                GATBOX_DATA=f"{T}/data", MPLCONFIGDIR=f"{T}/cache/mpl", GATBOX_DUMP_SPOOL=f"{T}/spool",
                GATBOX_ROMS=f"{T}/roms", GATBOX_MINIPRO_PARTS=f"{T}/parts.txt", GATBOX_MAME_ROMS=f"{T}/mame-roms.json",
@@ -376,6 +383,55 @@ def main():
         c.wait("document.querySelector('#mc-body').textContent.includes('0 OF 1 DUMPED')", 10)
         check("the version switch: MAME's other version, its own chips", "legend12.u10" in text("#mc-body")
               and "Gauntlet Legends (version 1.2)" in text("#mc-body"))
+        print("orders from the bench:")
+        # The MACHINE card raises a work order for the machine it is showing. Free typing
+        # through keypad(), which is an overlay rather than a field in the polled grid -- the
+        # C3 rule: loadMachine() rebuilds #mc-body and anything typed into a tile is lost.
+        q("document.querySelector('#v-machine').scrollTop = 10000")
+        orders_card = ("[...document.querySelectorAll('#mc-body .card')]"
+                       ".find(c => (c.querySelector('h3') || {}).textContent === 'Work orders')")
+        check("machine: a work orders card", q(f"!!({orders_card})"))
+        check("machine: it shows what the hub already has open",
+              "Rail sags under load" in q(f"((({orders_card}) || {{}}).textContent || '')"))
+        check("machine: no bare input in the polled card",
+              q("!document.querySelector('#mc-body input')"))
+        opened = q("(() => { const c = " + orders_card + "; if (!c) return false;"
+                   " const b = [...c.querySelectorAll('button')]"
+                   "   .find(b => b.textContent === 'NEW ORDER'); if (!b) return false;"
+                   " b.click(); return true; })()")
+        check("machine: NEW ORDER opens the keypad", opened
+              and q("!document.querySelector('#sheet').classList.contains('hide')")
+              and q("!!document.querySelector('#pane .keys')"))
+        for ch in "BAD":
+            q("[...document.querySelectorAll('#pane .keys button')]"
+              f".find(b => b.textContent === {json.dumps(ch)}).click()")
+        q("(() => { const b = [...document.querySelectorAll('#pane .keys button')]"
+          "   .find(b => b.textContent === 'OK'); if (b) b.click(); return !!b; })()")
+        # Then two pickFrom sheets: how urgent, and whether the last trace goes with it.
+        # Both are ordinary answers, which is why neither is a confirm/cancel.
+        c.wait("document.querySelectorAll('#pane .picklist .row').length >= 5", 10)
+        check("machine: it asks how urgent",
+              "Critical" in q("document.querySelector('#pane').textContent"))
+        q("[...document.querySelectorAll('#pane .picklist .row')]"
+          ".find(r => r.textContent.includes('High')).click()")
+        c.wait("document.querySelectorAll('#pane .picklist .row').length === 2", 10)
+        check("machine: and whether to attach the last trace",
+              "Without a trace" in q("document.querySelector('#pane').textContent"))
+        q("[...document.querySelectorAll('#pane .picklist .row')]"
+          ".find(r => r.textContent.includes('Without')).click()")
+        time.sleep(1.5)
+        check("machine: the order is queued",
+              settles(c, f"((({orders_card}) || {{}}).textContent || '').includes('queued')"))
+        with urllib.request.urlopen(B + "/api/orders") as r:
+            filed = json.load(r)["orders"]
+        check("machine: it was filed for the machine on the card",
+              len(filed) == 1 and filed[0]["machine"] == "gauntlet-legends"
+              and filed[0]["issue"].startswith("BAD"))
+        check("machine: with the priority that was chosen",
+              bool(filed) and filed[0].get("priority") == "High")
+        check("machine: and nothing attached, as asked",
+              bool(filed) and "session_file" not in filed[0])
+
         click('[data-view="meter"]')
         c.wait("document.querySelector('#m-window').textContent.includes('machine spec')", 20)
         check("meter: 4.9–5.1 V machine spec · Gauntlet Legends", "4.9–5.1 V · machine spec · Gauntlet Legends" in text("#m-window"))

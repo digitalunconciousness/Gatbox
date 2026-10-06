@@ -62,23 +62,44 @@ def _sent_uids():
     ReadOnlyPaths for it because the SYSTEM panel's Hub tile reads the same place. So the
     queued/sent badge is a join, and no write crosses the boundary in either direction.
     """
-    state = os.environ.get("GATBOX_SYNC_STATE", system.SYNC_STATE)
-    try:
-        with open(os.path.join(state, "sent.json"), encoding="utf-8") as fh:
-            d = json.load(fh)
-    except (OSError, ValueError):
-        return set()
-    outbox = d.get("outbox") if isinstance(d, dict) else None
+    outbox = _sync_state("sent.json", {}).get("outbox")
     return set(outbox) if isinstance(outbox, dict) else set()
 
 
+def _sync_state(name, default):
+    """One of gatbox-sync's cache files. Read-only, and missing is normal: a Pi with no
+    /etc/gatbox/hub.conf never runs that job at all."""
+    state = os.environ.get("GATBOX_SYNC_STATE", system.SYNC_STATE)
+    try:
+        with open(os.path.join(state, name), encoding="utf-8") as fh:
+            d = json.load(fh)
+    except (OSError, ValueError):
+        return default
+    return d if isinstance(d, dict) else default
+
+
+def hub_open(slug):
+    """What the hub already has open for this machine, as of the last sync.
+
+    So the card can offer to attach a trace to an order that exists instead of filing a
+    second one for the same fault. Minutes stale by nature -- which is exactly why the hub
+    accepts a tag for an order that has since been closed rather than rejecting it.
+    """
+    if not slug:
+        return []
+    cached = _sync_state("orders.json", {}).get("open") or {}
+    rows = cached.get(slug) or []
+    return [r for r in rows if isinstance(r, dict) and r.get("id")]
+
+
 def listing():
-    """Every entry, each with `queued` or `sent`."""
+    """Every entry, each with `queued` or `sent`, and what the hub has open."""
     sent = _sent_uids()
     out = []
     for e in _load():
         out.append({**e, "state": "sent" if e.get("uid") in sent else "queued"})
-    return {"orders": out}
+    slug = meter.resolved()["machine"]
+    return {"orders": out, "machine": slug, "hub_open": hub_open(slug)}
 
 
 class Bad(Exception):
@@ -139,8 +160,14 @@ def tag(body):
     order = body.get("order")
     if not isinstance(order, int) or isinstance(order, bool) or order <= 0:
         raise Bad(400, "order: the hub's id for the record")
-    session_file = _text(body, "session_file", 120)
-    if session_file not in _complete_sessions():
+    # Named, or "the last finished one" -- which is what the 7" means by ATTACH LAST TRACE,
+    # and it cannot name the file itself without listing every session to find it.
+    session_file = _text(body, "session_file", 120, required=False)
+    if session_file is None:
+        session_file = _last_complete_session()
+        if session_file is None:
+            raise Bad(400, "nothing to attach: no finished session on this Pi yet")
+    elif session_file not in _complete_sessions():
         raise Bad(400, f"session_file: no finished session named {session_file!r}")
     note = _text(body, "note", NOTE_MAX, required=False)
 

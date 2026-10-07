@@ -52,7 +52,17 @@ for f in gatbox-wifi gatbox-wifi.service gatbox-wifi.path; do
     check "MANIFEST installs $f"                 'grep -qE "^backend/$f +/" "$BOOT"'
 done
 # Without this the module never reaches the Pi and gatbox-web fails to import at startup.
-check "MANIFEST installs gatboxweb/wifi.py"      'grep -qE "^backend/gatboxweb/wifi\.py +/usr/local/lib/gatbox/gatboxweb/wifi\.py" "$BOOT"'
+# Every module in the package, read off the directory rather than listed here. A per-file
+# check used to name wifi.py alone, which is the shape of hand-maintained list that let
+# gatboxweb/orders.py ship un-installed: server.py imported it, the Pi did not have it, and
+# gatbox-web would not start. The same for gatboxlib, which the logger also loads.
+for d in gatboxweb gatboxlib; do
+    for f in "$REPO/backend/$d"/*.py; do
+        b=$(basename "$f")
+        check "MANIFEST installs $d/$b" \
+              'grep -qE "^backend/'"$d/${b//./\\.}"' +/usr/local/lib/gatbox/'"$d/${b//./\\.}"'" "$BOOT"'
+    done
+done
 check "the helper installs to sbin, 755"         'grep -qE "^backend/gatbox-wifi +/usr/local/sbin/gatbox-wifi +755" "$BOOT"'
 check "bootstrap enables the .path"              'grep -q "svc gatbox-wifi.path" "$BOOT"'
 check "sysusers creates the gatbox-wifi group"   'grep -q "^g gatbox-wifi" "$REPO/bootstrap/files/sysusers-gatbox.conf"'

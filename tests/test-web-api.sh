@@ -55,13 +55,13 @@ js2() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($2)" 
 
 # an old-format session (no profile lines) and a copy of the 09-25 fixture, if this Pi has it
 mkcsv "$T/log/rail_20260921_000000.csv" "5.01,V,DC AUTO" "5.02,V,DC AUTO" "5.03,V,DC AUTO" "4.99,V,DC AUTO"
-mkdir -p "$T/wifi"
+mkdir -p "$T/wifi" "$T/sync"
 FX=/var/log/gatbox/rail_20260925_021402.csv
 [ -r "$FX" ] && cp "$FX" "$T/log/"
 
 GATBOX_WEB_PORT=$PORT STATE_DIRECTORY="$T/ctrl" CACHE_DIRECTORY="$T/cache" GATBOX_LOGDIR="$T/log" GATBOX_RUNDIR="$T/run" \
 GATBOX_REPORT="$REPO/tools/gatbox-rail-report" GATBOX_WEB_HEARTBEAT=1 MPLCONFIGDIR="$T/cache/mpl" \
-GATBOX_WIFI_SPOOL="$T/wifi" \
+GATBOX_WIFI_SPOOL="$T/wifi" GATBOX_SYNC_STATE="$T/sync" \
     setsid python3 "$REPO/backend/gatbox-web" > "$T/web.log" 2>&1 &
 echo $! > "$T/web.pid"
 waitfor 'curl -fs -o /dev/null "$B/kiosk/state"' 50 || { echo "gatbox-web didn't start"; cat "$T/web.log"; exit 1; }
@@ -287,6 +287,71 @@ check "/api/system: hub is null until sync runs"  '[ "$(js "d[\"hub\"] is None")
 check "/api/system: clock source + disk"      '[ "$(js "d[\"clock\"][\"source\"] in (\"ntp\", \"rtc\", \"unverified\"), d[\"disk\"][\"system\"][\"total\"] > 0")" = "True True" ]'
 check "/api/devices: dmm, t48, scanner, touch" '[ "$(api GET /api/devices)" = 200 ] && [ "$(js "sorted(k for k in d if k != \"usb\")")" = "['"'"'dmm'"'"', '"'"'scanner'"'"', '"'"'t48'"'"', '"'"'touch'"'"']" ]'
 check "unknown /api path -> 404 JSON"         '[ "$(api GET /api/nope)" = 404 ] && [ "$(js "d[\"error\"]")" = "not found" ]'
+echo "the order outbox (phase 6):"
+# gatbox-sync cannot read this process's files -- its own user, ProtectSystem=strict -- and it
+# already derives its session queue from GET /api/rail/sessions rather than from disk. So the
+# outbox is fetched over HTTP the same way. This runs last because it sets the logger's
+# machine, which starts a new file and would invalidate the live-file variable earlier checks
+# grep.
+#
+# Nothing is set here: an earlier test deletes the machine and nothing sets it again. Without
+# one the hub has nothing to file against, and guessing would attribute the order to whatever
+# was metered last.
+check "with no machine set an order is refused"  '[ "$(api POST /api/orders "{\"issue\":\"Rail sags\"}")" = 400 ]'
+api PUT /api/machine '{"slug":"gauntlet-legends"}' >/dev/null
+check "POST creates an order"                    '[ "$(api POST /api/orders "{\"issue\":\"Rail sags under load\",\"priority\":\"High\"}")" = 201 ]'
+OUID=$(js 'd["uid"]')
+check "it answers with a 32-hex uid"             '[ "${#OUID}" = 32 ]'
+check "GET lists it as queued"                   '[ "$(api GET /api/orders)" = 200 ] && [ "$(js "[o[\"state\"] for o in d[\"orders\"]]")" = "['"'"'queued'"'"']" ]'
+check "it carries the machine it was raised on"  '[ "$(js "d[\"orders\"][0][\"machine\"]")" = gauntlet-legends ]'
+check "and the issue as typed"                   '[ "$(js "d[\"orders\"][0][\"issue\"]")" = "Rail sags under load" ]'
+# A second press is a second order. The uid makes *sending* idempotent, not pressing.
+check "a second order is a second entry"         '[ "$(api POST /api/orders "{\"issue\":\"Also the coin door\"}")" = 201 ] && [ "$(api GET /api/orders)" = 200 ] && [ "$(js "len(d[\"orders\"])")" = 2 ]'
+check "with a different uid"                     '[ "$(js "len({o[\"uid\"] for o in d[\"orders\"]})")" = 2 ]'
+check "an empty issue is refused"                '[ "$(api POST /api/orders "{\"issue\":\"   \"}")" = 400 ]'
+check "an unknown priority is refused"           '[ "$(api POST /api/orders "{\"issue\":\"x\",\"priority\":\"Whenever\"}")" = 400 ]'
+check "DELETE removes a queued order"            '[ "$(api DELETE "/api/orders/$OUID")" = 200 ] && [ "$(api GET /api/orders)" = 200 ] && [ "$(js "len(d[\"orders\"])")" = 1 ]'
+check "DELETE of an unknown uid is 404"          '[ "$(api DELETE "/api/orders/$(printf 'f%.0s' {1..32})")" = 404 ]'
+
+echo "tagging a trace onto an order the hub already has:"
+check "a tag needs an order id"                  '[ "$(api POST /api/orders/tag "{\"session_file\":\"'"$O"'\"}")" = 400 ]'
+# No session_file means "the last finished one", which is what the 7"'s ATTACH LAST TRACE
+# says -- that page cannot name the file without listing every session to find it.
+check "a tag with no file takes the last one"    '[ "$(api POST /api/orders/tag "{\"order\":412}")" = 201 ]'
+AUTOTAG=$(js 'd["uid"]'); AUTOFILE=$(js 'd["session_file"]')
+check "and it resolved to a real session"        '[ -n "$AUTOFILE" ]'
+api DELETE "/api/orders/$AUTOTAG" >/dev/null          # leave the counts below as they were
+check "a tag for an unknown session is refused"  '[ "$(api POST /api/orders/tag "{\"order\":412,\"session_file\":\"rail_19700101_000000.csv\"}")" = 400 ]'
+check "a tag is accepted"                        '[ "$(api POST /api/orders/tag "{\"order\":412,\"session_file\":\"'"$O"'\",\"note\":\"second pass\"}")" = 201 ]'
+check "and queued beside the orders"             '[ "$(api GET /api/orders)" = 200 ] && [ "$(js "sorted(o[\"kind\"] for o in d[\"orders\"])")" = "['"'"'order'"'"', '"'"'session_tag'"'"']" ]'
+check "the tag names the order and the file"     '[ "$(js "[(o[\"order\"], o[\"session_file\"]) for o in d[\"orders\"] if o[\"kind\"] == \"session_tag\"]")" = "[(412, '"'"'$O'"'"')]" ]'
+check "the same pair twice is refused"           '[ "$(api POST /api/orders/tag "{\"order\":412,\"session_file\":\"'"$O"'\"}")" = 409 ]'
+
+echo "what gatbox-sync has already sent:"
+# /var/lib/gatbox-sync is mode 0755 and gatbox-web.service already reads it for the Hub tile,
+# so the badge is a join -- no write crosses the boundary in either direction.
+check "a fresh order is queued"                  '[ "$(api POST /api/orders "{\"issue\":\"Third one\"}")" = 201 ]'
+TUID=$(js 'd["uid"]')
+python3 - "$T/sync/sent.json" "$TUID" <<'LEDGER'
+import json, sys
+json.dump({"outbox": {sys.argv[2]: 1790000000.0}}, open(sys.argv[1], "w"))
+LEDGER
+check "one in the ledger is reported sent"       '[ "$(api GET /api/orders)" = 200 ] && [ "$(js "[o[\"state\"] for o in d[\"orders\"] if o[\"uid\"] == \"'"$TUID"'\"]")" = "['"'"'sent'"'"']" ]'
+check "the others are still queued"              '[ "$(js "sorted(o[\"state\"] for o in d[\"orders\"])")" = "['"'"'queued'"'"', '"'"'queued'"'"', '"'"'sent'"'"']" ]'
+check "and a sent order cannot be cancelled"     '[ "$(api DELETE "/api/orders/$TUID")" = 409 ]'
+
+echo "what the hub already has open for this machine:"
+# From gatbox-sync's cache, so the card can offer to attach a trace to an order that exists
+# instead of filing a second one for the same fault.
+check "nothing cached reads as nothing"          '[ "$(api GET /api/orders)" = 200 ] && [ "$(js "d[\"hub_open\"]")" = "[]" ]'
+cat > "$T/sync/orders.json" <<'CACHE'
+{"at": 1790000000.0, "open": {"gauntlet-legends": [
+  {"id": 412, "external_id": null, "issue": "Rail sags under load", "priority": "High",
+   "status": "Open", "source": "web", "reported": 1790000000.0}]}}
+CACHE
+check "a cached open order is offered"           '[ "$(api GET /api/orders)" = 200 ] && [ "$(js "[(o[\"id\"], o[\"issue\"]) for o in d[\"hub_open\"]]")" = "[(412, '"'"'Rail sags under load'"'"')]" ]'
+check "and it names the machine it is for"       '[ "$(js "d[\"machine\"]")" = gauntlet-legends ]'
+
 check "server log: no errors"                 '! grep -q "Traceback\|error on\|^live: \|^warm-up: " "$T/web.log"'
 
 echo "web api: $pass passed, $fail failed"

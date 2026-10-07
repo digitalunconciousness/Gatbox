@@ -307,6 +307,16 @@ def main():
         check("wifi POST from the network -> 403",
               api("POST", "/api/wifi", {"ssid": "x"}, host=lan)[0] == 403)
         check("wifi DELETE from the network -> 403", api("DELETE", "/api/wifi/x", host=lan)[0] == 403)
+        # The order outbox, for a third reason: an order reaches the hub under this box's
+        # device identity, so without the gate anyone on the network could file orders
+        # attributed to the bench.
+        check("orders GET from the network -> 403", api("GET", "/api/orders", host=lan)[0] == 403)
+        check("orders POST from the network -> 403",
+              api("POST", "/api/orders", {"issue": "x"}, host=lan)[0] == 403)
+        check("order tag from the network -> 403",
+              api("POST", "/api/orders/tag", {"order": 1, "session_file": "x"}, host=lan)[0] == 403)
+        check("order DELETE from the network -> 403",
+              api("DELETE", "/api/orders/" + "f" * 32, host=lan)[0] == 403)
 
     print("labels:")
     try:

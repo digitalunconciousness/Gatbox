@@ -701,6 +701,99 @@
     try { dumpList(c, (await api("GET", "/api/dumps?machine=" + encodeURIComponent(e.slug))).dumps); }
     catch (x) { c.appendChild(el("div", "mut", "No dump archive on this Pi yet.")); }
     B.appendChild(c);
+    await ordersSection(B, e);
+  }
+
+  // --- WORK ORDERS ---------------------------------------------------------------------------
+  // Raise one at the bench, or attach a trace to one the hub already has. gatbox-web only
+  // queues it: gatbox-sync is what reaches the hub, so everything here is "queued" until it
+  // has been.
+  const PRIORITIES = ["Low", "Medium", "High", "Critical", "Urgent"];
+
+  async function ordersSection(B, entry) {
+    let d;
+    try { d = await api("GET", "/api/orders"); } catch (x) { return; }   // not on the Pi's screen
+    const c = el("div", "card");
+    c.appendChild(el("h3", null, "Work orders"));
+    const open = d.hub_open || [], queued = (d.orders || []).filter(o => o.machine === entry.slug
+                                                                      || o.kind === "session_tag");
+
+    if (open.length) {
+      c.appendChild(el("div", "mut", "Already open at the hub:"));
+      for (const o of open) {
+        const row = el("div", "btnrow");
+        row.appendChild(el("span", null, `#${o.id} ${o.issue || ""}`.slice(0, 60)));
+        const att = el("button", null, "ATTACH LAST TRACE");
+        att.addEventListener("click", () => attachTrace(o));
+        row.appendChild(att);
+        c.appendChild(row);
+      }
+      // Filing a separate one stays available on purpose: two distinct faults on one machine
+      // are two orders, not a duplicate to be steered away from.
+      c.appendChild(el("div", "mut", "A different fault is a different order — NEW ORDER below."));
+    } else {
+      c.appendChild(el("div", "mut", "Nothing open at the hub for this machine."));
+    }
+
+    for (const o of queued) {
+      const what = o.kind === "session_tag"
+        ? `trace → order #${o.order}` : (o.issue || "").slice(0, 50);
+      const row = el("div", "btnrow");
+      add(row, el("span", o.state === "sent" ? "ok" : "warn", `${o.state}: ${what}`));
+      if (o.state === "queued") {
+        const x = el("button", null, "CANCEL");
+        x.addEventListener("click", async () => {
+          if (await confirmBox("CANCEL THAT ORDER?",
+                "It has not gone to the hub yet. Once it has, there is no taking it back.",
+                "CANCEL IT")) {
+            api("DELETE", "/api/orders/" + encodeURIComponent(o.uid)).then(loadMachine).catch(fail);
+          }
+        });
+        row.appendChild(x);
+      }
+      c.appendChild(row);
+    }
+
+    const bar = el("div", "btnrow");
+    const neu = el("button", "primary", "NEW ORDER");
+    neu.addEventListener("click", () => newOrder(entry));
+    bar.appendChild(neu);
+    c.appendChild(bar);
+    B.appendChild(c);
+  }
+
+  async function newOrder(entry) {
+    // keypad(), not a field in the card: loadMachine() rebuilds #mc-body, so anything typed
+    // into a tile is destroyed mid-entry -- and the kiosk has no keyboard to type with. The
+    // same reason the Wi-Fi key goes through it.
+    const issue = await keypad({title: "WHAT IS WRONG WITH " + entry.name.toUpperCase(),
+                               max: 2000, symbols: true, keep: true});
+    if (issue === null || !issue.trim()) return;
+    const priority = await pickFrom("How urgent?",
+      PRIORITIES.map(p => ({key: p, title: p, find: [p.toLowerCase()]})), "Medium");
+    if (!priority) return;
+    // pickFrom, not confirmBox: "with" and "without" are both ordinary answers here, and a
+    // CANCEL button would read as "abandon the order" rather than "file it without a trace".
+    const withTrace = await pickFrom("Attach the last trace?", [
+      {key: "yes", title: "With the last trace", find: ["with"],
+       sub: "the most recent finished session on this Pi"},
+      {key: "no", title: "Without a trace", find: ["without"],
+       sub: "nothing metered, or the fault is not electrical"}], "yes");
+    if (!withTrace) return;
+    api("POST", "/api/orders", {issue: issue, priority: priority, attach: withTrace === "yes"})
+      .then(() => { toast("Order queued for the hub"); loadMachine(); })
+      .catch(fail);
+  }
+
+  function attachTrace(order) {
+    const note = () => keypad({title: "A NOTE? (OPTIONAL)", max: 200, symbols: true, keep: true});
+    note().then(n => {
+      if (n === null) return;
+      // No session_file: the server resolves "the last finished one", which is what the
+      // button says and what this page cannot work out without listing every session.
+      return api("POST", "/api/orders/tag", {order: order.id, note: n || undefined});
+    }).then(r => { if (r) { toast("Trace queued for order #" + order.id); loadMachine(); } })
+      .catch(fail);
   }
   // LABEL LIST: what to type into a label maker's QR text (Katasymbol and the like). Tap COPY, paste in the app.
   function copyText(t) {

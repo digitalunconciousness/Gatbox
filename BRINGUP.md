@@ -530,6 +530,18 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   Check `vcgencmd get_throttled` after long runs.
 - **Logger gap: confirmed and fixed in bring-up 2** (see below).
 - `gatbox-rail-report` defaults to a 5 V ±5% window. For the AA bench test, use `--lo 1.2 --hi 1.7`.
+- **Work orders from the bench (2026-10-06).** MACHINE → *Work orders* → NEW ORDER raises one
+  for the machine on the card: type the fault, pick how urgent, say whether the last finished
+  trace goes with it. If the hub already has an order open for that machine the card says so
+  and offers ATTACH LAST TRACE, so a second measurement lands on the order that exists rather
+  than on a duplicate. Both stay available: a different fault is a different order.
+  - The Pi only *queues* it. `gatbox-sync` is what reaches the hub, so an order reads **queued**
+    until the next run (two minutes), then **sent**. CANCEL works only while it is queued —
+    once the hub has it there is no API to take it back.
+  - Needs `/etc/gatbox/hub.conf`. Without it nothing syncs and orders simply pile up queued.
+  - An item the hub refuses five times is **parked** and stops being offered, with the reason
+    on the SYSTEM panel's Hub tile. The usual cause is an order for a machine the hub's roster
+    does not have: fix it there, then `sudo GATBOX_SYNC_UNPARK=1 systemctl start gatbox-sync`.
 - In a cabinet with no known Wi-Fi, the hotspot comes up ~90 s after boot: join **GATBOX**,
   Pi at `10.42.0.1` / `gatbox.local`. Since 2026-10-05 it also drops again by itself when a
   saved network comes back into range, and there are three ways to join a new one — see

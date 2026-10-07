@@ -227,7 +227,7 @@ def main():
         def tap_keys(s):
             for ch in s:
                 q(f"[...document.querySelectorAll('#pane .keys button')].find(b => b.textContent === {json.dumps(ch)}).click()")
-            q("[...document.querySelectorAll('#pane .keys button')].find(b => b.textContent === 'OK').click()")
+            q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'SAVE').click()")
 
         c.open(B + "/dash/", 1024, 600)
         c.wait("document.querySelector('#m-profile').textContent.includes('rail')")
@@ -405,8 +405,8 @@ def main():
         for ch in "BAD":
             q("[...document.querySelectorAll('#pane .keys button')]"
               f".find(b => b.textContent === {json.dumps(ch)}).click()")
-        q("(() => { const b = [...document.querySelectorAll('#pane .keys button')]"
-          "   .find(b => b.textContent === 'OK'); if (b) b.click(); return !!b; })()")
+        q("(() => { const b = [...document.querySelectorAll('#pane button')]"
+          "   .find(b => b.textContent === 'SAVE'); if (b) b.click(); return !!b; })()")
         # Then two pickFrom sheets: how urgent, and whether the last trace goes with it.
         # Both are ordinary answers, which is why neither is a confirm/cancel.
         c.wait("document.querySelectorAll('#pane .picklist .row').length >= 5", 10)
@@ -468,14 +468,16 @@ def main():
             q(f"[...document.querySelectorAll('#pane .fld')].find(b => b.firstChild.textContent === {json.dumps(label)}).click()")
 
         def key(ch):
-            q(f"[...document.querySelectorAll('#pane .keys button')].find(b => b.textContent === {json.dumps(ch)}).click()")
+            # '#pane button', not '#pane .keys button': CANCEL and SAVE sit in their own row
+            # outside the key grid, which is what keeps them on the screen.
+            q(f"[...document.querySelectorAll('#pane button')].find(b => b.textContent === {json.dumps(ch)}).click()")
 
         def typed(label, keys_):
             field(label)
             c.wait("document.querySelector('#pane .keys')")
             for ch in keys_:
                 key(ch)
-            key("OK")
+            key("SAVE")
             c.wait("document.querySelector('#pane .seg')")
 
         click("#mc-add")
@@ -483,7 +485,10 @@ def main():
         check("the form: name, maker, video/pinball, platform, notes; ADD disabled",
               [x for x in q("[...document.querySelectorAll('#pane .fld span')].map(s => s.textContent)")] == ["NAME", "MAKER", "PLATFORM", "NOTES"]
               and q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'ADD MACHINE').disabled"))
-        typed("NAME", ["Z", "abc", "a", "x", "x", "o", "n"])
+        # "aA" is the case key. It was "abc" until the keypad became one layout everywhere --
+        # the layer key has to read ABC for "back to letters", and two keys reading abc and
+        # ABC side by side is a coin toss.
+        typed("NAME", ["Z", "aA", "a", "x", "x", "o", "n"])
         typed("MAKER", "SEGA")
         field("PLATFORM")
         c.wait("document.querySelectorAll('#pane .picklist .row').length === 2")
@@ -846,10 +851,46 @@ def main():
                          " b.click(); return true; })()")
         check("system: JOIN opens the on-screen keypad", q(click_in_card)
               and q("!document.querySelector('#sheet').classList.contains('hide')" + " && !!document.querySelector('#pane .keys')"))
-        check("system: the keypad offers the symbols a passphrase needs", q(
+        # The confirm button must be *on the screen*. With the symbols appended below the
+        # letters it was pushed past the bottom of the 7" panel, so there was no visible way
+        # to save -- the keypad looked like it had no confirm at all.
+        check("system: SAVE is within the panel, not off the bottom", q(
+            "(() => { const b = [...document.querySelectorAll('#pane button')]"
+            "   .find(b => b.textContent === 'SAVE'); if (!b) return false;"
+            " const r = b.getBoundingClientRect();"
+            " return r.bottom <= window.innerHeight && r.top >= 0 && r.height > 0; })()"))
+        check("system: and so is CANCEL", q(
+            "(() => { const b = [...document.querySelectorAll('#pane button')]"
+            "   .find(b => b.textContent === 'CANCEL'); if (!b) return false;"
+            " const r = b.getBoundingClientRect();"
+            " return r.bottom <= window.innerHeight && r.height > 0; })()"))
+        # The symbols are a layer, reached by a toggle, the way a phone keyboard does it --
+        # so the keypad is the same height whatever is being typed.
+        shot("17b-keypad-letters")
+        check("system: the letters are showing first", q(
+            "[...document.querySelectorAll('#pane .keys button')]"
+            "   .map(b => b.textContent).join('').includes('Q')"))
+        check("system: ?#+ reaches the rest of the printable set", q(
             "(() => { const t = [...document.querySelectorAll('#pane .keys button')]"
+            "   .find(b => b.textContent === '?#+'); if (!t) return false; t.click();"
+            " const s = [...document.querySelectorAll('#pane .keys button')]"
             "   .map(b => b.textContent).join('');"
-            " return ['@', '#', '_', '%', '*'].every(c => t.includes(c)); })()"))
+            " return ['@', '#', '_', '%', '^', '~', '{'].every(c => s.includes(c)); })()"))
+        shot("17c-keypad-symbols")
+        check("system: the toggle goes back to letters", q(
+            "(() => { const t = [...document.querySelectorAll('#pane .keys button')]"
+            "   .find(b => b.textContent === 'ABC'); if (!t) return false; t.click();"
+            " return [...document.querySelectorAll('#pane .keys button')]"
+            "   .map(b => b.textContent).join('').includes('Q'); })()"))
+        check("system: the keypad is six rows whichever layer is up", q(
+            "(() => { const n = () => document.querySelectorAll('#pane .keys button').length;"
+            " const before = n();"
+            " [...document.querySelectorAll('#pane .keys button')]"
+            "   .find(b => b.textContent === '?#+').click();"
+            " const after = n();"
+            " [...document.querySelectorAll('#pane .keys button')]"
+            "   .find(b => b.textContent === 'ABC').click();"
+            " return before === after; })()"))
         # The whole point: it is an overlay, not a tile, so a repaint cannot eat it.
         time.sleep(6)
         check("system: it survives the 5 s repaint",

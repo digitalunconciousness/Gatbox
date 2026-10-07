@@ -193,7 +193,13 @@ a.btnlink{display:inline-flex;align-items:center;justify-content:center;min-heig
 .kp-field .cur{display:inline-block;width:3px;height:1em;background:var(--cyan);vertical-align:-3px;margin-left:2px;
   animation:blink 1s steps(1) infinite}
 @keyframes blink{50%{opacity:0}}
-.keys{display:grid;grid-template-columns:repeat(10,1fr);gap:6px}
+/* min-height:0 + overflow:auto so the grid yields instead of pushing the action row off a
+   600px panel. It should never need to: six rows fit. This is the belt. */
+.keys{display:grid;grid-template-columns:repeat(10,1fr);gap:6px;min-height:0;overflow:auto}
+/* CANCEL / SAVE, outside .keys: the one row that must always be reachable. */
+.kp-actions{display:grid;grid-template-columns:4fr 6fr;gap:6px;flex:none}
+.kp-actions button{min-height:54px;font-size:21px}
+.kp-actions .primary{border-color:var(--mag);color:var(--mag)}
 .keys button{min-height:54px;font-size:21px;padding:0}
 .keys .wide{grid-column:span 2}
 .keys .x4{grid-column:span 4}
@@ -225,7 +231,7 @@ a.btnlink{display:inline-flex;align-items:center;justify-content:center;min-heig
   .list{width:100%}
   .tiles{grid-template-columns:1fr 1fr}
   .picklist{grid-template-columns:1fr 1fr}
-  .keys button{min-height:48px;font-size:17px}
+  .keys button,.kp-actions button{min-height:48px;font-size:17px}
   .vw-top{flex-wrap:wrap}
   .vw-top b{flex-basis:100%}
 }

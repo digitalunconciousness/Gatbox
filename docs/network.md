@@ -41,6 +41,26 @@ The scanner is loopback-only, so this needs someone standing at the box — whic
 authorization. The code is the password, so it is never logged, never shown on the dashboard
 and never echoed back: the journal and the recent-scans list both say `WIFI:<redacted>`.
 
+**Off a phone screen this often does not work** (2026-10-06, tried on the bench). The EY-H2
+reads the printed cabinet labels every time and would not read a Wi-Fi QR held up on a phone.
+It is a density problem, not a fault: a label carries a short URL, while a Wi-Fi code carries
+an SSID *and* a passphrase, so the same area holds far more modules — each one a pixel or two
+on a phone, behind glass that reflects the scanner's own light back at it.
+
+Worth a try before giving up: screen brightness to maximum with auto-brightness off, the QR
+pinch-zoomed as large as it will go, held 10–15 cm away and tilted a few degrees so the
+reflection misses the lens.
+
+To tell a scanner problem from a screen problem in one go: `journalctl -u gatbox-scand -f`,
+then scan a printed cabinet label. A line like `scan '<base>/g/<slug>': machine` means the
+scanner, the daemon and the web app are all fine and it is the screen. No line at all means
+nothing was decoded — `gatbox-scand` logs every code it reads, and a half-finished read
+flushes and logs within half a second, so silence means no keystrokes arrived.
+
+If you want the scan to work, print the QR. Keep that piece of paper *with* the box rather
+than on it: a printed Wi-Fi QR is the network's password in plain sight, which is the same
+trade the coin-door labels make.
+
 ### 2. The dashboard, on the 7″ screen
 
 SYSTEM → the **Wi-Fi** card. SCAN looks for what is in range, then type the key and JOIN.

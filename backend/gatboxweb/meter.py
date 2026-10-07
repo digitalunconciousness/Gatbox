@@ -242,7 +242,11 @@ def add_mark(body):
             "source": src, "label": lab, "file": LIVE.name if live else None, "pending": not live}
 
 
-SCAN_MAX = 200
+# Matches gatbox-scand's MAX_LEN. They disagreed -- the daemon buffered 512 and this refused
+# over 200 -- so a code in between was read off the scanner and then thrown away with a 400.
+# A Wi-Fi QR reaches it: the format escapes \ ; , : and " in *both* fields, so a 32-byte SSID
+# and a 63-character passphrase of those become 64 and 126, and the payload is 208.
+SCAN_MAX = 512
 SCAN_MARK, SCAN_NEW = "GATBOX:MARK", "GATBOX:NEW"
 
 # The hub prints cabinet labels whose QR encodes a URL, not a bare slug: <base>/g/<slug>. The host is deliberately
@@ -276,7 +280,14 @@ def scan(code):
         if parsed is None:
             return {"action": "unknown", "code": wifi.REDACTED,
                     "detail": "not a usable Wi-Fi code"}
-        wifi.request("join", parsed["ssid"], parsed["psk"])
+        try:
+            wifi.request("join", parsed["ssid"], parsed["psk"])
+        except wifi.Busy as exc:
+            # The spool holds one request. Scanning a second code while the first is still
+            # waiting used to escape as a 500 -- which is what someone sees after a join
+            # that has not been taken yet, exactly when they are trying again. Say so
+            # instead, and never echo the code.
+            return {"action": "unknown", "code": wifi.REDACTED, "detail": str(exc)}
         return {"action": "wifi", "code": wifi.REDACTED, "ssid": parsed["ssid"]}
     if up == SCAN_MARK:
         return {"action": "mark", "code": code, "mark": add_mark({"source": "scan"})}

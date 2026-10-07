@@ -197,6 +197,28 @@ def hotspot_up():
     return False
 
 
+def current_network():
+    """The network wlan0 or eth0 is actually on, if it is not our own hotspot.
+
+    Used to report where a failed join left the box. "restored-hotspot" was written whenever
+    gatbox-ap-fallback merely *ran*, and that script exits 0 saying "on a network, nothing to
+    do" -- so a join attempted from one network to another, and failing, claimed the hotspot
+    had come back while the box sat on the network it was trying to leave.
+    """
+    rc, out, _ = nmcli("-t", "-e", "no", "-f", "DEVICE,STATE,CONNECTION", "device")
+    if rc != 0:
+        return None
+    for line in out.splitlines():
+        parts = line.split(":", 2)
+        if len(parts) != 3:
+            continue
+        device, state, name = parts
+        if device in ("wlan0", "eth0") and state.startswith("connected") \
+                and name and name != AP_PROFILE:
+            return name
+    return None
+
+
 def join(ssid, psk):
     # One radio: the hotspot and a client connection are mutually exclusive, and a wlan0 in
     # AP mode cannot scan, so `device wifi connect` issued while the AP is up resolves
@@ -221,10 +243,33 @@ def join(ssid, psk):
     # A wrong key must cost thirty seconds, not a trip to wherever the box is: bring the
     # hotspot back so it is reachable again.
     log(f"gatbox-wifi: could not join {ssid!r}; restoring the hotspot")
-    state = "restored-hotspot" if restore_hotspot() else "failed"
-    write_status(action="join", ssid=ssid, ok=False, state=state,
+    restored = restore_hotspot()
+    # What the box is on *now*, asked rather than inferred from whether a script ran. The
+    # three answers are genuinely different to whoever is standing there: the hotspot is up
+    # and they can reconnect to it, they are still on the network they were already on, or
+    # there is nothing at all.
+    where = None
+    if hotspot_up():
+        state = "restored-hotspot"
+    elif (where := current_network()):
+        state = "on-other-network"
+    elif restored:
+        # nmcli could not answer either question -- which is itself why the join failed --
+        # so fall back to whether the hotspot script succeeded. That is the Phase 5 rule:
+        # running is not succeeding, and restore_hotspot() already returns False on a
+        # non-zero exit.
+        state = "restored-hotspot"
+    else:
+        state = "failed"
+    # `where` is a named field this code fills, not nmcli's free text, so unlike `detail` it
+    # is safe to hand to the dashboard -- and it is the one thing someone standing there
+    # needs: which network the box is on now that the join did not work.
+    write_status(action="join", ssid=ssid, ok=False, state=state, where=where,
                  detail=scrub(detail, psk)[:200])
-    return 1
+    # Exit 0: a wrong key is an ordinary outcome, not a unit failure. gatbox-sync made the
+    # same call in Phase 3 about being off its network. The dashboard and the journal both
+    # report this properly; leaving the unit red in `systemctl --failed` adds nothing.
+    return 0
 
 
 def take_request():

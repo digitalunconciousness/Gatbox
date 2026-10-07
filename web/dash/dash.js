@@ -1126,8 +1126,19 @@
           // outcome this page did not ask for is history, not an answer, so it is dimmed
           // rather than presented as the result of the last button pressed.
           const answered = !wifiReq || !last.id || last.id === wifiReq;
+          // Plain words, not the state slug. "on-other-network" told someone whose rejoin
+          // had failed nothing at all about where the box actually was.
+          const said = {
+            joined: "joined",
+            "restored-hotspot": "could not join \u2014 the GATBOX hotspot is back up",
+            "on-other-network": "could not join \u2014 still on " + (last.where || "another network"),
+            failed: "could not join",
+            forgotten: "forgotten",
+            refused: "refused",
+            scanned: "scanned",
+          }[last.state] || last.state;
           body.appendChild(el("div", answered ? (last.ok ? "ok" : "bad") : "mut",
-            `${answered ? "" : "earlier: "}${last.action} ${last.ssid || ""}: ${last.state}`));
+            `${answered ? "" : "earlier: "}${last.action} ${last.ssid || ""}: ${said}`));
         }
         const saved = w.saved || [], range = (w.in_range && w.in_range.ssids) || [];
         if (saved.length) {

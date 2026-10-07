@@ -193,6 +193,69 @@ check "with the saved profiles, ours excluded"  '[ "$(python3 -c "
 import json; print(json.load(open(\"$SPOOL/saved.json\"))[\"ssids\"])")" = "['"'"'HomeNetwork'"'"', '"'"'OldArcade'"'"']" ]'
 check "and no key in it"                        '! grep -qF -- "$KEY" "$SPOOL/saved.json"'
 
+echo "a failed join says why, in the journal:"
+# docs/network.md promises "journalctl -u gatbox-wifi has the detail" and the join path never
+# logged any. nmcli's reason went only into status.json's `detail`, which is deliberately kept
+# out of the API because it is the one field that could carry a key -- so the one thing needed
+# to diagnose a join was visible nowhere short of reading the spool as root. That is what a
+# one-second failure on the bench cost: the error existed and nobody could see it.
+cat > "$T/nmcli-noap" <<'STUB'
+#!/usr/bin/env bash
+{ printf '%s\n' "--- $#"; printf '%s\n' "$@"; } >> "${NMCLI_LOG:?}"
+case "$*" in
+    *"device wifi connect"*) echo "Error: No network with SSID 'BenchNet' found." >&2; exit 10 ;;
+esac
+exit 0
+STUB
+chmod +x "$T/nmcli-noap"
+req_py join BenchNet "$KEY"
+GATBOX_NMCLI="$T/nmcli-noap" run
+check "the journal carries nmcli's reason"      'grep -q "No network with SSID" "$T/out"'
+check "and still not the key"                   '! grep -qF -- "$KEY" "$T/out"'
+check "the status keeps it too"                 '[ -n "$(status detail)" ]'
+# **The bug from the bench.** nmcli infers the security type from the AP in its own scan
+# cache; with the AP missing from it, it cannot fill in key-mgmt and answers
+# "802-11-wireless-security.key-mgmt: property is missing" in about a second, never trying to
+# associate. The card goes on offering the network because gatbox-web reads its own older
+# scan.json. So: rescan first, and prefer the saved profile, which already knows the security
+# type -- and, on this box, the hand-set static address that goes with it.
+check "a rescan is asked for before connecting" 'grep -q -- "--rescan" "$NMCLI_LOG"'
+
+echo "a network we already have a profile for:"
+cat > "$T/nmcli-saved" <<'STUB'
+#!/usr/bin/env bash
+{ printf '%s\n' "--- $#"; printf '%s\n' "$@"; } >> "${NMCLI_LOG:?}"
+case "$*" in
+    *"-f NAME connection show"*) printf 'BenchNet\ngatbox-ap\n' ;;
+    *"connection up BenchNet"*)  echo "Connection successfully activated" ;;
+esac
+exit 0
+STUB
+chmod +x "$T/nmcli-saved"
+req_py join BenchNet "$KEY"
+GATBOX_NMCLI="$T/nmcli-saved" run
+check "the saved profile is brought up"         'grep -qxF "connection" "$NMCLI_LOG" && grep -qxF "up" "$NMCLI_LOG"'
+check "not re-created from scratch"             '! grep -qxF "connect" "$NMCLI_LOG"'
+check "so the key never reaches nmcli at all"   '! grep -qF -- "$KEY" "$NMCLI_LOG"'
+check "and it reports joined"                   '[ "$(status state)" = joined ]'
+
+echo "...whose key has since changed:"
+cat > "$T/nmcli-staleprofile" <<'STUB'
+#!/usr/bin/env bash
+{ printf '%s\n' "--- $#"; printf '%s\n' "$@"; } >> "${NMCLI_LOG:?}"
+case "$*" in
+    *"-f NAME connection show"*) printf 'BenchNet\ngatbox-ap\n' ;;
+    *"connection up BenchNet"*)  echo "Error: Secrets were required, but not provided." >&2; exit 4 ;;
+    *"device wifi connect"*)     echo "Connection successfully activated" ;;
+esac
+exit 0
+STUB
+chmod +x "$T/nmcli-staleprofile"
+req_py join BenchNet "$KEY"
+GATBOX_NMCLI="$T/nmcli-staleprofile" run
+check "it falls back to connecting with the key" 'grep -qxF "connect" "$NMCLI_LOG"'
+check "and that works"                           '[ "$(status state)" = joined ]'
+
 echo "a failed join says where the box actually ended up:"
 # The case that caused this: already on one network, join another, it fails. The script
 # gatbox-ap-fallback then exits 0 saying "on a network, nothing to do" -- so the status read

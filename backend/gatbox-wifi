@@ -219,6 +219,15 @@ def current_network():
     return None
 
 
+def saved_profiles():
+    """Connection profiles by name. Empty if nmcli cannot be asked -- the caller then just
+    connects the ordinary way, which is what it did before this existed."""
+    rc, out, _ = nmcli("-t", "-e", "no", "-f", "NAME", "connection", "show")
+    if rc != 0:
+        return set()
+    return {line.strip() for line in out.splitlines() if line.strip()}
+
+
 def join(ssid, psk):
     # One radio: the hotspot and a client connection are mutually exclusive, and a wlan0 in
     # AP mode cannot scan, so `device wifi connect` issued while the AP is up resolves
@@ -229,11 +238,32 @@ def join(ssid, psk):
     if hotspot_up():
         log("gatbox-wifi: taking the hotspot down to free the radio")
         nmcli("connection", "down", AP_PROFILE, timeout=30)
-    args = ["-w", str(CONNECT_TIMEOUT), "device", "wifi", "connect", ssid]
-    if psk:
-        args += ["password", psk]
-    rc, out, err = nmcli(*args, timeout=CONNECT_TIMEOUT + 15 if CONNECT_TIMEOUT > 5
-                         else CONNECT_TIMEOUT)
+    # **Rescan first.** nmcli infers the security type from the AP in its own scan cache, so
+    # with the AP missing from it there is no way to fill in key-mgmt and the attempt fails in
+    # about a second with "802-11-wireless-security.key-mgmt: property is missing" -- never
+    # trying to associate. The dashboard keeps offering the network meanwhile, because it
+    # reads its own older scan.json. That is a real bench failure, not a hypothetical.
+    nmcli("device", "wifi", "rescan", "--rescan", "yes", timeout=30)
+
+    timeout = CONNECT_TIMEOUT + 15 if CONNECT_TIMEOUT > 5 else CONNECT_TIMEOUT
+    rc, out, err = 1, "", ""
+    if ssid in saved_profiles():
+        # A profile we already have knows its own security type and whatever else was set on
+        # it by hand -- on this box the home network carries a static address. Re-creating it
+        # from an SSID and a password throws that away, and cannot work at all when the scan
+        # cache has nothing to infer from.
+        log(f"gatbox-wifi: bringing up the saved profile for {ssid!r}")
+        rc, out, err = nmcli("-w", str(CONNECT_TIMEOUT), "connection", "up", ssid,
+                             timeout=timeout)
+        if rc != 0 and psk:
+            # The saved key no longer works -- the usual reason a profile stops connecting.
+            # Fall through and let the new one replace it.
+            log(f"gatbox-wifi: the saved profile did not come up; trying the key given")
+    if rc != 0:
+        args = ["-w", str(CONNECT_TIMEOUT), "device", "wifi", "connect", ssid]
+        if psk:
+            args += ["password", psk]
+        rc, out, err = nmcli(*args, timeout=timeout)
     detail = both(out, err)
     if rc == 0:
         log(f"gatbox-wifi: joined {ssid!r}")
@@ -242,7 +272,13 @@ def join(ssid, psk):
         return 0
     # A wrong key must cost thirty seconds, not a trip to wherever the box is: bring the
     # hotspot back so it is reachable again.
-    log(f"gatbox-wifi: could not join {ssid!r}; restoring the hotspot")
+    # The reason, in the journal. docs/network.md has always said "journalctl -u gatbox-wifi
+    # has the detail" and the join path never logged any -- nmcli's message went only into
+    # status.json, which the API deliberately withholds because it is the one field that could
+    # carry a key. So the single thing needed to diagnose a join was visible nowhere short of
+    # reading the spool as root. Scrubbed by value, like everything else written down here.
+    log(f"gatbox-wifi: could not join {ssid!r}: {scrub(detail, psk)[:200]}")
+    log("gatbox-wifi: restoring the hotspot")
     restored = restore_hotspot()
     # What the box is on *now*, asked rather than inferred from whether a script ran. The
     # three answers are genuinely different to whoever is standing there: the hotspot is up

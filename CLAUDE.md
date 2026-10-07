@@ -140,3 +140,12 @@ the bootstrap, CLAUDE.md, the plan/progress and journal entries.
 Bring-up done 2026-09-23 (BRINGUP.md "Bring-up 1/2"). Phase 0 and Phase 1 (rail flight recorder) done and in use:
 first cabinet log 2026-09-25 (Gauntlet Legends). **Phase 2 started 2026-09-28**: progress checklist in BRINGUP.md.
 M0–M7 done 2026-09-29 (the first real burn from the 7″ that evening); M8 on hold.
+
+**Integration with the hub (arcade-tracker), 2026-10-01 → 10-06.** Phases 0–4 merged and in
+use; 5 (network: three ways onto a new Wi-Fi, hotspot recovery) and 6 (orders from the bench)
+merged 2026-10-06. The contract both sides share is `docs/contract/v1/`, vendored from the
+tracker and checksum-tested in both repos. `gatbox-sync` pushes finished sessions, orders and
+session tags on a 2-minute timer and caches the roster and open orders for the 7″.
+**Still to do:** install Phase 6 on the Pi and deploy the tracker side, then the two bench
+exits — a real join from the Wi-Fi card, and an order typed on the 7″ reaching the work queue
+with its trace attached. Neither has been done on hardware yet.

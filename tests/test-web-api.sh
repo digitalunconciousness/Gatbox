@@ -287,6 +287,30 @@ check "/api/system: hub is null until sync runs"  '[ "$(js "d[\"hub\"] is None")
 check "/api/system: clock source + disk"      '[ "$(js "d[\"clock\"][\"source\"] in (\"ntp\", \"rtc\", \"unverified\"), d[\"disk\"][\"system\"][\"total\"] > 0")" = "True True" ]'
 check "/api/devices: dmm, t48, scanner, touch" '[ "$(api GET /api/devices)" = 200 ] && [ "$(js "sorted(k for k in d if k != \"usb\")")" = "['"'"'dmm'"'"', '"'"'scanner'"'"', '"'"'t48'"'"', '"'"'touch'"'"']" ]'
 check "unknown /api path -> 404 JSON"         '[ "$(api GET /api/nope)" = 404 ] && [ "$(js "d[\"error\"]")" = "not found" ]'
+echo "a scan long enough to be a real Wi-Fi code:"
+# gatbox-scand buffers up to MAX_LEN=512 and this endpoint refused anything over 200, so a
+# code in between was read off the scanner and then thrown away with a 400. A WIFI: payload
+# is 32 bytes of SSID + 63 of passphrase + syntax, and the format escapes \ ; , : and " --
+# so a passphrase made of those doubles and the whole thing passes 200.
+#
+# Built in python to a file and the length asserted: an earlier version of this built it in
+# the shell, lost a level of backslashes, sent 176 characters and passed while proving nothing.
+python3 - "$T/longwifi.json" <<'LONG'
+import json, sys
+# The format escapes \ ; , : and " -- in *both* fields, which is the part that makes this
+# exceed 200. An SSID is up to 32 bytes and a WPA passphrase up to 63, so the worst a phone
+# can legitimately produce is 64 + 126 of payload plus syntax: 208.
+esc = lambda t: "".join("\\" + c if c in '\\;,:"' else c for c in t)
+code = "WIFI:T:WPA;S:%s;P:%s;;" % (esc(";" * 32), esc(";" * 63))
+assert len(code) > 200, len(code)
+json.dump({"code": code, "len": len(code)}, open(sys.argv[1], "w"))
+LONG
+check "the test really is over the old limit" '[ "$(js2 "$T/longwifi.json" "d[\"len\"]")" -gt 200 ]'
+check "a long Wi-Fi code is accepted"         '[ "$(curl -s -o "$T/body" -w "%{http_code}" -X POST -H "Content-Type: application/json" --data @<(python3 -c "
+import json,sys; d=json.load(open(sys.argv[1])); json.dump({\"code\": d[\"code\"]}, sys.stdout)" "$T/longwifi.json") "$B/api/scan")" = 200 ]'
+check "and it is read as a Wi-Fi code"        '[ "$(js "d[\"action\"]")" = wifi ]'
+check "with the key redacted, as ever"        '[ "$(js "d[\"code\"]")" = "WIFI:<redacted>" ]'
+
 echo "the order outbox (phase 6):"
 # gatbox-sync cannot read this process's files -- its own user, ProtectSystem=strict -- and it
 # already derives its session queue from GET /api/rail/sessions rather than from disk. So the

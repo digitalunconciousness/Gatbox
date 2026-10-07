@@ -46,7 +46,7 @@ EVENT = struct.Struct("llHHi")
 EV_KEY = 1
 EVIOCGRAB = 0x40044590                      # _IOW('E', 0x90, int): 1 = exclusive, 0 = release
 IDLE_S = 0.5                                # no key for this long = the code is finished (scanner with no suffix)
-MAX_LEN = 512                               # longer = not a scan: drop it
+MAX_LEN = 512                               # longer = not a scan: drop it (= meter.SCAN_MAX)
 
 # key code → (plain, with shift), US layout (linux/input-event-codes.h)
 KEYMAP = {2: "1!", 3: "2@", 4: "3#", 5: "4$", 6: "5%", 7: "6^", 8: "7&", 9: "8*", 10: "9(", 11: "0)", 12: "-_", 13: "=+",

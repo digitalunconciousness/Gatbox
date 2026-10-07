@@ -372,56 +372,77 @@
       build(pane, done);
     });
   }
-  function keypad({title, max, number, value, symbols, keep}) {
+  // One text keyboard for the whole dashboard: six rows, always. Four of keys, a modifier row,
+  // and the actions.
+  //
+  // The symbols are a *layer*, not extra rows appended underneath. Appended, they pushed the
+  // confirm button past the bottom of the 7" panel -- which has no scrollbar and no keyboard --
+  // so there was no visible way to save at all. And they were only offered to two of the
+  // twenty-one places on this dashboard that type text, so no two keypads looked alike.
+  const KP_LETTERS = ["1234567890", "QWERTYUIOP", "ASDFGHJKL-", "ZXCVBNM./\u232B"];
+  // The rest of printable ASCII. With the letters layer's - . / ' & this covers every character
+  // a WPA passphrase may contain, which is the hardest thing anyone types here.
+  const KP_SYMBOLS = ["1234567890", "!\"#$%^&*()", "+=,:;<>?@[", "]\\_`{|}~-\u232B"];
+  const KP_NUMBERS = ["789\u232B", "456-", "123.", "0"];
+
+  function keypad({title, max, number, value, keep}) {
     return sheet(title, (pane, done) => {
-      let txt = value || "", lower = false;
+      let txt = value || "", lower = false, layer = 0;        // 0 letters, 1 symbols
       const field = el("div", "kp-field");
       const show = () => { field.textContent = txt; field.appendChild(el("span", "cur")); };
       show();
       pane.appendChild(field);
       if (number) pane.classList.add("num"); else pane.classList.remove("num");
       const keys = el("div", "keys");
-      const rows = number ? ["789⌫", "456-", "123.", "0"] : ["1234567890", "QWERTYUIOP", "ASDFGHJKL-", "ZXCVBNM./⌫"];
       const press = k => {
-        if (k === "⌫") txt = txt.slice(0, -1);
+        if (k === "\u232B") txt = txt.slice(0, -1);
         else if (txt.length < (max || 40)) txt += k;
         show();
       };
-      const letters = [];
-      const key = (k, cls, label) => {
-        const b = el("button", cls || null, label || k), letter = /^[A-Z]$/.test(k);
-        b.addEventListener("click", () => press(letter && lower ? k.toLowerCase() : k));
-        if (letter) letters.push(b);
-        keys.appendChild(b);
-        return b;
+      const paint = () => {
+        clear(keys);
+        const key = (k, cls, label, onclick) => {
+          const b = el("button", cls || null, label === undefined ? k : label);
+          b.addEventListener("click", onclick || (() => press(k)));
+          keys.appendChild(b);
+          return b;
+        };
+        if (number) { for (const r of KP_NUMBERS) for (const k of r) key(k); return; }
+        for (const r of (layer ? KP_SYMBOLS : KP_LETTERS))
+          for (const k of r) {
+            const isLetter = /^[A-Z]$/.test(k);
+            key(k, null, isLetter && lower ? k.toLowerCase() : k,
+                isLetter ? () => press(lower ? k.toLowerCase() : k) : undefined);
+          }
+        // The modifier row, in the same five slots on both layers so nothing moves under a
+        // finger: case, layer, space, and the two commonest marks for that layer.
+        // "aA", not "abc": the layer button has to read ABC to mean "back to letters", and two
+        // buttons reading abc and ABC beside each other is a coin toss.
+        const sh = key("aA", "wide shift", "aA", () => { lower = !lower; paint(); });
+        if (lower) sh.classList.add("on");
+        const lay = key("?#+", "wide shift", layer ? "ABC" : "?#+",
+                        () => { layer = layer ? 0 : 1; paint(); });
+        if (layer) lay.classList.add("on");
+        key(" ", "x4", "SPACE");
+        key(layer ? "," : "'");
+        key(layer ? "." : "&");
       };
-      for (const r of rows) for (const k of r) key(k);
-      if (!number) {                                 // shift (names aren't all caps), the symbols names use, space
-        const sh = el("button", "wide shift", "abc");
-        sh.addEventListener("click", () => {
-          lower = !lower;
-          sh.textContent = lower ? "ABC" : "abc"; sh.classList.toggle("on", lower);
-          letters.forEach(b => { b.textContent = lower ? b.textContent.toLowerCase() : b.textContent.toUpperCase(); });
-        });
-        keys.appendChild(sh);
-        key("'"); key("&");
-        const sp = el("button", "x4", "SPACE"); sp.addEventListener("click", () => press(" ")); keys.appendChild(sp);
-        key(":"); key("!");
-        // A Wi-Fi passphrase is not a machine name: it needs the rest of the printable set,
-        // and the rows above only offer ' & : ! - . /
-        if (symbols) for (const k of "@#$%^*()_+=,?;\"<>[]{}|~`\\") key(k);
-      }
-      const cancel = el("button", number ? "" : "x4", "CANCEL"), ok = el("button", number ? "" : "x6", "OK");
-      ok.style.borderColor = "var(--mag)";
+      paint();
+      pane.appendChild(keys);
+      // Outside the key grid, so the grid can never push it off the screen. `.keys` scrolls if
+      // it ever has to; this row does not move.
+      const actions = el("div", "kp-actions");
+      const cancel = el("button", null, "CANCEL");
+      const ok = el("button", "primary", "SAVE");
       cancel.addEventListener("click", () => done(null));
       ok.addEventListener("click", () => done(keep ? txt : txt.trim()));
-      add(keys, cancel, ok);
-      pane.appendChild(keys);
+      add(actions, cancel, ok);
+      pane.appendChild(actions);
       S.kd = e => {                                  // a real keyboard works too (phone, bench keyboard)
         if (e.key === "Enter") done(keep ? txt : txt.trim());
         else if (e.key === "Escape") done(null);
-        else if (e.key === "Backspace") press("⌫");
-        else if (e.key.length === 1) press(number ? e.key : e.key);
+        else if (e.key === "Backspace") press("\u232B");
+        else if (e.key.length === 1) press(e.key);
       };
       document.addEventListener("keydown", S.kd);
     });
@@ -767,7 +788,7 @@
     // into a tile is destroyed mid-entry -- and the kiosk has no keyboard to type with. The
     // same reason the Wi-Fi key goes through it.
     const issue = await keypad({title: "WHAT IS WRONG WITH " + entry.name.toUpperCase(),
-                               max: 2000, symbols: true, keep: true});
+                               max: 2000, keep: true});
     if (issue === null || !issue.trim()) return;
     const priority = await pickFrom("How urgent?",
       PRIORITIES.map(p => ({key: p, title: p, find: [p.toLowerCase()]})), "Medium");
@@ -786,7 +807,7 @@
   }
 
   function attachTrace(order) {
-    const note = () => keypad({title: "A NOTE? (OPTIONAL)", max: 200, symbols: true, keep: true});
+    const note = () => keypad({title: "A NOTE? (OPTIONAL)", max: 200, keep: true});
     note().then(n => {
       if (n === null) return;
       // No session_file: the server resolves "the last finished one", which is what the
@@ -1135,8 +1156,7 @@
             // keypad() is a sheet() overlay, not a tile. loadSystem() rebuilds #sy-grid
             // every 5 s, so a field inside this card was wiped mid-entry -- and the kiosk
             // has no on-screen keyboard to type into one with anyway.
-            const psk = await keypad({ title: "KEY FOR " + ssid, max: 63,
-                                       symbols: true, keep: true });
+            const psk = await keypad({ title: "KEY FOR " + ssid, max: 63, keep: true });
             if (psk === null) return;        // CANCEL; "" is a legitimate open network
             api("POST", "/api/wifi", { ssid: ssid, psk: psk }).then(asked).catch(fail);
           });

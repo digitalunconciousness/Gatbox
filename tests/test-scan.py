@@ -227,8 +227,22 @@ def main():
     check("lower-case command works", api("POST", "/api/scan", {"code": "gatbox:mark"})[1]["action"] == "mark")
     check("upper-case slug works", api("POST", "/api/scan", {"code": "PIN-X-MEN"})[1]["action"] == "machine")
     check("a retired machine is unknown", api("POST", "/api/scan", {"code": "pin-gone"})[1]["action"] == "unknown")
+    # 513, not 201: the limit is meter.SCAN_MAX, which now matches gatbox-scand's MAX_LEN.
+    # They disagreed, and a Wi-Fi QR fell in the gap -- the format escapes \ ; , : and " in
+    # both fields, so a 32-byte SSID and a 63-character passphrase of those reach 208.
     check("no code / tab / too long -> 400", [api("POST", "/api/scan", b)[0] for b in
-          ({}, {"code": "a\tb"}, {"code": "x" * 201})] == [400, 400, 400])
+          ({}, {"code": "a\tb"}, {"code": "x" * 513})] == [400, 400, 400])
+    long_wifi = "WIFI:T:WPA;S:%s;P:%s;;" % ("".join("\\;" for _ in range(32)),
+                                            "".join("\\;" for _ in range(63)))
+    check("the worst legitimate Wi-Fi code is 208 chars", len(long_wifi) == 208)
+    check("and it is not too long to scan", api("POST", "/api/scan", {"code": long_wifi})[0] == 200)
+    # The spool is one slot. A second code while the first is still waiting used to escape as
+    # a 500 -- which is what someone sees after a join that has not been taken yet, which is
+    # exactly when they scan again.
+    second = api("POST", "/api/scan", {"code": long_wifi})
+    check("a second scan while one waits is not a 500", second[0] == 200)
+    check("it says a request is already waiting", "already waiting" in (second[1].get("detail") or ""))
+    check("and still never echoes the code", second[1]["code"] == "WIFI:<redacted>")
 
     # A Wi-Fi QR. Android and iOS both produce this format from "share this network", and the
     # scanner is already loopback-only, so standing at the box is the credential.

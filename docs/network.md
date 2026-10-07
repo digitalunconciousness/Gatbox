@@ -89,8 +89,18 @@ if anything above misbehaves, this is the way in.
 It costs about thirty seconds, not a trip. A failed join brings the hotspot back by itself, so
 the box stays reachable — join **GATBOX** again and try another key.
 
-The dashboard's Wi-Fi card shows what the helper last did. `journalctl -u gatbox-wifi` has the
-detail. A key never appears in either.
+The dashboard's Wi-Fi card shows what the helper last did. `journalctl -u gatbox-wifi` has
+nmcli's own reason for a failed join, and `sudo cat /var/spool/gatbox-wifi/status.json` has the
+last outcome in full. A key never appears in any of them.
+
+**If a network in the list will not join**, and the attempt fails in about a second rather than
+taking thirty: nmcli works out the security type from the access point in *its* scan cache, and
+with the AP missing from it there is nothing to infer from, so it answers
+`802-11-wireless-security.key-mgmt: property is missing` without trying to associate. The card
+goes on offering the network because it reads its own older scan list. Since 2026-10-06 a join
+rescans first and prefers a profile the box already has, which knows its own security type —
+and, for the home network here, the static address set by hand. Press SCAN if a network is
+missing from the list; it is the same refresh.
 
 ## What a key is, and is not, protected from
 

@@ -143,9 +143,12 @@ check "GET offers saved, in range, and the last outcome"       '[ "$(js "sorted(
 # By value, with a real outcome on disk. The previous form grepped for field *names* at a
 # point in the run where `last` was null -- it would have passed against a response that
 # contained the key under any name at all.
-printf '{"at":1,"action":"join","ssid":"BenchNet","ok":false,"state":"failed","detail":"bad key hunter2-not-real here"}' > "$T/wifi/status.json"
+printf '{"at":1,"action":"join","ssid":"BenchNet","ok":false,"state":"on-other-network","where":"OtherNetwork","detail":"bad key hunter2-not-real here"}' > "$T/wifi/status.json"
 check "GET never returns a key, by value"     '! curl -fsS "$B/api/wifi" | grep -qF "hunter2-not-real"'
-check "and it does return the outcome"        '[ "$(api GET /api/wifi)" = 200 ] && [ "$(js "d[\"last\"][\"state\"]")" = failed ]'
+check "and it does return the outcome"        '[ "$(api GET /api/wifi)" = 200 ] && [ "$(js "d[\"last\"][\"state\"]")" = on-other-network ]'
+# The one thing someone standing at a box whose rejoin failed actually needs: which network
+# it is on now. A named field, unlike `detail`, which is nmcli's text and stays out.
+check "and which network it ended up on"      '[ "$(js "d[\"last\"][\"where\"]")" = OtherNetwork ]'
 rm -f "$T/wifi/status.json"
 WSPOOL="$T/wifi"
 check "POST writes a join request"            '[ "$(api POST /api/wifi "{\"ssid\":\"BenchNet\",\"psk\":\"hunter2-not-real\"}")" = 202 ] && [ -f "$WSPOOL/request.json" ]'

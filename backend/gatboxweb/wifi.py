@@ -190,7 +190,9 @@ def in_range():
 # in the journal, which is where docs/network.md sends you to diagnose a join, and out of
 # every HTTP response. gatbox-wifi already scrubs before writing; this is the second wall,
 # and it does not depend on every future writer of that file remembering to.
-OUTCOME_FIELDS = ("id", "at", "action", "ssid", "ok", "state")
+# `where` joins this list and `detail` still does not: `where` is a network name this code
+# put there, while `detail` is nmcli's own text and the one field that could ever carry a key.
+OUTCOME_FIELDS = ("id", "at", "action", "ssid", "ok", "state", "where")
 
 
 def last_outcome():

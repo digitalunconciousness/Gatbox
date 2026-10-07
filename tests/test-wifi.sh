@@ -81,7 +81,12 @@ check "not left anywhere in the spool"          '! grep -rqF -- "$KEY" "$SPOOL"'
 echo "a join that fails:"
 req_py join BenchNet wrong-key
 NMCLI_RC=1 run
-check "exits non-zero"                          '[ "$(cat "$T/rc")" != 0 ]'
+# Exit 0, not 1. A wrong key is an ordinary outcome, not a unit failure -- the same call
+# gatbox-sync made in Phase 3 about being off its network. A failed oneshot leaves the unit
+# red on the SYSTEM panel and in `systemctl --failed` for something the dashboard already
+# reports properly. (It does *not* stop gatbox-wifi.path triggering again; that was measured
+# with a scratch unit, not assumed.)
+check "a wrong key is not a unit failure"       '[ "$(cat "$T/rc")" = 0 ]'
 check "the request file is gone even so"        '[ ! -e "$SPOOL/request.json" ]'
 # A wrong key must cost thirty seconds, not a trip to wherever the box is.
 check "the hotspot is brought back"             'grep -q . "$T/ap-called"'
@@ -187,6 +192,37 @@ check "writes saved.json"                       '[ -f "$SPOOL/saved.json" ]'
 check "with the saved profiles, ours excluded"  '[ "$(python3 -c "
 import json; print(json.load(open(\"$SPOOL/saved.json\"))[\"ssids\"])")" = "['"'"'HomeNetwork'"'"', '"'"'OldArcade'"'"']" ]'
 check "and no key in it"                        '! grep -qF -- "$KEY" "$SPOOL/saved.json"'
+
+echo "a failed join says where the box actually ended up:"
+# The case that caused this: already on one network, join another, it fails. The script
+# gatbox-ap-fallback then exits 0 saying "on a network, nothing to do" -- so the status read
+# "restored-hotspot" while the box was still sitting on the network it was trying to leave,
+# and the card said the hotspot had come back when it had not.
+# A wrong key fails the *connect* and nothing else -- NMCLI_RC=1 fails every call, which is
+# what a broken NetworkManager looks like, not a bad passphrase.
+cat > "$T/nmcli-badkey" <<'STUB'
+#!/usr/bin/env bash
+{ printf '%s\n' "--- $#"; printf '%s\n' "$@"; } >> "${NMCLI_LOG:?}"
+case "$*" in
+    *"device wifi connect"*) echo "Error: Secrets were required, but not provided." >&2; exit 4 ;;
+    *"DEVICE,STATE,CONNECTION device"*) cat "${NMCLI_DEVICE:-/dev/null}" ;;
+esac
+exit 0
+STUB
+chmod +x "$T/nmcli-badkey"
+printf 'wlan0:connected:OtherNetwork\n' > "$T/device"
+req_py join HomeNetwork wrong-key
+GATBOX_NMCLI="$T/nmcli-badkey" NMCLI_DEVICE="$T/device" run
+check "it does not claim a hotspot that is not up" '[ "$(status state)" != restored-hotspot ]'
+check "it names the network still connected"       '[ "$(status state)" = "on-other-network" ]'
+check "and says which one, for the card"           '[ "$(status where)" = OtherNetwork ]'
+check "ok is still false"                          '[ "$(status ok)" = False ]'
+check "and the key is still nowhere"               '! grep -qF -- "wrong-key" "$SPOOL/status.json"'
+printf 'wlan0:connected:gatbox-ap\n' > "$T/device"
+req_py join HomeNetwork wrong-key
+GATBOX_NMCLI="$T/nmcli-badkey" NMCLI_DEVICE="$T/device" run
+check "with the hotspot really up, it says so"     '[ "$(status state)" = restored-hotspot ]'
+: > "$T/device"
 
 echo "the hotspot restore reports what actually happened:"
 # "restored-hotspot" was written whenever the script *ran*, including when it exited

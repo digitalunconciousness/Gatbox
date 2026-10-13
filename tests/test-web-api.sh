@@ -379,6 +379,71 @@ CACHE
 check "a cached open order is offered"           '[ "$(api GET /api/orders)" = 200 ] && [ "$(js "[(o[\"id\"], o[\"issue\"]) for o in d[\"hub_open\"]]")" = "[(412, '"'"'Rail sags under load'"'"')]" ]'
 check "and it names the machine it is for"       '[ "$(js "d[\"machine\"]")" = gauntlet-legends ]'
 
+echo "several hubs (Phase 8), from gatbox-sync's state:"
+# The default hub (ALPHA, like the tracker) lists this Pi's machines; BRAVO takes jobs and lists two customer
+# machines and one of ours, which makes that one a conflict.
+mkdir -p "$T/sync/hubs/bravo"
+python3 - "$T/sync" <<'STATE'
+import json, sys
+d = sys.argv[1]
+w = lambda p, o: json.dump(o, open(f"{d}/{p}", "w"))
+w("status.json", {"at": 1790000000.0, "ok": False, "queued": 2, "sent_total": 5,
+                  "hubs": [{"name": "default", "label": "ALPHA", "capabilities": [], "ok": True, "queued": 0},
+                           {"name": "bravo", "label": "BRAVO", "capabilities": ["jobs"], "ok": False, "queued": 2,
+                            "error": "no hub reachable"}],
+                  "held": [{"what": "rail_x.csv", "machine": "nobody-has"}],
+                  "conflicts": [{"machine": "gauntlet", "hubs": ["ALPHA", "BRAVO"]}], "refused": []})
+w("hub.json", {"name": "default", "label": "ALPHA", "capabilities": []})
+w("roster.json", {"machines": [{"slug": "gauntlet-legends", "name": "Gauntlet Legends"},
+                               {"slug": "gauntlet", "name": "Gauntlet"}]})
+w("hubs/bravo/hub.json", {"name": "bravo", "label": "BRAVO", "capabilities": ["jobs"], "app": "shop-hub"})
+w("hubs/bravo/roster.json", {"machines": [
+    {"slug": "s-0042-ms-pac-man", "name": "Ms. Pac-Man", "status": "In shop", "location": "Bench",
+     "model_key": "gauntlet"},
+    {"slug": "s-0099-other", "name": "Other", "status": "On site", "location": "On site", "model_key": None},
+    {"slug": "gauntlet", "name": "Gauntlet", "model_key": None}]})
+w("hubs/bravo/orders.json", {"open": {"s-0042-ms-pac-man": [
+    {"id": 7, "issue": "Dead on arrival", "priority": "Normal", "status": "Waiting on parts",
+     "work_order": "WO-2026-0012", "nte": "250.00", "source": "web", "reported": 1790000000.0}]}})
+STATE
+# /api/system is cached for a few seconds: wait for a snapshot that has read the new state.
+waitfor '[ "$(api GET /api/system)" = 200 ] && [ "$(js "len((d[\"hub\"] or {}).get(\"hubs\") or [])")" = 2 ]' 100
+check "SYSTEM: one line per hub, by label"       '[ "$(js "[(x[\"label\"], x[\"jobs\"], x[\"queued\"]) for x in d[\"hub\"][\"hubs\"]]")" = "[('"'"'ALPHA'"'"', False, 0), ('"'"'BRAVO'"'"', True, 2)]" ]'
+check "the old keys are still there"             '[ "$(js "(d[\"hub\"][\"queued\"], d[\"hub\"][\"sent_total\"])")" = "(2, 5)" ]'
+check "held and conflicts are listed"            '[ "$(js "(d[\"hub\"][\"held\"], [c[\"machine\"] for c in d[\"hub\"][\"conflicts\"]])")" = "(['"'"'nobody-has'"'"'], ['"'"'gauntlet'"'"'])" ]'
+api GET /api/roster >/dev/null
+check "the picker is grouped by hub label"       '[ "$(js "[(g[\"label\"], g[\"slugs\"]) for g in d[\"groups\"]]")" = "[('"'"'ALPHA'"'"', ['"'"'gauntlet-legends'"'"', '"'"'gauntlet'"'"']), ('"'"'BRAVO'"'"', ['"'"'gauntlet'"'"', '"'"'s-0042-ms-pac-man'"'"', '"'"'s-0099-other'"'"'])]" ]'
+check "a customer machine is in the list, with its hub and model" '[ "$(js "[(m[\"hub\"], m.get(\"model_key\")) for m in d[\"machines\"] if m[\"slug\"] == \"s-0042-ms-pac-man\"]")" = "[('"'"'BRAVO'"'"', '"'"'gauntlet'"'"')]" ]'
+check "a conflicting one is flagged, owned by neither" '[ "$(js "[(m[\"hub\"], m[\"conflict\"]) for m in d[\"machines\"] if m[\"slug\"] == \"gauntlet\"]")" = "[(None, True)]" ]'
+check "the maintenance-app export stays this Pi's own" '[ "$(curl -s "$B/roster.json" | grep -c "s-0042")" = 0 ]'
+check "a customer machine can be set"            '[ "$(api PUT /api/machine "{\"slug\":\"s-0042-ms-pac-man\"}")" = 200 ]'
+check "its entry is the hub's record"            '[ "$(js "(d[\"entry\"][\"name\"], d[\"entry\"][\"hub\"][\"label\"], d[\"entry\"][\"hub\"][\"jobs\"], d[\"entry\"][\"library\"])")" = "('"'"'Ms. Pac-Man'"'"', '"'"'BRAVO'"'"', True, '"'"'gauntlet'"'"')" ]'
+check "the model is kept beside the machine"     '[ "$(cat "$T/ctrl/machine-model")" = gauntlet ]'
+check "so the logger side resolves it too"       '[ "$(GATBOX_STATE="$T/ctrl" python3 "$REPO/backend/gatbox-meta" resolve | python3 -c "import json,sys; print(json.load(sys.stdin)[\"model\"])")" = gauntlet ]'
+check "an unknown slug is still refused"         '[ "$(api PUT /api/machine "{\"slug\":\"s-9999-nope\"}")" = 404 ]'
+check "the JOB: the owning hub, open job, work order, NTE" '[ "$(api GET /api/orders)" = 200 ] && [ "$(js "(d[\"hub\"][\"jobs\"], [(o[\"id\"], o[\"work_order\"], o[\"nte\"], o[\"status\"]) for o in d[\"hub_open\"]])")" = "(True, [(7, '"'"'WO-2026-0012'"'"', '"'"'250.00'"'"', '"'"'Waiting on parts'"'"')])" ]'
+check "AS-FOUND sets the phase"                  '[ "$(api PUT /api/phase "{\"phase\":\"as_found\"}")" = 200 ] && [ "$(cat "$T/ctrl/phase")" = as_found ]'
+check "and the header says so"                   'GATBOX_STATE="$T/ctrl" python3 "$REPO/backend/gatbox-meta" header | grep -qx "# phase=as_found"'
+check "the meter state carries it, and jobs"     '[ "$(api GET /api/meter/profile)" = 200 ] && [ "$(js "(d[\"phase\"], d[\"jobs\"])")" = "('"'"'as_found'"'"', True)" ]'
+check "during is not offered on the 7\""         '[ "$(api PUT /api/phase "{\"phase\":\"during\"}")" = 400 ]'
+check "a tag can carry a phase"                  '[ "$(api POST /api/orders/tag "{\"order\":7,\"session_file\":\"'"$O"'\",\"phase\":\"as_left\"}")" = 201 ] && [ "$(js "(d[\"phase\"], d[\"machine\"])")" = "('"'"'as_left'"'"', '"'"'s-0042-ms-pac-man'"'"')" ]'
+check "but not a made-up one"                    '[ "$(api POST /api/orders/tag "{\"order\":7,\"session_file\":\"'"$O"'\",\"phase\":\"sideways\"}")" = 400 ]'
+check "MANUALS go to the model library"         '[ "$(api GET /api/manuals/s-0042-ms-pac-man)" = 200 ] && [ "$(js "(d[\"slug\"], d[\"library\"])")" = "('"'"'s-0042-ms-pac-man'"'"', '"'"'gauntlet'"'"')" ]'
+check "with no model, MANUALS say why"           '[ "$(api GET /api/manuals/s-0099-other)" = 404 ] && grep -q "model_key" "$T/body"'
+check "and the ROM list is unmapped, saying why" '[ "$(api GET /api/mame/s-0099-other)" = 200 ] && [ "$(js "d[\"status\"]")" = unmapped ]'
+# An actual is one board's measurement: a barcade board's must not set a customer board's window.
+api PUT /api/actuals/gauntlet '{"rail":"+5V","value":5.1,"window":[5.0,5.2]}' >/dev/null
+check "the model's own board's actual stays its own" '[ "$(api GET /api/specs/s-0042-ms-pac-man)" = 200 ] && [ "$(js "[r[\"window\"] for r in d[\"rails\"] if r[\"rail\"] == \"+5V\"]")" != "[[5.0, 5.2]]" ]'
+check "an actual on the customer machine counts"  '[ "$(api PUT /api/actuals/s-0042-ms-pac-man "{\"rail\":\"+5V\",\"value\":5.05,\"window\":[4.9,5.15]}")" = 200 ] && [ "$(api GET /api/specs/s-0042-ms-pac-man)" = 200 ] && [ "$(js "[(r[\"window\"], r[\"source\"]) for r in d[\"rails\"] if r[\"rail\"] == \"+5V\"]")" = "[([4.9, 5.15], '"'"'actual'"'"')]" ]'
+check "and is in the logger window"            'GATBOX_STATE="$T/ctrl" python3 "$REPO/backend/gatbox-meta" header | grep -q "^# window=4.9..5.15 source=actual:s-0042-ms-pac-man"'
+api DELETE /api/actuals/gauntlet '{"rail":"+5V"}' >/dev/null
+check "a scanned customer tag sets the machine"  '[ "$(api POST /api/scan "{\"code\":\"https://hub.example/g/s-0099-other\"}")" = 200 ] && [ "$(js "d[\"action\"]")" = machine ]'
+check "which clears the phase and the model"     '[ ! -e "$T/ctrl/phase" ] && [ ! -e "$T/ctrl/machine-model" ]'
+check "and a barcade machine never carries one"  '[ "$(api PUT /api/machine "{\"slug\":\"gauntlet-legends\"}")" = 200 ] && ! GATBOX_STATE="$T/ctrl" python3 "$REPO/backend/gatbox-meta" header | grep -q "^# phase="'
+check "nor gets AS-FOUND on the 7\""             '[ "$(api GET /api/meter/profile)" = 200 ] && [ "$(js "d[\"jobs\"]")" = False ]'
+check "a hub removed from hubs.d is not a hub"   'python3 -c "
+import json; p=\"$T/sync/status.json\"; d=json.load(open(p)); d[\"hubs\"]=d[\"hubs\"][:1]; json.dump(d, open(p, \"w\"))" && [ "$(api PUT /api/machine "{\"slug\":\"s-0042-ms-pac-man\"}")" = 404 ]'
+
 check "server log: no errors"                 '! grep -q "Traceback\|error on\|^live: \|^warm-up: " "$T/web.log"'
 
 echo "web api: $pass passed, $fail failed"

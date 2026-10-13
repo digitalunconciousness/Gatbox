@@ -23,7 +23,7 @@ import subprocess
 import threading
 import time
 
-from . import config
+from . import config, hubs
 from .live import LIVE
 
 CACHE_S = 2.0
@@ -222,7 +222,16 @@ def logger(procs):
 
 # gatbox-sync's own StateDirectory. Read-only from here: that job is the only writer of its
 # state, so the dashboard reports what it finds and never corrects it.
-SYNC_STATE = "/var/lib/gatbox-sync"
+SYNC_STATE = hubs.SYNC_STATE
+
+
+def _hub_line(st):
+    return {"ok": st.get("ok"), "url": st.get("hub"), "at": st.get("at"),
+            "queued": st.get("queued"), "sent_total": st.get("sent_total"),
+            "error": st.get("error"),
+            "last": {"created": st.get("last_created"),
+                     "duplicate": st.get("last_duplicate"),
+                     "rejected": st.get("last_rejected")}}
 
 
 def hub():
@@ -230,19 +239,29 @@ def hub():
 
     None when the job has never run -- which is the normal state of a Pi that has not been
     given a hub token, not a fault, so the panel should say "not configured" rather than
-    show a failure. Fails soft like every other source here."""
+    show a failure. Fails soft like every other source here.
+
+    The top-level keys are the whole run, as they always were. Phase 8 adds "hubs" (one line
+    per hub, for a tile each when there are several), and what the run could not send:
+    "held" (no roster has the machine), "conflicts" (two rosters do) and "refused" (a hub
+    file the job would not use)."""
     path = os.environ.get("GATBOX_SYNC_STATE", SYNC_STATE)
     try:
         with open(os.path.join(path, "status.json"), encoding="utf-8") as fh:
             st = json.load(fh)
     except (OSError, ValueError):
         return None
-    return {"ok": st.get("ok"), "url": st.get("hub"), "at": st.get("at"),
-            "queued": st.get("queued"), "sent_total": st.get("sent_total"),
-            "error": st.get("error"),
-            "last": {"created": st.get("last_created"),
-                     "duplicate": st.get("last_duplicate"),
-                     "rejected": st.get("last_rejected")}}
+    out = _hub_line(st)
+    out["hubs"] = [dict(_hub_line(h), name=h.get("name"), label=h.get("label"),
+                        jobs="jobs" in (h.get("capabilities") or []),
+                        parked=len(h.get("parked") or []))
+                   for h in st.get("hubs") or [] if isinstance(h, dict)]
+    out["held"] = sorted({x.get("machine") for x in st.get("held") or []
+                          if isinstance(x, dict) and x.get("machine")})
+    out["conflicts"] = [c for c in st.get("conflicts") or [] if isinstance(c, dict)]
+    out["refused"] = [{"name": r.get("name"), "reason": r.get("reason")}
+                      for r in st.get("refused") or [] if isinstance(r, dict)]
+    return out
 
 
 def snapshot():

@@ -33,6 +33,13 @@ def _archive():
 def checklist(slug):
     if slug not in (roster.slugs() or set()):
         raise Bad(404, f"not in the roster: {slug!r}")
+    # A machine a hub knows by model (Phase 8) has that model's chips. The archive is matched by SHA-1, so its own
+    # dumps tick them wherever they were filed.
+    lib = roster.library(slug)
+    if lib is None:
+        return {"slug": slug, "set": None, "status": "unmapped", "why": "its hub names no model this Pi has (model_key)",
+                "mame": None, "versions": [], "default": None}
+    asked, slug = slug, lib
     try:
         data = profiles._load(config.MAME_ROMS)
     except (OSError, ValueError):
@@ -42,7 +49,7 @@ def checklist(slug):
     meta = data.get("meta", {})
     m = data.get("machines", {}).get(slug)
     if m is None:
-        return {"slug": slug, "set": None, "status": "unmapped", "why": "not on the MAME list yet (gatbox-mame-sets.json)",
+        return {"slug": asked, "set": None, "status": "unmapped", "why": "not on the MAME list yet (gatbox-mame-sets.json)",
                 "mame": meta.get("mame"), "versions": [], "default": None}
     idx = _archive()
     versions = []
@@ -51,5 +58,5 @@ def checklist(slug):
         versions.append(dict(v, roms=roms, dumped=sum(1 for r in roms if r["dumped"])))
     prefer = m.get("prefer") or m.get("set")
     best = max(versions, key=lambda v: (v["dumped"], v["name"] == prefer, v["parent"]), default=None)
-    return {"slug": slug, "set": m.get("set"), "status": m.get("status"), "why": m.get("why", ""),
+    return {"slug": asked, "library": slug, "set": m.get("set"), "status": m.get("status"), "why": m.get("why", ""),
             "mame": meta.get("mame"), "versions": versions, "default": best["name"] if best else None}

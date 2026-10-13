@@ -66,7 +66,7 @@ DEFAULT_DIR = "/var/log/gatbox"
 OFF_V = 0.5            # rail profiles: under this the board is switched off
 EDGE_S = 3.0           # a power cycle also takes in up to this much of the slope down to / up from off
 # header / bookkeeping comments get their own lines and sections; anything else is printed as a note
-OWN_LINES = {"mode", "profile", "window", "alarm_hi", "machine", "mark", "mark-before-start", "settling",
+OWN_LINES = {"mode", "profile", "window", "alarm_hi", "machine", "phase", "mark", "mark-before-start", "settling",
              "settling-unused", "mode-change"}
 KEY_BASE = {"VDC": "V", "VAC": "V", "VACDC": "V", "DIODE": "V", "ADC": "A", "AAC": "A", "OHM": "Ω",
             "CAP": "F", "HZ": "Hz", "DUTY": "%", "CONT": ""}
@@ -252,7 +252,7 @@ def main():
         + ((f"; window from {wsource}" if window else "") if h.profile
            else ": the default, this file has no profile line"))
     if h.machine:
-        say(f"machine:   {h.machine}")
+        say(f"machine:   {h.machine}" + (f" ({h.phase.replace('_', '-')})" if h.phase else ""))
     say(f"limit:     over-voltage above {alarm:g} {wunit} (magnitude)" if alarm is not None else "limit:     none")
     held = {}
     for r in rows:
@@ -452,6 +452,9 @@ def main():
             "profile": {"id": pid, "label": prof.get("label", pid), "kind": kind,
                         "rail": prof.get("rail"), "from_header": bool(h.profile)},
             "machine": h.machine,
+            # as_found | as_left from the header, or None (every file before Phase 8). gatbox-sync
+            # sends it on only to a hub that takes jobs.
+            "phase": h.phase,
             "window": ({"lo": window[0], "hi": window[1], "unit": wunit, "source": wsource, "applies_to": applies}
                        if window else None),
             "alarm_hi": alarm, "powered": J_powered,

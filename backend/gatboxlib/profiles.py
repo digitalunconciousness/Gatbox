@@ -7,8 +7,14 @@ data/ when running from a checkout, else /usr/local/share/gatbox.
 State (written only by gatbox-web, read by gatbox-raillog via gatbox-meta): profile.json ({"id", "window"}) and
 machine (a roster slug) in $GATBOX_STATE, else /var/lib/gatbox-web. Also roster-added.json: the machines added on
 the dashboard, merged into roster() (the installed roster file itself is never written).
+
+Phase 8 adds two optional one-line files beside machine, both absent on a Pi that has never used a second hub:
+machine-model (the model_key a hub's roster gave the machine: whose manual limits and ROM list it shares) and
+phase (as_found | as_left: what the session is, for a hub that takes jobs). Absent means what it always meant.
 """
 import json, math, os
+
+PHASES = ("as_found", "as_left")
 
 STATE_DEFAULT = "/var/lib/gatbox-web"
 
@@ -67,7 +73,7 @@ def _window(w):
     return (isinstance(w, list) and len(w) == 2 and all(finite(x) for x in w) and w[0] < w[1]) and [float(w[0]), float(w[1])]
 
 
-def machine_specs(dd=None, sd=None):
+def machine_specs(dd=None, sd=None, actuals=True):
     """{slug: {"rails": {rail: [lo, hi]}, "source": ..., "sources": {rail: where that window came from}}}.
 
     Three layers, each later one winning the rails it has: the specs file (gatbox-machine-specs.json), limits the owner
@@ -75,7 +81,7 @@ def machine_specs(dd=None, sd=None):
     actual value from the field). The manual's numbers are never overwritten: each layer keeps its own file, and the
     dashboard shows them side by side."""
     base = (_load(os.path.join(dd or data_dir(), "gatbox-machine-specs.json")) or {}).get("machines", {})
-    conf, act = _state_json(SPECS_CONFIRMED, sd), _state_json(ACTUALS, sd)
+    conf, act = _state_json(SPECS_CONFIRMED, sd), _state_json(ACTUALS, sd) if actuals else {}
     if not conf and not act:
         return base
     out = {}
@@ -94,6 +100,26 @@ def machine_specs(dd=None, sd=None):
         if rails:
             out[slug] = dict(b, rails=rails, sources=src)
     return out
+
+
+def spec_for(slug, model=None, dd=None, sd=None):
+    """The rail spec in force for a machine, or None.
+
+    A machine a hub knows by model (model_key, Phase 8) takes that model's limits -- the specs
+    file and what was CONFIRMed against its manual: facts about the model -- but never the
+    model's *actuals*, which were measured on one particular board. Its own actuals, kept
+    under its own slug, go on top."""
+    if not slug:
+        return None
+    if not model or model == slug:
+        return machine_specs(dd, sd).get(slug)
+    lib = machine_specs(dd, sd, actuals=False).get(model) or {}
+    own = machine_specs(dd, sd).get(slug) or {}
+    rails = dict(lib.get("rails") or {}, **(own.get("rails") or {}))
+    if not rails:
+        return None
+    src = dict(lib.get("sources") or {}, **(own.get("sources") or {}))
+    return dict(lib, rails=rails, sources=src, model=model)
 
 
 ROSTER_FILE = "gatbox-barcade-roster.json"
@@ -166,7 +192,26 @@ def read_state(sd=None):
     return pid, win, machine
 
 
-def resolve(profile_id=None, user_window=None, machine=None, dd=None):
+def _line(sd, name):
+    try:
+        with open(os.path.join(sd or state_dir(), name), encoding="utf-8") as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+def read_model(sd=None):
+    """The set machine's model_key (machine-model), or None: only a hub machine has one."""
+    return _line(sd, "machine-model")
+
+
+def read_phase(sd=None):
+    """as_found | as_left, or None. Anything else in the file is ignored, never written to a log."""
+    p = _line(sd, "phase")
+    return p if p in PHASES else None
+
+
+def resolve(profile_id=None, user_window=None, machine=None, dd=None, model=None, phase=None):
     """The effective profile: window + where it came from and alarm_hi. Window: the machine's own actual window
     (source actual:<slug>) > its spec, from the specs file or a confirmed manual page (machine:<slug>) > the user's
     value > the profile's."""
@@ -177,7 +222,7 @@ def resolve(profile_id=None, user_window=None, machine=None, dd=None):
     window, source = p.get("window"), "profile"
     if user_window and p.get("user_window"):
         window, source = user_window, "user"
-    ms = machine_specs(dd).get(machine or "", {})
+    ms = spec_for(machine, model, dd) or {}
     spec = ms.get("rails", {}).get(p.get("rail") or "")
     if spec:
         kind = "actual" if (ms.get("sources") or {}).get(p.get("rail")) == "actual" else "machine"
@@ -188,7 +233,8 @@ def resolve(profile_id=None, user_window=None, machine=None, dd=None):
     return {"id": pid, "label": p.get("label", pid), "kind": p.get("kind", "bench"), "rail": p.get("rail"),
             "modes": p.get("modes", []), "window": window, "source": source, "alarm_hi": alarm,
             "user_window": p.get("user_window", False), "jack": bool(p.get("jack")), "notes": p.get("notes", ""),
-            "machine": machine}
+            "machine": machine, "model": model if machine else None,
+            "phase": phase if machine and phase in PHASES else None}
 
 
 def header_lines(res):
@@ -199,4 +245,7 @@ def header_lines(res):
            f"# alarm_hi={res['alarm_hi']:g}" if res["alarm_hi"] is not None else "# alarm_hi=none"]
     if res.get("machine"):
         out.append(f"# machine={res['machine']}")
+        # Only with a machine, and only a known value: a bad state file must not reach a log.
+        if res.get("phase") in PHASES:
+            out.append(f"# phase={res['phase']}")
     return out

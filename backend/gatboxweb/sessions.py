@@ -34,7 +34,7 @@ def summary(name, t0=None, t1=None):
     first = last = None
     modes, warn, n = {}, set(), 0
     hdr = {"clock": None, "clock_note": None, "clock_sync": None, "profile": None, "window": None,
-           "window_source": None, "machine": None, "mode": None}
+           "window_source": None, "machine": None, "mode": None, "phase": None}
     with open(path, errors="replace") as f:
         for line in f:
             if line.startswith("#"):
@@ -44,7 +44,7 @@ def summary(name, t0=None, t1=None):
                     hdr["clock_note"], hdr["clock"] = c, v.split("(")[0].strip()
                 elif k == "clock-sync":                    # NTP arrived mid-session
                     hdr["clock_sync"] = v.rsplit(" at ", 1)[-1]
-                elif k in ("profile", "machine", "mode"):
+                elif k in ("profile", "machine", "mode", "phase"):
                     hdr[k] = v.strip() or None
                 elif k == "window":
                     rng, _, src = v.partition(" source=")
@@ -110,7 +110,7 @@ def api_list(limit=100):
             "modes": [{"key": m["key"], "label": m["label"], "samples": m["samples"]} for m in J.get("modes", [])],
             "profile": {"id": prof.get("id"), "label": prof.get("label"), "kind": prof.get("kind"),
                         "from_header": prof.get("from_header")} if prof else None,
-            "machine": J.get("machine"),
+            "machine": J.get("machine"), "phase": J.get("phase"),
             "window": J.get("window"), "alarm_hi": J.get("alarm_hi"),
             "clock": {"source": s["clock"], "ntp_from": s["clock_sync"]},
             "powered": ({"min": pw.get("min"), "max": pw.get("max"), "mean": pw.get("mean"),

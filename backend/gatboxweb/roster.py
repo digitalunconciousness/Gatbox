@@ -20,7 +20,7 @@ import unicodedata
 
 from gatboxlib import profiles
 
-from . import config, meter      # meter.Bad at call time: meter imports this module too
+from . import config, hubs, meter      # meter.Bad at call time: meter imports this module too
 
 KINDS = profiles.FLOOR                                 # ("video_games", "pinball")
 FIELDS = ("slug", "name", "platform", "mfr", "risk", "faults", "parts", "notes")   # a roster entry, in the file's order
@@ -42,16 +42,27 @@ def entries():
     return [(k, e) for k in KINDS for e in r.get(k, []) if isinstance(e, dict) and e.get("slug")]
 
 
-def slugs():
+def local_slugs():
+    """The machines on this Pi's own roster (the file + added here), or None when there is none."""
     es = entries()
     return None if es is None else {e["slug"] for _, e in es}
+
+
+def slugs():
+    """Every machine that can be set, scanned, captured or dumped: this Pi's roster and every hub's (Phase 8).
+    None only when there is neither -- "no roster installed", as before there were hubs."""
+    mine, theirs = local_slugs(), hubs.slugs()
+    if mine is None and not theirs:
+        return None
+    return (mine or set()) | theirs
 
 
 def name(slug):
     for _, e in entries() or []:
         if e["slug"] == slug:
             return e.get("name")
-    return None
+    m = hubs.machine(slug)
+    return m.get("name") if m else None
 
 
 def added_slugs():
@@ -68,13 +79,43 @@ def platforms():
 
 
 def listing():
-    """GET /api/roster."""
-    es = entries()
-    if es is None:
+    """GET /api/roster: this Pi's roster, then the machines only a hub has (Phase 8: "hub" says which, "model_key"
+    whose manuals and limits they share). Each entry's "hub" is the label of the hub that owns it, or None."""
+    es, hs = entries(), hubs.hubs()
+    if es is None and not hubs.slugs():
         return None
     specs, mine = profiles.machine_specs(), added_slugs()
-    return [{"slug": e["slug"], "name": e.get("name"), "kind": k, "platform": e.get("platform"), "mfr": e.get("mfr"),
-             "risk": e.get("risk", []), "spec": e["slug"] in specs, "added": e["slug"] in mine} for k, e in es]
+    own = hubs.owners(hs)
+    label = lambda slug: (own[slug][0]["label"] if len(own.get(slug) or []) == 1 else None)   # noqa: E731
+    out = [{"slug": e["slug"], "name": e.get("name"), "kind": k, "platform": e.get("platform"), "mfr": e.get("mfr"),
+            "risk": e.get("risk", []), "spec": e["slug"] in specs, "added": e["slug"] in mine,
+            "hub": label(e["slug"]), "conflict": len(own.get(e["slug"]) or []) > 1} for k, e in es or []]
+    here = {x["slug"] for x in out}
+    for slug, who in sorted(own.items()):
+        if slug in here:
+            continue
+        m = next(x for x in who[0]["machines"] if x["slug"] == slug)
+        model = m.get("model_key") if isinstance(m.get("model_key"), str) else None
+        out.append({"slug": slug, "name": m.get("name") or slug, "kind": None, "platform": None, "mfr": None,
+                    "risk": [], "spec": bool(profiles.spec_for(slug, model)), "added": False,
+                    "hub": label(slug), "conflict": len(who) > 1, "model_key": model,
+                    "location": m.get("location"), "status": m.get("status")})
+    return out
+
+
+def groups(L):
+    """The machine picker's headings, when there is more than one hub: each hub's label with its machines, then
+    THIS PI for the ones no hub has. A conflicting machine is listed under every hub that claims it. With one hub
+    or none: no groups, the list is flat, as before Phase 8."""
+    hs = hubs.hubs()
+    if not hubs.multi(hs):
+        return None
+    out = [{"label": h["label"], "hub": h["name"], "jobs": h["jobs"],
+            "slugs": [x["slug"] for x in L if any(m["slug"] == x["slug"] for m in h["machines"])]} for h in hs]
+    claimed = {s for g in out for s in g["slugs"]}
+    out.append({"label": "THIS PI", "hub": None, "jobs": False,
+                "slugs": [x["slug"] for x in L if x["slug"] not in claimed]})
+    return [g for g in out if g["slugs"]]
 
 
 # --- machines added on the Pi ---------------------------------------------------------------------
@@ -269,7 +310,36 @@ def critical_actions(entry, meta, all_names):
 
 
 def entry(slug):
-    """GET /api/roster/{slug}: None if unknown (or no roster)."""
+    """GET /api/roster/{slug}: None if unknown (or no roster). A machine on this Pi's roster that a hub lists too
+    carries "hub" (that hub); one only a hub has is the hub's record: name, status, location and model_key."""
+    e = _entry(slug)
+    m = hubs.machine(slug)
+    if e is not None:
+        if m:
+            e.update(hub=m["hub"], conflict=m["conflict"])
+        return e
+    if m is None:
+        return None
+    model = m.get("model_key") if isinstance(m.get("model_key"), str) else None
+    lib = model if model in (local_slugs() or set()) else None
+    return {"slug": slug, "name": m.get("name") or slug, "kind": None, "status": m.get("status"),
+            "location": m.get("location"), "model_key": model, "library": lib,
+            "library_name": name(lib) if lib else None, "hub": m["hub"], "conflict": m["conflict"],
+            "added": False, "risk": [], "faults_all": [], "parts_all": [], "risk_info": [], "critical_actions": [],
+            "platform_info": None, "spec": profiles.spec_for(slug, model)}
+
+
+def library(slug):
+    """Whose manuals, spec sheet and ROM list a machine uses: its own when it's on this Pi's roster, its model's
+    (model_key) when a hub knows it by one that is, else None."""
+    if slug in (local_slugs() or set()):
+        return slug
+    m = hubs.machine(slug)
+    model = m.get("model_key") if m else None
+    return model if model in (local_slugs() or set()) else None
+
+
+def _entry(slug):
     r = profiles.roster()
     if r is None:
         return None

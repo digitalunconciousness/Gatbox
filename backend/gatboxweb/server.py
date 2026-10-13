@@ -241,6 +241,18 @@ def api_machine_put(h, m, q):
     h.json(200, {"slug": b["slug"], "changed": changed, "new_file": new_file, "entry": roster.entry(b["slug"])})
 
 
+def api_phase_put(h, m, q):
+    """PUT /api/phase {"phase": "as_found" | "as_left" | null} (Phase 8): what the session is, for a machine whose hub
+    takes jobs. A change starts a new file, like a machine change."""
+    b = h.body()
+    if not isinstance(b, dict) or "phase" not in b:
+        raise Bad(400, 'expected {"phase": "as_found" | "as_left" | null}')
+    changed, new_file = meter.set_phase(b["phase"])
+    if changed:
+        LIVE.emit("state", meter.state(full=False))
+    h.json(200, {"phase": b["phase"], "changed": changed, "new_file": new_file})
+
+
 def api_machine_delete(h, m, q):
     changed, new_file = meter.set_machine(None)
     if changed:
@@ -409,7 +421,14 @@ def api_captures_get(h, m, q):
 
 
 def api_captures_post(h, m, q):
-    c = captures.add(h.body())
+    b = h.body()
+    if isinstance(b, dict) and "phase" in b:
+        # SAVE READING's AS-FOUND / AS-LEFT (Phase 8): the session takes the phase, then the reading is saved. The
+        # captures file keeps its columns; the phase is the session's, and that is what reaches the hub.
+        changed, _ = meter.set_phase(b["phase"])
+        if changed:
+            LIVE.emit("state", meter.state(full=False))
+    c = captures.add(b)
     LIVE.emit("capture", c)
     h.json(201, c)
 
@@ -464,7 +483,8 @@ def api_roster(h, m, q):
     L = roster.listing()
     if L is None:
         raise Bad(503, "no roster installed (data/gatbox-barcade-roster.json)")
-    h.json(200, {"machines": L, "platforms": roster.platforms(), "added": sum(1 for x in L if x["added"])})
+    h.json(200, {"machines": L, "platforms": roster.platforms(), "added": sum(1 for x in L if x["added"]),
+                 "groups": roster.groups(L)})
 
 
 def api_roster_add(h, m, q):
@@ -717,6 +737,7 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("GET", r"/api/machine", api_machine_get),
     ("PUT", r"/api/machine", api_machine_put),
     ("DELETE", r"/api/machine", api_machine_delete),
+    ("PUT", r"/api/phase", api_phase_put),
     ("POST", r"/api/mark", api_mark),
     ("POST", r"/api/session/new", api_session_new),
     ("POST", r"/api/session/stop", api_session_stop),

@@ -68,6 +68,17 @@ def _slug(slug):
     return slug
 
 
+def _lib(slug):
+    """Whose documents and manual limits a machine uses: its own, or for a machine a hub knows by model
+    (Phase 8: model_key), that model's -- so a customer's board reads the library this Pi already has. Its actual
+    values stay its own (set_actual / clear_actual take the machine's slug as it is)."""
+    _slug(slug)
+    lib = roster.library(slug)
+    if lib is None:
+        raise Bad(404, f"no manuals for {slug!r}: its hub names no model this Pi has (model_key)")
+    return lib
+
+
 def _listed(slug=None):
     d = profiles._load(os.path.join(profiles.data_dir(), LIST)) or {}
     m = d.get("machines") if isinstance(d.get("machines"), dict) else {}
@@ -84,7 +95,7 @@ def _files(slug):
 
 def path(slug, name):
     """A PDF of this machine's, by its file name exactly as listed in its folder (nothing else becomes a path)."""
-    _slug(slug)
+    slug = _lib(slug)
     if name not in _files(slug):
         raise Bad(404, f"no such document: {name!r}")
     return os.path.join(config.MANUALS, slug, name)
@@ -119,7 +130,7 @@ def pages_of(p):
 def docs(slug):
     """GET /api/manuals/<slug>: the documents in its folder (the list's titles and kinds where it has them) and the
     list's entries not fetched yet."""
-    _slug(slug)
+    asked, slug = slug, _lib(slug)
     entry = _listed(slug)
     by_id = {d.get("id"): d for d in entry.get("docs", []) if isinstance(d, dict)}
     out = []
@@ -136,14 +147,14 @@ def docs(slug):
     missing = [{"id": i, "title": d.get("title"), "kind": d.get("kind")} for i, d in by_id.items() if i not in here]
     order = {k: i for i, k in enumerate(KINDS)}
     out.sort(key=lambda d: (order.get(d["kind"], len(KINDS)), d["title"].lower()))
-    return {"slug": slug, "docs": out, "not_fetched": missing, "why": entry.get("why", ""), "note": entry.get("note", ""),
+    return {"slug": asked, "library": slug, "docs": out, "not_fetched": missing, "why": entry.get("why", ""), "note": entry.get("note", ""),
             "kinds": KINDS, "upload_max": config.UPLOAD_MAX}
 
 
 def overview():
     """GET /api/manuals: documents per machine (for the pick list)."""
     L = _listed()
-    return {s: {"docs": len(_files(s)), "listed": len((L.get(s) or {}).get("docs", []))} for s in sorted(roster.slugs() or [])}
+    return {s: {"docs": len(_files(s)), "listed": len((L.get(s) or {}).get("docs", []))} for s in sorted(roster.local_slugs() or [])}
 
 
 # --- pages and text (cached) ------------------------------------------------------------------------------
@@ -249,7 +260,7 @@ def search(slug, name, q):
 def upload(slug, stream, n, title, kind):
     """POST /api/manuals/<slug>?title=&kind= (the body is the PDF itself): into the machine's folder, never over a
     file that's there, with a sidecar and its text."""
-    _slug(slug)
+    slug = _lib(slug)
     if n <= 0:
         raise Bad(400, "empty upload")
     if n > config.UPLOAD_MAX:
@@ -328,13 +339,15 @@ def _titles(slug):
 def sheet(slug):
     """GET /api/specs/<slug>: per rail, the manual's limits (page, words, confirmed or not), the specs file's, the
     actual value from the field, and the window in use; the spec page's other facts, each with its actual."""
-    _slug(slug)
-    specs = _listed(slug).get("specs") or {}
-    conf, act = _state(profiles.SPECS_CONFIRMED).get(slug) or {}, _state(profiles.ACTUALS).get(slug) or {}
+    own, lib = _slug(slug), roster.library(slug)
+    # A hub machine with no model this Pi has: no manual limits, but its own actuals still count.
+    specs = _listed(lib).get("specs") or {} if lib else {}
+    conf = _state(profiles.SPECS_CONFIRMED).get(lib) or {} if lib else {}
+    act = _state(profiles.ACTUALS).get(own) or {}
     file_spec = ((profiles._load(os.path.join(profiles.data_dir(), "gatbox-machine-specs.json")) or {})
-                 .get("machines", {}).get(slug) or {})
-    eff = profiles.machine_specs().get(slug) or {}
-    titles = _titles(slug)
+                 .get("machines", {}).get(lib) or {}) if lib else {}
+    eff = profiles.spec_for(own, lib if lib != own else None) or {}
+    titles = _titles(lib) if lib else {}
     rails = {}
     for r in specs.get("rails", []):
         if isinstance(r, dict) and RAIL.match(str(r.get("rail", ""))):
@@ -358,12 +371,12 @@ def sheet(slug):
     listed = {f["what"] for f in facts}
     facts += [{"what": w, "value": None, "actual": a} for w, a in (act.get("facts") or {}).items() if w not in listed]
     order = lambda r: (0 if r.startswith("+") else 1, float(re.sub(r"[^0-9.]", "", r) or 0))   # noqa: E731
-    return {"slug": slug, "rails": [rails[r] for r in sorted(rails, key=order)], "facts": facts}
+    return {"slug": own, "library": lib, "rails": [rails[r] for r in sorted(rails, key=order)], "facts": facts}
 
 
 def confirm(slug, body):
     """POST /api/specs/<slug>/confirm {rail, doc, page}: the owner checked that page. Only a limit on the list."""
-    _slug(slug)
+    slug = _lib(slug)
     if not isinstance(body, dict):
         raise Bad(400, "expected a JSON object")
     rail, doc, page = body.get("rail"), body.get("doc"), body.get("page")
@@ -383,7 +396,7 @@ def confirm(slug, body):
 
 
 def unconfirm(slug, body):
-    _slug(slug)
+    slug = _lib(slug)
     rail = body.get("rail") if isinstance(body, dict) else None
     with _state_lock:
         d = _state(profiles.SPECS_CONFIRMED)

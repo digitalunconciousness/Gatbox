@@ -22,7 +22,7 @@ import time
 
 from gatboxlib import profiles
 
-from . import config, roster, wifi
+from . import config, hubs, roster, wifi
 from .live import LIVE, uptime
 
 LABEL_MAX = 40
@@ -126,7 +126,13 @@ def alarm_on():
 
 def resolved():
     pid, win, machine = profiles.read_state()
-    return profiles.resolve(pid, win, machine)
+    return profiles.resolve(pid, win, machine, model=profiles.read_model(), phase=profiles.read_phase())
+
+
+def _jobs(slug):
+    """Whether the hub that owns this machine takes jobs: what puts AS-FOUND / AS-LEFT on the 7"."""
+    m = hubs.machine(slug) if slug else None
+    return bool(m and m.get("hub") and m["hub"]["jobs"])
 
 
 def state(full=True):
@@ -140,7 +146,7 @@ def state(full=True):
            "alarm": {"on": alarm_on(), "applies": res["kind"] == "rail" and res["alarm_hi"] is not None,
                      "limit": res["alarm_hi"]},
            "machine": res["machine"], "machine_name": roster.name(res["machine"]) if res["machine"] else None,
-           "stopped": stopped()}
+           "stopped": stopped(), "phase": res["phase"], "jobs": _jobs(res["machine"])}
     if full:
         out.update(profiles=[dict(p) for p in P.values()], modes=modes)
     return out
@@ -210,8 +216,14 @@ def set_machine(slug):
         known = roster.slugs()
         if known is None:
             raise Bad(503, "no roster installed (data/gatbox-barcade-roster.json)")
-        if not isinstance(slug, str) or slug not in known:
+        if not isinstance(slug, str) or slug not in known or not roster.SLUG.fullmatch(slug):
+            # The rule as well as membership: this goes into a state file and the CSV header as one line.
             raise Bad(404, f"not in the roster: {slug!r}")
+    # A machine a hub knows by model (Phase 8): its manuals, limits and ROM list are that model's. Kept beside the
+    # machine so gatbox-meta (the logger's side, which can't read the hub caches) resolves the same window.
+    hm = hubs.machine(slug) if slug is not None and slug not in (roster.local_slugs() or set()) else None
+    model = hm.get("model_key") if hm else None
+    model = model if isinstance(model, str) and roster.SLUG.fullmatch(model) and model != slug else None
     with _lock:
         _, _, cur = profiles.read_state()
         if cur == slug:
@@ -220,7 +232,35 @@ def set_machine(slug):
             os.remove(_path("machine"))
         else:
             _write("machine", slug + "\n")
+        _set_line("machine-model", model)
+        _set_line("phase", None)                            # a phase belongs to one machine's job
         return True, _new_file_if_live()
+
+
+def _set_line(name, value):
+    if value:
+        _write(name, value + "\n")
+    else:
+        try:
+            os.remove(_path(name))
+        except FileNotFoundError:
+            pass
+
+
+def set_phase(phase):
+    """PUT /api/phase {"phase": "as_found" | "as_left" | null}: what the session is, for a hub that takes jobs.
+    Changing it starts a new file (the header says it), so a trace is one phase from end to end. Returns
+    (changed, new file started)."""
+    if phase is not None and phase not in profiles.PHASES:
+        raise Bad(400, f"phase: one of {', '.join(profiles.PHASES)}, or null")
+    with _lock:
+        if profiles.read_phase() == phase:
+            return False, False
+        if phase is not None and not profiles.read_state()[2]:
+            raise Bad(400, "no machine set: a phase is part of a machine's job")
+        before = profiles.header_lines(resolved())
+        _set_line("phase", phase)
+        return True, profiles.header_lines(resolved()) != before and _new_file_if_live()
 
 
 def add_mark(body):
@@ -370,7 +410,7 @@ def snapshot():
         "profile": res, "window": res["window"], "window_source": res["source"],
         "expected": [{"key": k, **modes.get(k, {})} for k in res["modes"]],
         "dial_ok": dial_ok, "leads_reversed": reversed_,
-        "machine": slug, "machine_name": roster.name(slug),
+        "machine": slug, "machine_name": roster.name(slug), "phase": res["phase"], "jobs": _jobs(slug),
         "alarm": {"on": alarm_on(), "applies": res["kind"] == "rail" and res["alarm_hi"] is not None,
                   "limit": res["alarm_hi"], "state": last["alarm"] if last else None,
                   "open": L["open_alarm"], "events": L["alarms"]},

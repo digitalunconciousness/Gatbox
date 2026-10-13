@@ -74,6 +74,14 @@ check "gatbox-web may write to the spool"        'grep -q "ReadWritePaths=-/var/
 check "gatbox-web is in the gatbox-wifi group"   'grep -q "SupplementaryGroups=gatbox-wifi" "$REPO/backend/gatbox-web.service"'
 check "--check reports the spool"                'grep -q "/var/spool/gatbox-wifi" "$BOOT"'
 
+# Phase 8: several hubs. Both credential paths must always exist, or the unit fails outright.
+TMPF="$REPO/bootstrap/files/tmpfiles-gatbox.conf"; SYNCU="$REPO/backend/gatbox-sync.service"
+check "tmpfiles creates hubs.d 0700 root"        'grep -qE "^d /etc/gatbox/hubs\.d +0700 +root +root" "$TMPF"'
+check "and an empty hub.conf 600 root, no content" 'grep -qE "^f /etc/gatbox/hub\.conf +0600 +root +root +- *$" "$TMPF"'
+check "the unit loads hub.conf and hubs.d"       'grep -qx "LoadCredential=hub:/etc/gatbox/hub.conf" "$SYNCU" && grep -qx "LoadCredential=hubs:/etc/gatbox/hubs.d" "$SYNCU"'
+check "and runs when either has something (OR)"  'grep -qx "ConditionFileNotEmpty=|/etc/gatbox/hub.conf" "$SYNCU" && grep -qx "ConditionDirectoryNotEmpty=|/etc/gatbox/hubs.d" "$SYNCU" && ! grep -q "^ConditionPathExists" "$SYNCU"'
+check "--check reports hubs.d"                   'grep -q "/etc/gatbox/hubs.d (tmpfiles.d" "$BOOT"'
+
 bash "$BOOT" --check > "$T/check" 2>&1; rc=$?
 check "--check runs without root (exit 0 or 3)" '[ $rc = 0 ] || [ $rc = 3 ]'
 out=$(bash "$BOOT" 2>&1); rc=$?

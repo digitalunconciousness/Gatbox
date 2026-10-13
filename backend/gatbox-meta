@@ -25,7 +25,7 @@ from gatboxlib import profiles  # noqa: E402
 
 def main():
     pid, win, machine = profiles.read_state()
-    res = profiles.resolve(pid, win, machine)
+    res = profiles.resolve(pid, win, machine, model=profiles.read_model(), phase=profiles.read_phase())
     if sys.argv[1:] == ["resolve"]:
         print(json.dumps(res, ensure_ascii=False, indent=1))
     else:

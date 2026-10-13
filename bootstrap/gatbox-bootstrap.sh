@@ -94,6 +94,7 @@ backend/gatboxweb/mame.py                       /usr/local/lib/gatbox/gatboxweb/
 backend/gatboxweb/manuals.py                    /usr/local/lib/gatbox/gatboxweb/manuals.py            644
 backend/gatboxweb/wifi.py                       /usr/local/lib/gatbox/gatboxweb/wifi.py               644
 backend/gatboxweb/orders.py                     /usr/local/lib/gatbox/gatboxweb/orders.py             644
+backend/gatboxweb/hubs.py                       /usr/local/lib/gatbox/gatboxweb/hubs.py               644
 web/dash/index.html                             /usr/local/share/gatbox-web/dash/index.html           644
 web/dash/dash.css                               /usr/local/share/gatbox-web/dash/dash.css             644
 web/dash/dash.js                                /usr/local/share/gatbox-web/dash/dash.js              644
@@ -252,6 +253,8 @@ if [ "${1:-}" = "--check" ]; then
     [ -d /var/spool/gatbox-wifi ] || DIFFS+=("create     /var/spool/gatbox-wifi (tmpfiles.d)")
     [ -d /srv/gatbox/roms ] && [ -d /var/spool/gatbox-dump ] || DIFFS+=("create     /srv/gatbox/roms + /var/spool/gatbox-dump (tmpfiles.d)")
     [ -d /etc/gatbox ] || DIFFS+=("create     /etc/gatbox (tmpfiles.d; hub.conf goes in by hand)")
+    [ -d /etc/gatbox/hubs.d ] || DIFFS+=("create     /etc/gatbox/hubs.d (tmpfiles.d; one <name>.conf per extra hub, by hand)")
+    [ -e /etc/gatbox/hub.conf ] || DIFFS+=("create     /etc/gatbox/hub.conf, empty (tmpfiles.d; empty means no hub)")
     # Only when the hotspot is armed at all: an unarmed Pi is not missing anything.
     if systemctl -q is-enabled gatbox-ap-fallback.service 2>/dev/null \
        || systemctl -q is-enabled gatbox-ap-fallback.timer 2>/dev/null; then
@@ -437,8 +440,8 @@ if changed /etc/sysusers.d/gatbox.conf || ! getent passwd gatbox-dump >/dev/null
    || ! getent passwd gatbox-sync >/dev/null || ! getent group gatbox-wifi >/dev/null; then
     systemd-sysusers /etc/sysusers.d/gatbox.conf && log "users gatbox-dump (T48 dumps, group plugdev) and gatbox-sync (hub push), group gatbox-manuals"
 fi
-if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ] || [ ! -d /srv/gatbox/manuals ] || [ ! -d /etc/gatbox ] || [ ! -d /var/spool/gatbox-wifi ]; then
-    systemd-tmpfiles --create /etc/tmpfiles.d/gatbox.conf && log "/srv/gatbox/roms + /srv/gatbox/manuals + /var/spool/gatbox-dump + /etc/gatbox"
+if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ] || [ ! -d /srv/gatbox/manuals ] || [ ! -d /etc/gatbox ] || [ ! -d /etc/gatbox/hubs.d ] || [ ! -e /etc/gatbox/hub.conf ] || [ ! -d /var/spool/gatbox-wifi ]; then
+    systemd-tmpfiles --create /etc/tmpfiles.d/gatbox.conf && log "/srv/gatbox/roms + /srv/gatbox/manuals + /var/spool/gatbox-dump + /etc/gatbox (+ hubs.d)"
 fi
 if ! id -nG "$U" | grep -qw gatbox-dump; then
     usermod -aG gatbox-dump "$U" && log "$U += gatbox-dump (gatbox-dump from the terminal archives too; log out/in)"
@@ -469,8 +472,8 @@ if [ "$fonts_ok" = 1 ]; then log "web fonts in $FONTDIR"
 else warn "couldn't fetch the web fonts (no internet?). The page falls back to system fonts; re-run later to add them."; fi
 log "web view: http://gatbox.local/ (http://10.42.0.1/ on the GATBOX hotspot)"
 svc gatbox-rtc-sync.timer '/usr/local/sbin/gatbox-rtc-sync' '/etc/systemd/system/gatbox-rtc-sync.*'
-# The hub push. Its .service carries ConditionPathExists=/etc/gatbox/hub.conf, so on a Pi
-# with no token the timer runs and the job condition-skips rather than failing every 2 min.
+# The hub push. Its .service runs only when hub.conf is not empty or hubs.d holds a file, so
+# on a Pi with no token the timer runs and the job condition-skips rather than failing every 2 min.
 svc gatbox-sync.timer '/usr/local/bin/gatbox-sync' '/etc/systemd/system/gatbox-sync.*'
 if changed '/usr/local/sbin/gatbox-rtc-sync' '/etc/systemd/system/gatbox-rtc-sync.*' || [ ! -e /var/lib/gatbox/rtc-synced ]; then
     systemctl start gatbox-rtc-sync.service || warn "gatbox-rtc-sync failed: journalctl -u gatbox-rtc-sync"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""gatbox-sync — push finished rail sessions to the hub (arcade-tracker).
+"""gatbox-sync — push finished rail sessions to the hubs (arcade-tracker, and any other).
 
 One direction only. This reads from gatbox-web on loopback and writes to the hub; the hub
 never connects here. Run as a oneshot from gatbox-sync.timer, every couple of minutes.
@@ -46,22 +46,46 @@ panel reads -- that is the channel for "nothing has gone out lately", not a fail
 
 Stdlib only.
 
-Config, /etc/gatbox/hub.conf (mode 600, root), reached through LoadCredential= so the file
-itself never becomes readable by this job's user:
+Config. One hub or several, each a file of KEY=value lines, root-owned and mode 600, reached
+through LoadCredential= so the files themselves never become readable by this job's user:
+
+    /etc/gatbox/hub.conf            the original single hub, named "default" (Phase 8 keeps it
+                                    working unchanged; empty means "not configured")
+    /etc/gatbox/hubs.d/<name>.conf  one more hub per file; <name> is [a-z0-9][a-z0-9-]{0,31}
 
     HUB_URLS=https://tracker.example   one or more, space-separated, tried in order
                                        (no LAN entry by default: the hub binds to loopback
                                         in its own container and is reached by its tunnel)
     HUB_TOKEN=gbx_<public_id>.<secret>
+    HUB_LABEL=WORKSHOP                 optional: what the 7" calls this hub (default: the name)
+
+**With one hub, nothing is routed**: everything goes to it, exactly as before Phase 8, and the
+hub refuses a machine it does not know. With two or more, each item goes to the one hub whose
+roster holds its machine. A machine no roster has is *held* -- sent nowhere, retried by itself
+once a roster gains it -- and a machine two rosters claim is a *conflict*, sent nowhere until one
+of them lets go. Both are listed in status.json for the SYSTEM panel. Every uid is salted with the
+destination hub's device id, as the contract says, because each hub issues its own token.
+
+State. The default hub keeps the top level of the state directory, exactly where a single hub has
+always kept it (sent.json, roster.json, orders.json), so nothing moves when a second hub is
+added. Each hubs.d hub has hubs/<name>/ with the same files. hub.json beside them holds what the
+hub last said about itself in /api/v1/health (app, capabilities) and its label: the dashboard
+cannot read /etc/gatbox, and the JOB card has to work from cache on a box that is mostly offline.
+status.json at the top is the whole run; with one hub its keys are what they always were.
+
+`phase` (as_found | during | as_left) goes only to a hub whose health lists the "jobs"
+capability, and only as one of those three. The tracker lists none, so it never sees the field.
 
 Environment (the unit sets CREDENTIALS_DIRECTORY and STATE_DIRECTORY; tests set the rest):
-    GATBOX_SYNC_CONF      read the config from this path instead of the credential
+    GATBOX_SYNC_CONF      read the default hub's config from this path instead of the credential
+    GATBOX_SYNC_CONF_DIR  read hubs.d from this directory (with GATBOX_SYNC_CONF alone: none)
     GATBOX_SYNC_WEB       gatbox-web's base URL (default http://127.0.0.1)
-    GATBOX_SYNC_MAX       sessions per run (default 10)
+    GATBOX_SYNC_MAX       sessions per run, per hub (default 10)
     GATBOX_SYNC_ONCE      ignore the ledger: send everything eligible (for a forced re-push)
     GATBOX_SYNC_DRYRUN    build payloads and report, but post nothing
 """
 import hashlib
+import re
 import json
 import os
 import socket
@@ -113,6 +137,11 @@ def log(msg):
 # config
 # ---------------------------------------------------------------------------
 
+DEFAULT = "default"                       # the name hub.conf's hub goes by
+NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")      # whole-string: NAME.fullmatch
+PHASES = ("as_found", "during", "as_left")  # what a "jobs" hub accepts; anything else is left out
+
+
 def conf_path():
     if os.environ.get("GATBOX_SYNC_CONF"):
         return os.environ["GATBOX_SYNC_CONF"]
@@ -122,38 +151,116 @@ def conf_path():
     return "/etc/gatbox/hub.conf"
 
 
-def read_conf():
-    """(urls, token). Exits 0 -- not 1 -- when there is no config: a Pi that has never been
-    given a token is not broken, it just has nothing to do, and a timer that fails every two
-    minutes for the life of the box is noise that hides real failures."""
-    path = conf_path()
-    try:
-        with open(path, encoding="utf-8") as fh:
-            text = fh.read()
-    except OSError as exc:
-        log(f"no hub config at {path} ({exc.strerror}); nothing to do")
-        sys.exit(0)
+def conf_files():
+    """[(name, path)] for hubs.d, in name order.
 
+    Under systemd, LoadCredential=hubs:/etc/gatbox/hubs.d hands each file over as its own
+    credential, hubs_<file>. A test that sets GATBOX_SYNC_CONF alone gets none at all, so it can
+    never pick up the real /etc/gatbox/hubs.d of the machine it runs on."""
+    if os.environ.get("GATBOX_SYNC_CONF_DIR"):
+        where, prefix = os.environ["GATBOX_SYNC_CONF_DIR"], ""
+    elif os.environ.get("CREDENTIALS_DIRECTORY"):
+        where, prefix = os.environ["CREDENTIALS_DIRECTORY"], "hubs_"
+    elif os.environ.get("GATBOX_SYNC_CONF"):
+        return []
+    else:
+        where, prefix = "/etc/gatbox/hubs.d", ""
+    try:
+        names = sorted(os.listdir(where))
+    except OSError:
+        return []
+    out = []
+    for f in names:
+        if not f.startswith(prefix):
+            continue                  # the "hub" credential, or anything else in there
+        base = f[len(prefix):]
+        if not base.endswith(".conf"):
+            continue                  # an editor's backup, a README: not a hub
+        name = base[:-len(".conf")]
+        if not NAME.fullmatch(name) or name == DEFAULT:
+            log(f"hubs.d/{base}: ignored (the name must be [a-z0-9-], up to 32, "
+                f"and not {DEFAULT!r})")
+            continue
+        out.append((name, os.path.join(where, f)))
+    return out
+
+
+def parse_conf(text):
     conf = {}
     for line in text.splitlines():
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             key, _, value = line.partition("=")
             conf[key.strip()] = value.strip()
+    return conf
 
-    urls = [u.rstrip("/") for u in conf.get("HUB_URLS", "").split() if u]
-    token = conf.get("HUB_TOKEN", "")
-    if not urls or not token:
-        log(f"{path}: HUB_URLS and HUB_TOKEN are both required; nothing to do")
+
+def read_conf():
+    """(hubs, refused). Each hub: {name, label, urls, token, dev, dir}.
+
+    Exits 0 -- not 1 -- when there is no hub at all: a Pi that has never been given a token is
+    not broken, it just has nothing to do, and a timer that fails every two minutes for the
+    life of the box is noise that hides real failures. Exits 1 for a malformed token, which
+    only a person can fix."""
+    path = conf_path()
+    entries, missing, incomplete = [], None, None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            conf = parse_conf(fh.read())
+        if conf:
+            entries.append((DEFAULT, path, conf))
+        else:
+            incomplete = path         # empty: tmpfiles leaves a placeholder; it means "none"
+    except OSError as exc:
+        missing = (path, exc.strerror)
+    for name, p in conf_files():
+        try:
+            with open(p, encoding="utf-8") as fh:
+                entries.append((name, p, parse_conf(fh.read())))
+        except OSError as exc:
+            log(f"{p}: unreadable ({exc.strerror}); skipped")
+
+    hubs, refused, seen = [], [], {}
+    for name, p, conf in entries:
+        urls = [u.rstrip("/") for u in conf.get("HUB_URLS", "").split() if u]
+        token = conf.get("HUB_TOKEN", "")
+        if not urls or not token:
+            log(f"{p}: HUB_URLS and HUB_TOKEN are both required; nothing to do")
+            continue
+        label = conf.get("HUB_LABEL", "").strip()[:24] or name.upper()
+        dev = device_id(token)
+        if dev is None:
+            log(f"{p}: HUB_TOKEN is not of the form gbx_<public_id>.<secret>")
+            # fatal: only a person can fix it, so the unit fails -- but the other hubs still run
+            refused.append({"name": name, "label": label, "reason": "malformed token",
+                            "fatal": True})
+            continue
+        if dev in seen:
+            # One token in two files: the same hub twice. Both rosters would be the same and
+            # every machine would be a conflict, so the second is refused, and said so.
+            why = f"same device token as {seen[dev]!r}"
+            log(f"hub {name!r}: refused, {why}")
+            refused.append({"name": name, "label": label, "reason": why})
+            continue
+        seen[dev] = name
+        hubs.append({"name": name, "label": label, "urls": urls, "token": token, "dev": dev,
+                     "dir": STATE if name == DEFAULT else os.path.join(STATE, "hubs", name)})
+    if not hubs and any(r.get("fatal") for r in refused):
+        sys.exit(1)
+    if not hubs and not refused:
+        if missing and not entries:
+            log(f"no hub config at {missing[0]} ({missing[1]}); nothing to do")
+        elif incomplete and not entries:
+            log(f"{incomplete}: HUB_URLS and HUB_TOKEN are both required; nothing to do")
         sys.exit(0)
-    return urls, token
+    return hubs, refused
 
 
 def device_id(token):
-    """The public id half of gbx_<public_id>.<secret>: what every uid is salted with."""
+    """The public id half of gbx_<public_id>.<secret>: what every uid is salted with. None when
+    the token is not of that form."""
     if not token.startswith("gbx_") or "." not in token:
-        log("HUB_TOKEN is not of the form gbx_<public_id>.<secret>")
-        sys.exit(1)
+        return None
     return token[len("gbx_"):].partition(".")[0]
 
 
@@ -161,18 +268,19 @@ def device_id(token):
 # state
 # ---------------------------------------------------------------------------
 
-def load(name, default):
+def load(name, default, where=None):
     try:
-        with open(os.path.join(STATE, name), encoding="utf-8") as fh:
+        with open(os.path.join(where or STATE, name), encoding="utf-8") as fh:
             return json.load(fh)
     except (OSError, ValueError):
         return default
 
 
-def save(name, obj):
+def save(name, obj, where=None):
     """Atomic: a run killed mid-write must not leave a half-parsed ledger behind."""
-    os.makedirs(STATE, exist_ok=True)
-    path = os.path.join(STATE, name)
+    where = where or STATE
+    os.makedirs(where, exist_ok=True)
+    path = os.path.join(where, name)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(obj, fh, indent=1, sort_keys=True)
@@ -212,7 +320,7 @@ def post_json(url, body, token, timeout=POST_TIMEOUT):
 
 
 def pick_hub(urls, token):
-    """The first URL whose /api/v1/health answers. Chosen per run and deliberately not
+    """(url, health body) for the first URL whose /api/v1/health answers, or (None, None). Chosen per run and deliberately not
     remembered: GATBOX moves between its own hotspot and the shop's Wi-Fi, and a remembered
     address is wrong exactly when it matters. An unreachable entry costs one failed connect,
     so listing a LAN address and the tunnel together is safe at either site."""
@@ -237,8 +345,8 @@ def pick_hub(urls, token):
             log(f"  {url}: speaks contract {body.get('contract')!r}, not {CONTRACT!r}")
             continue
         log(f"  {url}: ok")
-        return url
-    return None
+        return url, body
+    return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +374,7 @@ def epoch_of(iso):
         return 0.0
 
 
-def build_item(dev, file_name, report, samples):
+def build_item(dev, file_name, report, samples, jobs=False):
     """One rail_session item, contract/v1. Every number comes from the report as-is: the hub
     stores and does not recompute, so anything derived here would be a second opinion."""
     fields = samples.get("fields") or []
@@ -337,6 +445,9 @@ def build_item(dev, file_name, report, samples):
     if readings:
         item["started"] = readings[0]["epoch"]
         item["ended"] = readings[-1]["epoch"]
+    # Optional, and only for a hub that said it takes it: anything else rejects the item there.
+    if jobs and report.get("phase") in PHASES:
+        item["phase"] = report["phase"]
     return item
 
 
@@ -367,7 +478,7 @@ def ledger(raw):
     return d
 
 
-def outbox_items(dev, web_entries, sent):
+def outbox_items(dev, web_entries, sent, jobs=False):
     """gatbox-web's outbox, as contract items. Never the entries already acknowledged.
 
     This is the one place that can turn an entry's `session_file` into a session uid: the
@@ -395,6 +506,8 @@ def outbox_items(dev, web_entries, sent):
                     "created": e.get("created")}
             if e.get("note"):
                 item["note"] = e["note"]
+            if jobs and e.get("phase") in PHASES:
+                item["phase"] = e["phase"]
             items.append(item)
     return items
 
@@ -420,32 +533,44 @@ def eligible(sessions, sent):
     return sorted(out)                    # rail_YYYYmmdd_HHMMSS sorts chronologically
 
 
+def hub_info(h, body):
+    """hub.json: what the hub last said about itself, kept when it cannot be reached."""
+    info = load("hub.json", {}, h["dir"])
+    info = info if isinstance(info, dict) else {}
+    info.update({"name": h["name"], "label": h["label"], "at": time.time()})
+    if body is not None:
+        caps = body.get("capabilities")
+        info.update({"app": body.get("app"), "contract": body.get("contract"),
+                     "capabilities": [c for c in caps if isinstance(c, str)]
+                     if isinstance(caps, list) else [],
+                     "url": h["url"], "reached_at": time.time()})
+    info.setdefault("capabilities", [])
+    save("hub.json", info, h["dir"])
+    return info
+
+
+def roster_slugs(h):
+    machines = load("roster.json", {}, h["dir"]).get("machines") or []
+    return {m["slug"] for m in machines if isinstance(m, dict) and m.get("slug")}
+
+
 def main():
     started = time.monotonic()
-    urls, token = read_conf()
-    dev = device_id(token)
+    hubs, refused = read_conf()
+    rc = 1 if any(r.get("fatal") for r in refused) else 0
+    multi = len(hubs) > 1
 
-    log(f"gatbox-sync: device {dev}, web {WEB}")
+    for h in hubs:
+        name = "" if not multi else f"hub {h['name']} ({h['label']}), "
+        log(f"gatbox-sync: {name}device {h['dev']}, web {WEB}")
     try:
         listing = get_json(f"{WEB}/api/rail/sessions?limit=1000", WEB_TIMEOUT)
     except (urllib.error.URLError, OSError, ValueError) as exc:
         log(f"gatbox-web unreachable: {exc}")
         save("status.json", {"at": time.time(), "ok": False,
-                             "error": f"gatbox-web unreachable: {exc}"})
-        return 0           # it is Restart=always; the next timer will find it
+                             "error": f"gatbox-web unreachable: {exc}", "refused": refused})
+        return rc          # it is Restart=always; the next timer will find it
     sessions = listing.get("sessions") or []
-
-    sent = ledger({} if IGNORE_LEDGER else load("sent.json", {}))
-    # Prune the session half against what still exists, so it cannot grow for ever as old
-    # CSVs go. **Only that half.** Outbox uids are not file names, and a single flat ledger
-    # dropped every one of them here -- re-sending for ever, harmless to the hub because it
-    # dedupes, but nothing could ever be reported as sent.
-    present = {s.get("file") for s in sessions}
-    sent["files"] = {k: v for k, v in sent["files"].items() if k in present}
-
-    queue = [n for n in eligible(sessions, sent["files"])
-             if uid_session(dev, n) not in sent["parked"]]
-    log(f"  {len(sessions)} sessions on the Pi, {len(queue)} to send")
 
     try:
         outbox = (get_json(f"{WEB}/api/orders", WEB_TIMEOUT).get("orders") or [])
@@ -453,7 +578,136 @@ def main():
         # Not fatal: sessions are the main job and an order waits for the next run.
         log(f"  outbox unreadable ({exc}); sessions only this run")
         outbox = []
-    pending = outbox_items(dev, outbox, sent)
+    try:
+        # The machine on the 7" right now: its open orders are cached even if this Pi has
+        # never metered it, which is the usual case for a machine that just came in.
+        current = get_json(f"{WEB}/api/machine", WEB_TIMEOUT).get("slug")
+    except (urllib.error.URLError, OSError, ValueError, AttributeError):
+        current = None
+
+    for h in hubs:
+        if multi:
+            log(f"  {h['label']}:")
+        h["url"], body = pick_hub(h["urls"], h["token"])
+        h["info"] = hub_info(h, body)
+        h["jobs"] = "jobs" in (h["info"].get("capabilities") or [])
+
+    # Routing. One hub takes everything, exactly as before there could be two: the hub itself
+    # refuses a machine it does not have, and parking deals with that. With several, the
+    # cached rosters decide, and a stale roster is still better than none for a box that is
+    # usually offline.
+    held, conflicts, waiting = [], {}, []
+    if multi:
+        for h in hubs:
+            if h["url"]:
+                refresh_roster(h)
+        owners = {}
+        for h in hubs:
+            for slug in roster_slugs(h):
+                owners.setdefault(slug, []).append(h)
+        # A machine missing from a roster only means "not that hub's" once that roster has been seen. Until every hub
+        # has answered once, a machine one roster lists may be on the unseen one too -- a conflict nobody can see --
+        # so nothing goes anywhere: a trace sent to the wrong hub cannot be taken back.
+        waiting = [h["label"] for h in hubs if not os.path.exists(os.path.join(h["dir"], "roster.json"))]
+        if waiting:
+            log(f"  holding everything: no roster yet from {', '.join(waiting)}")
+
+    def route(slug, what):
+        if not multi:
+            return hubs[0]
+        if waiting:
+            held.append({"what": what, "machine": slug, "why": "waiting for a roster"})
+            return None
+        who = owners.get(slug) or []
+        if len(who) == 1:
+            return who[0]
+        if not who:
+            held.append({"what": what, "machine": slug})
+        else:
+            conflicts[slug] = [h["label"] for h in who]
+        return None
+
+    by_file = {s.get("file"): s.get("machine") for s in sessions if s.get("file")}
+    mine = {h["name"]: {"sessions": [], "outbox": []} for h in hubs}
+    for sess in sessions:
+        if sess.get("machine") and sess.get("file") and not sess.get("live") \
+                and not sess.get("error"):
+            h = route(sess["machine"], sess["file"])
+            if h:
+                mine[h["name"]]["sessions"].append(sess)
+    for e in outbox:
+        # A tag names its order's machine from Phase 8 on; an older one, the session's.
+        slug = e.get("machine") or by_file.get(e.get("session_file"))
+        h = route(slug, e.get("kind") or "item") if slug or not multi else None
+        if h:
+            mine[h["name"]]["outbox"].append(e)
+        elif multi and not slug:
+            held.append({"what": e.get("kind") or "item", "machine": None})
+    if held and not waiting:
+        log(f"  held, no hub has the machine: "
+            f"{', '.join(sorted({str(x['machine']) for x in held}))}")
+    for slug, labels in conflicts.items():
+        log(f"  conflict: {slug} is on {' and '.join(labels)}; sent to neither")
+
+    statuses = []
+    for h in hubs:
+        if multi:
+            log(f"  {h['label']}:")
+        st, h_rc = run_hub(h, sessions, mine[h["name"]], outbox, current, started, multi)
+        rc = max(rc, h_rc)
+        if st is not None:
+            statuses.append(st)
+    if DRYRUN:
+        return rc
+    save("status.json", combine(hubs, statuses, held, conflicts, refused, waiting))
+    return rc
+
+
+def combine(hubs, statuses, held, conflicts, refused, waiting=()):
+    """status.json. With one hub, that hub's own keys as they always were; with several, the
+    sums the old tile can show, plus "hubs" for the tile per hub."""
+    if len(statuses) == 1:
+        out = dict(statuses[0])
+    else:
+        oks = [s for s in statuses if s.get("ok")]
+        out = {"at": time.time(), "ok": bool(statuses) and len(oks) == len(statuses),
+               "hub": oks[0].get("hub") if oks else None,
+               "queued": sum(s.get("queued") or 0 for s in statuses),
+               "sent_total": sum(s.get("sent_total") or 0 for s in statuses),
+               "parked": [dict(p, hub=s["label"]) for s in statuses
+                          for p in s.get("parked") or []]}
+        for k in ("last_created", "last_duplicate", "last_rejected"):
+            if any(s.get(k) is not None for s in statuses):
+                out[k] = sum(s.get(k) or 0 for s in statuses)
+        errs = [f"{s['label']}: {s['error']}" for s in statuses if s.get("error")]
+        if errs:
+            out["error"] = "; ".join(errs)
+    out["hubs"] = statuses
+    out["held"] = held
+    out["conflicts"] = [{"machine": k, "hubs": v} for k, v in sorted(conflicts.items())]
+    out["refused"] = refused
+    out["waiting"] = list(waiting)
+    return out
+
+
+def run_hub(h, sessions, mine, outbox, current, started, multi):
+    """One hub's share of the run: what it always was for the only hub. Returns (status, rc)."""
+    dev, token, where = h["dev"], h["token"], h["dir"]
+    base = {"name": h["name"], "label": h["label"], "app": h["info"].get("app"),
+            "capabilities": h["info"].get("capabilities") or []}
+    sent = ledger({} if IGNORE_LEDGER else load("sent.json", {}, where))
+    # Prune the session half against what still exists, so it cannot grow for ever as old
+    # CSVs go. **Only that half.** Outbox uids are not file names, and a single flat ledger
+    # dropped every one of them here -- re-sending for ever, harmless to the hub because it
+    # dedupes, but nothing could ever be reported as sent.
+    present = {s.get("file") for s in sessions}
+    sent["files"] = {k: v for k, v in sent["files"].items() if k in present}
+
+    queue = [n for n in eligible(mine["sessions"], sent["files"])
+             if uid_session(dev, n) not in sent["parked"]]
+    log(f"  {len(sessions)} sessions on the Pi, {len(queue)} to send")
+
+    pending = outbox_items(dev, mine["outbox"], sent, h["jobs"])
     # Forget the counters for anything no longer on offer, so neither map grows for ever.
     known = ({uid_session(dev, s["file"]) for s in sessions if s.get("file")}
              | {e["uid"] for e in outbox if e.get("uid")})
@@ -465,29 +719,32 @@ def main():
     if pending:
         log(f"  {len(pending)} order item(s) queued")
 
+    hub = h["url"]
+    parked = [{"what": v.get("what"), "reason": v.get("reason")}
+              for v in sent["parked"].values()]
     if not queue and not pending:
         # Still refresh the caches: the roster and open orders are what the dashboard and the
         # 7" read, and they go stale whether or not there is anything to push.
-        hub = pick_hub(urls, token)
-        status = {"at": time.time(), "ok": bool(hub), "hub": hub, "queued": 0,
-                  "sent_total": len(sent["files"]) + len(sent["outbox"]),
-                  # Listed here too: the run that has nothing to send is exactly the run
-                  # after something was parked, and that is when someone goes looking.
-                  "parked": [{"what": v.get("what"), "reason": v.get("reason")}
-                             for v in sent["parked"].values()]}
+        status = dict(base, at=time.time(), ok=bool(hub), hub=hub, queued=0,
+                      sent_total=len(sent["files"]) + len(sent["outbox"]),
+                      # Listed here too: the run that has nothing to send is exactly the run
+                      # after something was parked, and that is when someone goes looking.
+                      parked=parked)
         if hub:
-            refresh_caches(hub, token, sessions, status)
-        save("status.json", status)
-        save("sent.json", sent)
-        return 0 if hub else 1
+            refresh_caches(h, mine["sessions"], current, status, multi)
+        save("sent.json", sent, where)
+        if not hub:
+            status["error"] = "no hub reachable"
+        # 0 either way: out of reach is the normal case for a box that travels (a5a723b's policy, which this path
+        # had missed -- it failed the unit every 2 minutes whenever nothing was waiting and no hub answered).
+        return status, 0
 
-    hub = pick_hub(urls, token)
     if hub is None:
         log(f"  no hub reachable; {len(queue)} queued, nothing sent")
-        save("status.json", {"at": time.time(), "ok": False, "queued": len(queue),
-                             "error": "no hub reachable"})
-        save("sent.json", sent)
-        return 0           # off the network is the normal case for a box that travels
+        save("sent.json", sent, where)
+        # off the network is the normal case for a box that travels
+        return dict(base, at=time.time(), ok=False, queued=len(queue),
+                    error="no hub reachable", parked=parked), 0
 
     batch, skipped = [], 0
     for name in queue[:MAX_SESSIONS]:
@@ -508,7 +765,7 @@ def main():
             log(f"  {name}: report error, skipped ({report['error']})")
             skipped += 1
             continue
-        batch.append(build_item(dev, name, report, samples))
+        batch.append(build_item(dev, name, report, samples, h["jobs"]))
 
     # After the sessions, always. An order naming a session the hub has not ingested is
     # rejected, so putting both in one request is what lets a session and the order attached
@@ -517,33 +774,30 @@ def main():
 
     if not batch:
         log("  nothing could be built from the queue; see the lines above")
-        save("status.json", {"at": time.time(), "ok": False, "hub": hub,
-                             "queued": len(queue), "error": "nothing could be built"})
-        save("sent.json", sent)
-        return 0           # visible in the journal and the panel; failing every 2 min is not
+        save("sent.json", sent, where)
+        # visible in the journal and the panel; failing every 2 min is not
+        return dict(base, at=time.time(), ok=False, hub=hub, queued=len(queue),
+                    error="nothing could be built", parked=parked), 0
 
     total_readings = sum(len(i.get("readings") or []) for i in batch)
     log(f"  posting {len(batch)} session(s), {total_readings} readings")
     if DRYRUN:
         log("  dry run: posting nothing")
-        return 0
+        return None, 0
 
     status_code, body = post_json(f"{hub}/api/v1/ingest",
                                   {"contract": CONTRACT, "device": dev, "items": batch},
                                   token)
     if status_code != 200:
         log(f"  ingest failed: HTTP {status_code} {body.get('error')}")
-        save("status.json", {"at": time.time(), "ok": False, "hub": hub,
-                             "queued": len(queue),
-                             "error": f"HTTP {status_code}: {body.get('error')}"})
-        save("sent.json", sent)
+        save("sent.json", sent, where)
+        status = dict(base, at=time.time(), ok=False, hub=hub, queued=len(queue),
+                      error=f"HTTP {status_code}: {body.get('error')}", parked=parked)
         # 401/403: the token is wrong, disabled or revoked. 400: we are sending something
         # the hub will never accept, which is a contract bug here. Both need a person, and
         # no amount of retrying helps -- so these are the cases worth failing the unit for.
         # 429 and 5xx are the hub's problem and will clear on their own.
-        if status_code in (400, 401, 403):
-            return 1
-        return 0
+        return status, 1 if status_code in (400, 401, 403) else 0
 
     now = time.time()
     created = duplicate = rejected = 0
@@ -580,52 +834,63 @@ def main():
                     log(f"  parked {name or uid} after {n} refusals: {reason}")
 
     log(f"  {created} created, {duplicate} duplicate, {rejected} rejected")
-    status = {"at": now, "ok": rejected == 0, "hub": hub,
-              "queued": max(len(queue) - created - duplicate, 0),
-              # The panel reads status.json alone, so the running total goes in here rather
-              # than making it open the ledger as well.
-              "sent_total": len(sent["files"]) + len(sent["outbox"]),
-              "last_created": created, "last_duplicate": duplicate,
-              "last_rejected": rejected, "skipped": skipped,
-              # The panel reads this alone, so parked items are listed here rather than
-              # left for someone to find in the journal.
-              "parked": [{"what": v.get("what"), "reason": v.get("reason")}
-                         for v in sent["parked"].values()]}
-    refresh_caches(hub, token, sessions, status)
-    save("sent.json", sent)
-    save("status.json", status)
+    status = dict(base, at=now, ok=rejected == 0, hub=hub,
+                  queued=max(len(queue) - created - duplicate, 0),
+                  # The panel reads status.json alone, so the running total goes in here
+                  # rather than making it open the ledger as well.
+                  sent_total=len(sent["files"]) + len(sent["outbox"]),
+                  last_created=created, last_duplicate=duplicate,
+                  last_rejected=rejected, skipped=skipped,
+                  # The panel reads this alone, so parked items are listed here rather than
+                  # left for someone to find in the journal.
+                  parked=[{"what": v.get("what"), "reason": v.get("reason")}
+                          for v in sent["parked"].values()])
+    refresh_caches(h, mine["sessions"], current, status, multi)
+    save("sent.json", sent, where)
     if rejected:
         log(f"  {rejected} item(s) rejected and left queued; they will be retried")
     # Not a unit failure: the reasons are above and in status.json, the items stay queued,
     # and a unit that fails every two minutes until someone edits the roster is the noise
     # this policy exists to avoid.
-    return 0
+    return status, 0
 
 
-def refresh_caches(hub, token, sessions, status):
-    """The roster, and open orders for the machines this Pi has actually metered.
+def refresh_roster(h):
+    try:
+        roster = get_json(f"{h['url']}/api/v1/roster", WEB_TIMEOUT, h["token"])
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return str(exc)
+    save("roster.json", {"at": time.time(), "machines": roster.get("machines") or []},
+         h["dir"])
+    h["roster_done"] = True
+    return None
+
+
+def refresh_caches(h, sessions, current, status, multi):
+    """The roster, and open orders for the machines this Pi has metered for this hub, plus
+    the one on the 7" now if this hub has it.
 
     Orders are fetched per machine rather than wholesale because the hub offers no bulk
-    endpoint, so this is deliberately bounded to the machines that appear in the local
-    sessions -- not every machine on the floor."""
-    try:
-        roster = get_json(f"{hub}/api/v1/roster", WEB_TIMEOUT, token)
-        save("roster.json", {"at": time.time(), "machines": roster.get("machines") or []})
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        status["roster_error"] = str(exc)
-        return
+    endpoint, so this is deliberately bounded -- not every machine on the floor."""
+    if not h.get("roster_done"):
+        err = refresh_roster(h)
+        if err:
+            status["roster_error"] = err
+            return
 
     slugs = sorted({s["machine"] for s in sessions if s.get("machine")})[:40]
+    if current and current not in slugs and current in roster_slugs(h):
+        slugs.append(current)
     orders, errors = {}, 0
     for slug in slugs:
         try:
             body = get_json(
-                f"{hub}/api/v1/machines/{urllib.parse.quote(slug)}/orders?status=open",
-                WEB_TIMEOUT, token)
+                f"{h['url']}/api/v1/machines/{urllib.parse.quote(slug)}/orders?status=open",
+                WEB_TIMEOUT, h["token"])
             orders[slug] = body.get("orders") or []
         except (urllib.error.URLError, OSError, ValueError):
             errors += 1
-    save("orders.json", {"at": time.time(), "open": orders})
+    save("orders.json", {"at": time.time(), "open": orders}, h["dir"])
     if errors:
         status["orders_errors"] = errors
 

@@ -72,5 +72,14 @@ mk "$T/free.csv" "# clock=ntp" "# mode=OHM" "# profile=free" "# window=none sour
 out=$(rep "$T/free.csv")
 check "free: no window, no OV/excursion sections" 'grep -qx "window:    none (Free)" <<<"$out" && ! grep -q "^OVER-VOLTAGE\|^EXCURSIONS" <<<"$out" && grep -qx "mode:      Resistance" <<<"$out"'
 
+echo "phase (Phase 8: an optional header line):"
+mk "$T/ph.csv" "# clock=ntp" "# mode=VDC" "# profile=rail-5v" "# window=4.75..5.25 source=profile" "# alarm_hi=5.775" \
+   "# machine=s-0042-ms-pac-man" "# phase=as_found" -- $'5.01,V,DC AUTO' $'5.02,V,DC AUTO'
+out=$(rep "$T/ph.csv"); js=$(rep "$T/ph.csv" --json)
+check "the text names it beside the machine"  'grep -qx "machine:   s-0042-ms-pac-man (as-found)" <<<"$out"'
+check "and not as a stray note"               '! grep -q "phase=" <<<"$out"'
+check "--json carries it"                     '[ "$(jq_ "[d[\"phase\"]]" <<<"$js")" = as_found ]'
+check "a file without the line: phase null"   '[ "$(rep "$T/free.csv" --json | jq_ "[d[\"phase\"]]")" = None ]'
+
 echo "report: $pass passed, $fail failed"
 [ "$fail" = 0 ]

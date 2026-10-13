@@ -24,7 +24,7 @@ import os
 import time
 import uuid
 
-from . import config, meter, system
+from . import config, hubs, meter
 
 OUTBOX = "orders.json"
 # What the tracker accepts; its own forms offer the same five.
@@ -56,40 +56,23 @@ def _save(entries):
 
 
 def _sent_uids():
-    """What `gatbox-sync` has already handed to the hub.
+    """What `gatbox-sync` has already handed to a hub, any hub.
 
     Read-only, from its state directory: it is mode 0755 and gatbox-web.service already has
     ReadOnlyPaths for it because the SYSTEM panel's Hub tile reads the same place. So the
     queued/sent badge is a join, and no write crosses the boundary in either direction.
     """
-    outbox = _sync_state("sent.json", {}).get("outbox")
-    return set(outbox) if isinstance(outbox, dict) else set()
-
-
-def _sync_state(name, default):
-    """One of gatbox-sync's cache files. Read-only, and missing is normal: a Pi with no
-    /etc/gatbox/hub.conf never runs that job at all."""
-    state = os.environ.get("GATBOX_SYNC_STATE", system.SYNC_STATE)
-    try:
-        with open(os.path.join(state, name), encoding="utf-8") as fh:
-            d = json.load(fh)
-    except (OSError, ValueError):
-        return default
-    return d if isinstance(d, dict) else default
+    return hubs.sent_uids()
 
 
 def hub_open(slug):
-    """What the hub already has open for this machine, as of the last sync.
+    """What the hub that owns this machine already has open for it, as of the last sync.
 
     So the card can offer to attach a trace to an order that exists instead of filing a
     second one for the same fault. Minutes stale by nature -- which is exactly why the hub
     accepts a tag for an order that has since been closed rather than rejecting it.
     """
-    if not slug:
-        return []
-    cached = _sync_state("orders.json", {}).get("open") or {}
-    rows = cached.get(slug) or []
-    return [r for r in rows if isinstance(r, dict) and r.get("id")]
+    return hubs.open_orders(slug)
 
 
 def listing():
@@ -99,7 +82,11 @@ def listing():
     for e in _load():
         out.append({**e, "state": "sent" if e.get("uid") in sent else "queued"})
     slug = meter.resolved()["machine"]
-    return {"orders": out, "machine": slug, "hub_open": hub_open(slug)}
+    m = hubs.machine(slug) if slug else None
+    # Which hub the machine's orders go to, and whether it takes jobs: the JOB card and the
+    # AS-FOUND / AS-LEFT choice appear only for one that does.
+    return {"orders": out, "machine": slug, "hub_open": hub_open(slug),
+            "hub": m["hub"] if m else None, "conflict": m["conflict"] if m else None}
 
 
 class Bad(Exception):
@@ -170,6 +157,9 @@ def tag(body):
     elif session_file not in _complete_sessions():
         raise Bad(400, f"session_file: no finished session named {session_file!r}")
     note = _text(body, "note", NOTE_MAX, required=False)
+    phase = body.get("phase")
+    if phase is not None and phase not in hubs.PHASES:
+        raise Bad(400, f"phase: one of {', '.join(hubs.PHASES)}, or none")
 
     for e in _load():
         if (e.get("kind") == "session_tag" and e.get("order") == order
@@ -181,8 +171,15 @@ def tag(body):
     entry = {"uid": uuid.uuid4().hex, "kind": "session_tag",
              "created": round(time.time(), 3), "order": order,
              "session_file": session_file}
+    # The machine the order is on: an order id means something only to the hub that issued
+    # it, and with several hubs this is what gatbox-sync routes the tag by.
+    slug = meter.resolved()["machine"]
+    if slug and any(o.get("id") == order for o in hub_open(slug)):
+        entry["machine"] = slug
     if note:
         entry["note"] = note
+    if phase:
+        entry["phase"] = phase
     entries = _load()
     entries.append(entry)
     _save(entries)

@@ -7,6 +7,7 @@
     # window=4.75..5.25 source=profile|machine:<slug>|user     (or: window=none source=…)
     # alarm_hi=5.775                                           (or: alarm_hi=none)
     # machine=<slug>                                           (only when one is set)
+    # phase=as_found | as_left                                 (Phase 8: only with a machine, only when set)
     # settling=<iso>,<epoch>,<value>,<unit>,<flags>            (the first reading after a dial turn, set aside)
     samples…
     # mark=<iso>,<epoch>,<uptime_s>,<source>,<label>           (and mark-before-start=… for marks made between files)
@@ -28,7 +29,7 @@ Mark = namedtuple("Mark", "iso epoch up source label before_start")
 class Header:
     def __init__(self):
         self.clock = self.clock_note = self.clock_sync = None
-        self.mode = self.profile = self.machine = None
+        self.mode = self.profile = self.machine = self.phase = None
         self.window = None                 # [lo, hi] or None
         self.window_source = None
         self.alarm_hi = None
@@ -61,6 +62,8 @@ def _comment(h, marks, c, t0, t1):
         h.profile = val.strip() or None
     elif key == "machine":
         h.machine = val.strip() or None
+    elif key == "phase":
+        h.phase = val.strip() or None
     elif key == "window":
         rng, _, src = val.partition(" source=")
         h.window_source = src.strip() or None

@@ -542,6 +542,9 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   - An item the hub refuses five times is **parked** and stops being offered, with the reason
     on the SYSTEM panel's Hub tile. The usual cause is an order for a machine the hub's roster
     does not have: fix it there, then `sudo GATBOX_SYNC_UNPARK=1 systemctl start gatbox-sync`.
+  - Installed on the Pi, tracker side deployed, 2026-10-07. Both bench exits passed on
+    hardware that day: a real join from the Wi-Fi card, and an order typed on the 7″ that
+    reached the tracker's work queue with its trace attached.
 - In a cabinet with no known Wi-Fi, the hotspot comes up ~90 s after boot: join **GATBOX**,
   Pi at `10.42.0.1` / `gatbox.local`. Since 2026-10-05 it also drops again by itself when a
   saved network comes back into range, and there are three ways to join a new one — see

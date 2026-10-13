@@ -146,6 +146,6 @@ use; 5 (network: three ways onto a new Wi-Fi, hotspot recovery) and 6 (orders fr
 merged 2026-10-06. The contract both sides share is `docs/contract/v1/`, vendored from the
 tracker and checksum-tested in both repos. `gatbox-sync` pushes finished sessions, orders and
 session tags on a 2-minute timer and caches the roster and open orders for the 7″.
-**Still to do:** install Phase 6 on the Pi and deploy the tracker side, then the two bench
-exits — a real join from the Wi-Fi card, and an order typed on the 7″ reaching the work queue
-with its trace attached. Neither has been done on hardware yet.
+Phase 6 installed on the Pi and the tracker side deployed 2026-10-07; both bench exits passed
+on hardware that day — a real join from the Wi-Fi card, and an order typed on the 7″ reaching
+the work queue with its trace attached.

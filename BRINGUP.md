@@ -545,6 +545,17 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   - Installed on the Pi, tracker side deployed, 2026-10-07. Both bench exits passed on
     hardware that day: a real join from the Wi-Fi card, and an order typed on the 7″ that
     reached the tracker's work queue with its trace attached.
+- **Several hubs (Phase 8, built 2026-10-13; not installed yet).** A second hub is
+  `/etc/gatbox/hubs.d/<name>.conf` (HUB_URLS, HUB_TOKEN, HUB_LABEL), beside the original
+  `hub.conf`; see `docs/network.md`. With one hub nothing changes. With two, each item goes to
+  the hub whose roster has the machine; a machine on no roster is held, one on two is a
+  conflict and goes to neither (SYSTEM → Hub routing). PICK MACHINE groups by hub label, a
+  customer machine's `model_key` brings its model's manuals, limits and ROM list (its own
+  actuals stay its own), and a hub that lists `jobs` gets the JOB card with AS-FOUND /
+  AS-LEFT, which becomes the session's `# phase=` line and a new file when it changes.
+  - [ ] Installed on the Pi (bootstrap; shows the gatbox-sync unit + tmpfiles diff first)
+  - [ ] ⏸ Exit: one session each on the same Pi — a barcade trace lands in the tracker, a
+        customer trace lands on its job at the second hub, neither shows up in the other
 - In a cabinet with no known Wi-Fi, the hotspot comes up ~90 s after boot: join **GATBOX**,
   Pi at `10.42.0.1` / `gatbox.local`. Since 2026-10-05 it also drops again by itself when a
   saved network comes back into range, and there are three ways to join a new one — see

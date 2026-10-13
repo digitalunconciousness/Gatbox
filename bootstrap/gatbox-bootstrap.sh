@@ -94,6 +94,7 @@ backend/gatboxweb/mame.py                       /usr/local/lib/gatbox/gatboxweb/
 backend/gatboxweb/manuals.py                    /usr/local/lib/gatbox/gatboxweb/manuals.py            644
 backend/gatboxweb/wifi.py                       /usr/local/lib/gatbox/gatboxweb/wifi.py               644
 backend/gatboxweb/orders.py                     /usr/local/lib/gatbox/gatboxweb/orders.py             644
+backend/gatboxweb/hubs.py                       /usr/local/lib/gatbox/gatboxweb/hubs.py               644
 web/dash/index.html                             /usr/local/share/gatbox-web/dash/index.html           644
 web/dash/dash.css                               /usr/local/share/gatbox-web/dash/dash.css             644
 web/dash/dash.js                                /usr/local/share/gatbox-web/dash/dash.js              644

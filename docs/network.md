@@ -144,3 +144,35 @@ own container and is reachable only through its tunnel, which is a posture worth
 a LAN entry only if that changes.
 
 Mint a token on the hub with `scripts/create_device.py --name gatbox-01`; it is shown once.
+
+### Several hubs (Phase 8)
+
+A second hub is one more file, `/etc/gatbox/hubs.d/<name>.conf`, mode 600, root-owned, with
+the same two keys plus a label for the 7″:
+
+```
+HUB_URLS=https://hub.example
+HUB_TOKEN=gbx_<public_id>.<secret>
+HUB_LABEL=WORKSHOP
+```
+
+- `<name>` is lower-case letters, digits and hyphens, up to 32. It names the hub's state
+  directory and appears in the journal; `default` is taken by `hub.conf`. Anything else in
+  `hubs.d` (an editor's `~` backup, a README) is ignored.
+- `hub.conf` may carry `HUB_LABEL` too. Without one, the 7″ calls that hub by its name.
+- **One hub is the box as it always was:** everything goes to it, unrouted. With two or more,
+  each session, order and tag goes to the one hub whose roster has the machine. A machine no
+  roster has is **held** and goes out by itself once a roster lists it. A machine on two
+  rosters is a **conflict**: sent to neither, in red on SYSTEM → Hub routing, until one roster
+  drops it. Every uid is salted with the destination hub's own device id.
+- The same token in two files is the same hub twice; the second file is refused and says so.
+  A malformed token fails the unit (only a person can fix it) but the other hubs still run.
+- The unit loads `hubs.d` as a directory credential. `hub.conf` and `hubs.d` both always
+  exist (tmpfiles creates an *empty* `hub.conf` when there is none: empty means no hub),
+  because a `LoadCredential=` path that is missing fails the unit outright.
+- A hub whose `/api/v1/health` lists `"capabilities": ["jobs"]` gets the JOB card on the
+  MACHINE view and AS-FOUND / AS-LEFT, sent as `phase`. Its capabilities are cached in
+  `/var/lib/gatbox-sync/hubs/<name>/hub.json`, so the card works when the hub is out of reach.
+
+After adding or changing a file: `sudo systemctl start gatbox-sync` and
+`journalctl -u gatbox-sync -n 40 --no-pager` — each hub gets its own `ok` or reason.

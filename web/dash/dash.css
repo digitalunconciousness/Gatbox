@@ -207,6 +207,8 @@ a.btnlink{display:inline-flex;align-items:center;justify-content:center;min-heig
 .keys .shift.on{color:var(--mag);border-color:var(--mag)}
 .num .keys{grid-template-columns:repeat(4,1fr)}
 .picklist{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;overflow:auto;min-height:0}
+.picklist .grp{grid-column:1/-1;padding:6px 2px 2px;border-bottom:1px solid var(--line);color:var(--cyan);
+  font:14px/1.2 var(--disp);letter-spacing:.12em}
 #toast{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:35;max-width:90%;padding:10px 16px;
   border-radius:8px;background:var(--bg2);border:1px solid var(--cyan);color:var(--fg);font:16px var(--mono);
   box-shadow:0 0 14px rgba(125,250,255,.25)}

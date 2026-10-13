@@ -938,6 +938,96 @@ def main():
               "not configured" in q(f"(({hubcard}) || {{}}).textContent || ''"))
         check("devices: NOT FITTED cards greyed", q("document.querySelectorAll('#dv-grid .notfit').length") == 3)
 
+        print("several hubs (Phase 8):")
+        # gatbox-sync's state for two hubs: ALPHA (the default, no capabilities) lists our machines, BRAVO takes jobs
+        # and lists a customer machine known by model, plus one of ours, which makes that one a conflict.
+        sd = f"{T}/sync"
+        os.makedirs(f"{sd}/hubs/bravo", exist_ok=True)
+        w = lambda p_, o: json.dump(o, open(f"{sd}/{p_}", "w"))   # noqa: E731
+        w("status.json", {"at": time.time(), "ok": True, "queued": 0, "sent_total": 3,
+                          "hubs": [{"name": "default", "label": "ALPHA", "capabilities": [], "ok": True, "queued": 0,
+                                    "hub": "https://a.example", "at": time.time(), "sent_total": 2},
+                                   {"name": "bravo", "label": "BRAVO", "capabilities": ["jobs"], "ok": True, "queued": 0,
+                                    "hub": "https://b.example", "at": time.time(), "sent_total": 1}],
+                          "held": [], "conflicts": [{"machine": "gauntlet", "hubs": ["ALPHA", "BRAVO"]}], "refused": []})
+        w("hub.json", {"name": "default", "label": "ALPHA", "capabilities": []})
+        w("roster.json", {"machines": [{"slug": "gauntlet-legends", "name": "Gauntlet Legends"},
+                                       {"slug": "gauntlet", "name": "Gauntlet"}]})
+        w("hubs/bravo/hub.json", {"name": "bravo", "label": "BRAVO", "capabilities": ["jobs"]})
+        w("hubs/bravo/roster.json", {"machines": [
+            {"slug": "s-0042-ms-pac-man", "name": "Ms. Pac-Man", "status": "In shop", "location": "Bench",
+             "model_key": "gauntlet-legends"},
+            {"slug": "gauntlet", "name": "Gauntlet"}]})
+        w("hubs/bravo/orders.json", {"open": {"s-0042-ms-pac-man": [
+            {"id": 7, "issue": "Dead on arrival", "priority": "Normal", "status": "Waiting on parts",
+             "work_order": "WO-2026-0012", "nte": "250.00", "source": "web", "reported": 1790000000.0}]}})
+        # An earlier step can leave a sheet up (the Wi-Fi keypad); the tiles are under it.
+        q("(() => { const b = [...document.querySelectorAll('#sheet:not(.hide) #pane button')]"
+          ".find(b => b.textContent === 'CANCEL' || b.textContent === 'CLOSE'); if (b) b.click(); })()")
+        click('[data-view="system"]')
+        check("system: a tile per hub, by label",
+              settles(c, "[...document.querySelectorAll('#sy-grid h2')].map(h => h.textContent).join('|')"
+                         ".includes('Hub · ALPHA|Hub · BRAVO')"))
+        check("system: the conflict, in its own tile",
+              settles(c, "[...document.querySelectorAll('#sy-grid .card')].some(c => c.textContent.includes('Hub routing')"
+                         " && c.textContent.includes('gauntlet: on ALPHA and BRAVO'))"))
+        shot("19-system-hubs")
+        click('[data-view="machine"]')
+        c.wait("!document.querySelector('#mc-pick').disabled", 10)
+        click("#mc-pick")
+        c.wait("document.querySelectorAll('#pane .picklist .grp').length > 0", 10)
+        heads = q("[...document.querySelectorAll('#pane .picklist .grp')].map(g => g.textContent).join('|')")
+        # Zaxxon was added on this Pi earlier in the run and no hub has it.
+        check("picker: grouped under each hub's label, THIS PI for the rest", heads == "ALPHA|BRAVO|THIS PI")
+        check("picker: the conflict says so",
+              "CONFLICT" in q("document.querySelector('#pane .picklist').textContent"))
+        shot("20-picker-hubs")
+        q("[...document.querySelectorAll('#pane .picklist .row')].find(r => r.textContent.includes('Ms. Pac-Man')).click()")
+        job_card = ("[...document.querySelectorAll('#mc-body .card')]"
+                    ".find(c => ((c.querySelector('h3') || {}).textContent || '').startsWith('Job'))")
+        check("machine: the customer machine, its hub and model",
+              settles(c, "document.querySelector('#mc-body').textContent.includes('HUB: BRAVO')")
+              and "Model: Gauntlet Legends" in text("#mc-body"))
+        check("machine: a JOB card, not Work orders",
+              settles(c, f"!!({job_card})") and not q("[...document.querySelectorAll('#mc-body h3')]"
+                                                      ".some(h => h.textContent === 'Work orders')"))
+        jt = q(f"(({job_card}) || {{}}).textContent || ''")
+        check("machine: the job's complaint, status, work order and NTE",
+              all(x in jt for x in ("Dead on arrival", "Waiting on parts", "WO-2026-0012", "NTE 250.00")))
+        q(f"[...({job_card}).querySelectorAll('button')].find(b => b.textContent === 'AS-FOUND').click()")
+        time.sleep(1)
+        check("machine: the card is drawn once, however many reloads overlap",
+              q("[...document.querySelectorAll('#mc-body h3')].filter(h => h.textContent.startsWith('Job')).length") == 1
+              and q("document.querySelectorAll('#mc-body .big').length") == 1)
+        check("machine: AS-FOUND sets the session's phase",
+              settles(c, "document.querySelector('#m-window').textContent.includes('AS-FOUND')")
+              and api("GET", "/api/meter/profile")["phase"] == "as_found")
+        q(f"({job_card}).scrollIntoView()")
+        shot("21-machine-job")
+        logger(mkcsv("job.csv", rep(400, "5.02,V,DC AUTO")), rate=10)
+        c.wait("document.querySelector('#m-value').textContent === '5.02'", 20)
+        # SAVE READING is for bench profiles; "free" takes any reading. A profile change is a new file too.
+        api("PUT", "/api/meter/profile", {"id": "free"})
+        click('[data-view="meter"]')
+        c.wait("!document.querySelector('#b-capture').disabled", 20)
+        click("#b-capture")
+        c.wait("!document.querySelector('#sheet').classList.contains('hide')"
+               " && [...document.querySelectorAll('#pane button')].some(b => b.textContent === 'SAVE')", 10)
+        tap_keys("CN1")
+        check("save reading: it asks which end of the job",
+              settles(c, "[...document.querySelectorAll('#pane button')].some(b => b.textContent === 'AS-LEFT')"))
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'AS-LEFT').click()")
+        check("save reading: AS-LEFT becomes the phase, and the reading is saved",
+              settles(c, "document.querySelector('#m-window').textContent.includes('AS-LEFT')")
+              and any(k["label"] == "CN1" for k in api("GET", "/api/captures?machine=s-0042-ms-pac-man")["captures"]))
+        stop("logger")
+        api("PUT", "/api/meter/profile", {"id": "rail-5v"})
+        api("PUT", "/api/machine", {"slug": "gauntlet-legends"})
+        click('[data-view="machine"]')
+        check("machine: a barcade machine keeps Work orders, and no phase",
+              settles(c, "[...document.querySelectorAll('#mc-body h3')].some(h => h.textContent === 'Work orders')")
+              and not q(f"!!({job_card})") and "AS-" not in text("#m-window"))
+
     print("phone (390x844):")
     with Chrome(f"{T}/browser2") as c:
         c.open(B + "/dash/", 390, 844)

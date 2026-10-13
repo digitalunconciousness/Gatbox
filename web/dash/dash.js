@@ -131,7 +131,7 @@
   function onHello(m) {
     S.connected = true;
     onState({profile: m.profile, alarm: {on: m.alarm.on, applies: m.alarm.applies, limit: m.alarm.limit},
-             machine: m.machine, machine_name: m.machine_name, stopped: m.stopped}, true);
+             machine: m.machine, machine_name: m.machine_name, stopped: m.stopped, phase: m.phase, jobs: m.jobs}, true);
     S.file = m.session.file; S.fileStart = fileStart(S.file);
     S.marks = (m.session.marks || []).slice(); S.pending = (m.marks_pending || []).slice();
     S.events = m.alarm.events || [];
@@ -282,8 +282,8 @@
     $("#m-mode").textContent = s ? (s.label || modeLabel(s.mode)) : "—";
     $("#m-profile").textContent = (p.label || "PROFILE") + " ▸";
     const base = profBase(p);
-    $("#m-window").textContent = p.window ? `${fmtWin(p.window, base)} · ${sourceText(p.source)}${S.st.machine_name ? " · " + S.st.machine_name : ""}`
-                                          : `no window${S.st.machine_name ? " · " + S.st.machine_name : ""}`;
+    const who = S.st.machine_name ? " · " + S.st.machine_name + (S.st.phase ? " · " + phaseText(S.st.phase) : "") : "";
+    $("#m-window").textContent = p.window ? `${fmtWin(p.window, base)} · ${sourceText(p.source)}${who}` : `no window${who}`;
     let val = "no reading", unit = "";
     if (s) {
       if (s.ol || s.v == null) val = s.display || "OL";
@@ -353,7 +353,15 @@
   $("#b-capture").addEventListener("click", async () => {
     const label = await keypad({title: "Save reading: a label (e.g. U12 PIN 3)", max: 40});
     if (!label) return;
-    api("POST", "/api/captures", {label}).catch(fail);
+    const body = {label};
+    if (S.st && S.st.jobs) {
+      // A machine whose hub takes jobs: the reading says which end of the job it is. That is the
+      // session's phase (a change starts a new file), so the trace the job gets carries it too.
+      const ph = await askPhase("Save reading", "Which end of the job is this reading?");
+      if (ph === null) return;
+      body.phase = ph || null;
+    }
+    api("POST", "/api/captures", body).catch(fail);
   });
   $("#m-profile").addEventListener("click", profilePicker);
 
@@ -657,15 +665,32 @@
 
   // --- MACHINE ------------------------------------------------------------------------------
   async function loadMachine() {
+    // Every state event reloads this card, and so does the button that caused the event: two reloads overlap, and
+    // each appends after its awaits. Only the newest one draws.
+    const gen = S.mcGen = (S.mcGen || 0) + 1, stale = () => gen !== S.mcGen;
     const B = clear($("#mc-body"));
     let m;
     try { m = await api("GET", "/api/machine"); } catch (e) { return fail(e); }
+    if (stale()) return;
     $("#mc-clear").disabled = !m.slug;
     $("#mc-pick").disabled = $("#mc-export").disabled = $("#mc-labels").disabled = !m.roster;
     if (!m.roster) { B.appendChild(el("div", "card warn", "No roster installed on this Pi (data/gatbox-barcade-roster.json). + ADD MACHINE starts one here.")); return; }
     if (!m.slug) { B.appendChild(el("div", "card mut", "No machine set. PICK MACHINE, or scan its QR code.")); return; }
-    const e = m.entry, c = el("div", "card");
-    add(c, el("div", "big", e.name), el("div", "mut", `${e.slug} · ${e.mfr || ""} · ${e.kind === "pinball" ? "pinball" : "video game"}`));
+    const e = m.entry, c = el("div", "card"), hubOnly = e.kind == null;   // a machine only a hub has (Phase 8)
+    add(c, el("div", "big", e.name), el("div", "mut", hubOnly
+      ? [e.slug, e.location, e.status].filter(Boolean).join(" · ")
+      : `${e.slug} · ${e.mfr || ""} · ${e.kind === "pinball" ? "pinball" : "video game"}`));
+    if (e.hub || e.conflict) {
+      const r = el("div", "chips");
+      if (e.hub) r.appendChild(el("span", "badge cy", "HUB: " + e.hub.label));
+      // On two hubs' rosters: gatbox-sync sends this machine's sessions and orders to neither until one lets go.
+      if (e.conflict) r.appendChild(el("span", "badge bad", `CONFLICT: on ${e.conflict.join(" and ")}; sent to neither`));
+      c.appendChild(r);
+    }
+    if (hubOnly) c.appendChild(e.library
+      ? el("div", null, `Model: ${e.library_name || e.library}. Its manuals, limits and ROM list are this Pi's ${e.library_name || e.library}.`)
+      : el("div", "mut", e.model_key ? `Model ${e.model_key}: not in this Pi's library, so no manuals or ROM list.`
+                                     : "No model on the hub's record, so no manuals or ROM list."));
     if (e.added) {
       const r = el("div", "btnrow"), ed = el("button", null, "EDIT");
       r.style.cssText = "align-items:center;margin-top:6px";
@@ -706,10 +731,13 @@
       for (const [r, w] of Object.entries(e.spec.rails))
         c.appendChild(el("div", null, `${r.replace("-", "−")}  ${w[0]}–${w[1]} V` + (e.spec.sources ? ` · ${srcLabel(e.spec.sources[r])}` : "")));
       if (e.spec.source) c.appendChild(el("div", "mut", e.spec.source));
-    } else c.appendChild(el("div", "mut", "None yet: the MANUALS tab has the machine's spec sheet (CONFIRM a limit from its manual)."));
-    const sp = el("button", null, "SPEC SHEET & MANUALS ▸");
-    sp.addEventListener("click", () => { M.slug = M.name = null; show("manuals"); });   // the card is the current machine's
-    c.appendChild(sp);
+    } else c.appendChild(el("div", "mut", hubOnly && !e.library ? "None yet."
+      : "None yet: the MANUALS tab has the machine's spec sheet (CONFIRM a limit from its manual)."));
+    if (!hubOnly || e.library) {
+      const sp = el("button", null, "SPEC SHEET & MANUALS ▸");
+      sp.addEventListener("click", () => { M.slug = M.name = null; show("manuals"); });   // the card is the current machine's
+      c.appendChild(sp);
+    }
     c.appendChild(el("h3", null, "Saved readings"));
     try {
       const cp = await api("GET", "/api/captures?machine=" + encodeURIComponent(e.slug));
@@ -721,8 +749,9 @@
     c.appendChild(el("h3", null, "Dumps"));
     try { dumpList(c, (await api("GET", "/api/dumps?machine=" + encodeURIComponent(e.slug))).dumps); }
     catch (x) { c.appendChild(el("div", "mut", "No dump archive on this Pi yet.")); }
+    if (stale()) return;
     B.appendChild(c);
-    await ordersSection(B, e);
+    await ordersSection(B, e, stale);
   }
 
   // --- WORK ORDERS ---------------------------------------------------------------------------
@@ -731,9 +760,11 @@
   // has been.
   const PRIORITIES = ["Low", "Medium", "High", "Critical", "Urgent"];
 
-  async function ordersSection(B, entry) {
+  async function ordersSection(B, entry, stale) {
     let d;
     try { d = await api("GET", "/api/orders"); } catch (x) { return; }   // not on the Pi's screen
+    if (stale && stale()) return;
+    if (d.hub && d.hub.jobs) return jobSection(B, entry, d);          // Phase 8: a hub that takes jobs
     const c = el("div", "card");
     c.appendChild(el("h3", null, "Work orders"));
     const open = d.hub_open || [], queued = (d.orders || []).filter(o => o.machine === entry.slug
@@ -783,7 +814,51 @@
     B.appendChild(c);
   }
 
-  async function newOrder(entry) {
+  // --- JOB (Phase 8) -------------------------------------------------------------------------
+  // Only for a machine whose hub lists "jobs" in its health: the machine's open job from that hub's
+  // cache (minutes old by nature), which end of the job this session is, and the same queue as
+  // Work orders. An order to such a hub becomes a job there.
+  function jobSection(B, entry, d) {
+    const c = el("div", "card"), lab = d.hub.label;
+    c.appendChild(el("h3", null, "Job · " + lab));
+    const open = d.hub_open || [];
+    if (!open.length) c.appendChild(el("div", "mut", `No open job for this machine at ${lab} (as of the last sync).`));
+    for (const o of open) {
+      const j = el("div", "card");
+      add(j, el("b", null, o.issue || "(no complaint written)"),
+          el("div", "mut", [o.work_order || "no work order", o.status, o.priority].filter(Boolean).join(" · ")),
+          el("div", null, o.nte ? "NTE " + o.nte : "no NTE"));
+      const att = el("button", null, "ATTACH LAST TRACE");
+      att.addEventListener("click", () => attachTrace(o, true));
+      j.appendChild(att);
+      c.appendChild(j);
+    }
+    // Which end of the job the trace being logged now is. A change starts a new file, so each
+    // trace is one phase from start to end, and the job receives it marked.
+    const ph = el("div", "btnrow");
+    ph.style.alignItems = "center";
+    ph.appendChild(el("span", null, "THIS SESSION:"));
+    for (const [k, t] of [["as_found", "AS-FOUND"], ["as_left", "AS-LEFT"], [null, "NO PHASE"]]) {
+      const b = el("button", (S.st && S.st.phase || null) === k ? "primary" : null, t);
+      b.addEventListener("click", () => api("PUT", "/api/phase", {phase: k})
+        .then(r => { if (r.changed) toast((k ? phaseText(k) : "No phase") + (r.new_file ? " · new file started" : "")); loadMachine(); })
+        .catch(fail));
+      ph.appendChild(b);
+    }
+    c.appendChild(ph);
+    for (const o of (d.orders || []).filter(o => o.machine === entry.slug)) {
+      const what = o.kind === "session_tag" ? `trace → job #${o.order}${o.phase ? " (" + phaseText(o.phase) + ")" : ""}`
+                                            : (o.issue || "").slice(0, 50);
+      c.appendChild(el("div", o.state === "sent" ? "ok" : "warn", `${o.state}: ${what}`));
+    }
+    const bar = el("div", "btnrow"), neu = el("button", "primary", "NEW JOB");
+    neu.addEventListener("click", () => newOrder(entry, lab));
+    bar.appendChild(neu);
+    c.appendChild(bar);
+    B.appendChild(c);
+  }
+
+  async function newOrder(entry, jobsHub) {
     // keypad(), not a field in the card: loadMachine() rebuilds #mc-body, so anything typed
     // into a tile is destroyed mid-entry -- and the kiosk has no keyboard to type with. The
     // same reason the Wi-Fi key goes through it.
@@ -802,18 +877,22 @@
        sub: "nothing metered, or the fault is not electrical"}], "yes");
     if (!withTrace) return;
     api("POST", "/api/orders", {issue: issue, priority: priority, attach: withTrace === "yes"})
-      .then(() => { toast("Order queued for the hub"); loadMachine(); })
+      .then(() => { toast(jobsHub ? "Job queued for " + jobsHub : "Order queued for the hub"); loadMachine(); })
       .catch(fail);
   }
 
-  function attachTrace(order) {
-    const note = () => keypad({title: "A NOTE? (OPTIONAL)", max: 200, keep: true});
-    note().then(n => {
-      if (n === null) return;
-      // No session_file: the server resolves "the last finished one", which is what the
-      // button says and what this page cannot work out without listing every session.
-      return api("POST", "/api/orders/tag", {order: order.id, note: n || undefined});
-    }).then(r => { if (r) { toast("Trace queued for order #" + order.id); loadMachine(); } })
+  async function attachTrace(order, jobs) {
+    let phase;
+    if (jobs) {
+      phase = await askPhase("Attach the last trace", "Which end of the job is that trace?");
+      if (phase === null) return;
+    }
+    const n = await keypad({title: "A NOTE? (OPTIONAL)", max: 200, keep: true});
+    if (n === null) return;
+    // No session_file: the server resolves "the last finished one", which is what the
+    // button says and what this page cannot work out without listing every session.
+    api("POST", "/api/orders/tag", {order: order.id, note: n || undefined, phase: phase || undefined})
+      .then(() => { toast(`Trace queued for ${jobs ? "job" : "order"} #${order.id}`); loadMachine(); })
       .catch(fail);
   }
   // LABEL LIST: what to type into a label maker's QR text (Katasymbol and the like). Tap COPY, paste in the app.
@@ -867,9 +946,16 @@
   $("#mc-pick").addEventListener("click", async () => {
     let R;
     try { R = await api("GET", "/api/roster"); } catch (e) { return fail(e); }
-    const pick = await pickFrom("Pick the machine", R.machines.map(m => ({
+    const item = m => ({
       key: m.slug, title: m.name, find: [m.name.toLowerCase(), m.slug],
-      sub: m.slug + (m.spec ? " · rail spec" : "") + (m.added ? " · added here" : "")})), S.st && S.st.machine);
+      sub: m.slug + (m.spec ? " · rail spec" : "") + (m.added ? " · added here" : "") + (m.location ? " · " + m.location : "")
+           + (m.conflict ? " · CONFLICT" : ""), subCls: m.conflict ? "bad" : null});
+    // Several hubs (Phase 8): a heading per hub label, THIS PI for the rest. One hub or none: the flat list.
+    const by = {};
+    R.machines.forEach(m => { by[m.slug] = m; });
+    const items = R.groups ? R.groups.flatMap(g => [{head: g.label}].concat(g.slugs.filter(sl => by[sl]).map(sl => item(by[sl]))))
+                           : R.machines.map(item);
+    const pick = await pickFrom("Pick the machine", items, S.st && S.st.machine);
     if (!pick) return;
     api("PUT", "/api/machine", {slug: pick}).then(r => { toast(`Machine: ${r.entry.name}${r.new_file ? " · new file started" : ""}`); loadMachine(); }).catch(fail);
   });
@@ -883,9 +969,14 @@
         field.textContent = q || "type to filter"; field.appendChild(el("span", "cur"));
         clear(list);
         const Q = q.toLowerCase();
-        for (const it of items.filter(it => !Q || it.find.some(f => f.includes(Q))).slice(0, 60)) {
+        let shown = 0, head = null;
+        for (const it of items) {
+          if (it.head) { head = it.head; continue; }      // a group heading: drawn only above a match under it
+          if (Q && !it.find.some(f => f.includes(Q))) continue;
+          if (shown++ >= 60) break;
+          if (head) { list.appendChild(el("div", "grp", head)); head = null; }
           const b = el("button", "row" + (it.key === cur ? " on" : ""));
-          add(b, el("b", null, it.title), el("div", "mut", it.sub));
+          add(b, el("b", null, it.title), el("div", it.subCls || "mut", it.sub));
           b.addEventListener("click", () => done(it.key));
           list.appendChild(b);
         }
@@ -1081,16 +1172,26 @@
     // rather than showing a failure.
     const hb = d.hub;
     const ago = t => t ? `${Math.max(0, Math.round(Date.now() / 1000 - t) / 60).toFixed(0)} min ago` : "never";
-    tile("Hub", hb ? [
-      ["reachable", hb.ok ? (hb.url || "yes") : (hb.error || "no"), hb.ok ? "ok" : "bad"],
-      ["queued", hb.queued === 0 ? "nothing waiting" : `${hb.queued} session${hb.queued === 1 ? "" : "s"}`,
-       hb.queued ? "warn" : null],
-      ["last run", ago(hb.at)],
-      ["last push", hb.last && hb.last.created != null
-        ? `${hb.last.created} new, ${hb.last.duplicate} already there${hb.last.rejected ? `, ${hb.last.rejected} refused` : ""}`
-        : "nothing yet", hb.last && hb.last.rejected ? "bad" : null],
-      ["sent in all", hb.sent_total != null ? String(hb.sent_total) : "-"],
-    ] : [["sync", "not configured (no /etc/gatbox/hub.conf)", "mut"]]);
+    const hubRows = h => [
+      ["reachable", h.ok ? (h.url || "yes") : (h.error || "no"), h.ok ? "ok" : "bad"],
+      ["queued", h.queued === 0 ? "nothing waiting" : `${h.queued} session${h.queued === 1 ? "" : "s"}`,
+       h.queued ? "warn" : null],
+      ["last run", ago(h.at)],
+      ["last push", h.last && h.last.created != null
+        ? `${h.last.created} new, ${h.last.duplicate} already there${h.last.rejected ? `, ${h.last.rejected} refused` : ""}`
+        : "nothing yet", h.last && h.last.rejected ? "bad" : null],
+      ["sent in all", h.sent_total != null ? String(h.sent_total) : "-"],
+    ];
+    // What no hub was sent (Phase 8): a machine two rosters claim, one no roster has, a hub file refused.
+    const routing = hb ? [
+      ...(hb.conflicts || []).map(x => ["conflict", `${x.machine}: on ${(x.hubs || []).join(" and ")}, sent to neither`, "bad"]),
+      ...((hb.held || []).length ? [["held", `no hub has ${hb.held.join(", ")}`, "warn"]] : []),
+      ...(hb.refused || []).map(x => ["refused", `hubs.d/${x.name}.conf: ${x.reason}`, "bad"]),
+    ] : [];
+    if (hb && (hb.hubs || []).length > 1) {
+      for (const h of hb.hubs) tile("Hub · " + h.label, hubRows(h).concat(h.jobs ? [["takes", "jobs", "cy"]] : []));
+      if (routing.length) tile("Hub routing", routing, "warn");
+    } else tile("Hub", hb ? hubRows(hb).concat(routing) : [["sync", "not configured (no /etc/gatbox/hub.conf)", "mut"]]);
     // Wi-Fi. Fetched separately rather than folded into /api/system, because /api/system is
     // readable from the network and these are not: a join needs someone at the box, and the
     // saved list goes with it. On anything but the Pi's own screen the card says why.
@@ -1394,6 +1495,14 @@
     });
     if (ok) specCall("POST", `/api/specs/${encodeURIComponent(slug)}/confirm`, {rail: r.rail, doc: m.doc, page: m.page},
                      `${r.rail} confirmed from ${m.title} p.${m.page}`);
+  }
+  // Phase 8: AS-FOUND / AS-LEFT for a machine whose hub takes jobs. "during" exists at the hub but isn't offered here.
+  const phaseText = p => ({as_found: "AS-FOUND", as_left: "AS-LEFT"})[p] || "";
+  async function askPhase(title, text) {          // -> "as_found" | "as_left" | "" (no phase) | null (cancelled)
+    const cur = S.st && S.st.phase;
+    const k = await choose(title, text, [["as_found", "AS-FOUND", cur === "as_found"], ["as_left", "AS-LEFT", cur === "as_left"],
+                                         ["none", "NO PHASE", !cur]]);
+    return k === null ? null : (k === "none" ? "" : k);
   }
   function choose(title, text, options) {           // [[key, label, primary?], ...] -> key or null
     return sheet(title, (pane, done) => {

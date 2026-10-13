@@ -216,13 +216,14 @@ def set_machine(slug):
         known = roster.slugs()
         if known is None:
             raise Bad(503, "no roster installed (data/gatbox-barcade-roster.json)")
-        if not isinstance(slug, str) or slug not in known:
+        if not isinstance(slug, str) or slug not in known or not roster.SLUG.fullmatch(slug):
+            # The rule as well as membership: this goes into a state file and the CSV header as one line.
             raise Bad(404, f"not in the roster: {slug!r}")
     # A machine a hub knows by model (Phase 8): its manuals, limits and ROM list are that model's. Kept beside the
     # machine so gatbox-meta (the logger's side, which can't read the hub caches) resolves the same window.
     hm = hubs.machine(slug) if slug is not None and slug not in (roster.local_slugs() or set()) else None
     model = hm.get("model_key") if hm else None
-    model = model if isinstance(model, str) and roster.SLUG.match(model) and model != slug else None
+    model = model if isinstance(model, str) and roster.SLUG.fullmatch(model) and model != slug else None
     with _lock:
         _, _, cur = profiles.read_state()
         if cur == slug:
@@ -409,7 +410,7 @@ def snapshot():
         "profile": res, "window": res["window"], "window_source": res["source"],
         "expected": [{"key": k, **modes.get(k, {})} for k in res["modes"]],
         "dial_ok": dial_ok, "leads_reversed": reversed_,
-        "machine": slug, "machine_name": roster.name(slug),
+        "machine": slug, "machine_name": roster.name(slug), "phase": res["phase"], "jobs": _jobs(slug),
         "alarm": {"on": alarm_on(), "applies": res["kind"] == "rail" and res["alarm_hi"] is not None,
                   "limit": res["alarm_hi"], "state": last["alarm"] if last else None,
                   "open": L["open_alarm"], "events": L["alarms"]},

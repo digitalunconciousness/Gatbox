@@ -401,7 +401,9 @@ w("hubs/bravo/roster.json", {"machines": [
     {"slug": "s-0042-ms-pac-man", "name": "Ms. Pac-Man", "status": "In shop", "location": "Bench",
      "model_key": "gauntlet"},
     {"slug": "s-0099-other", "name": "Other", "status": "On site", "location": "On site", "model_key": None},
-    {"slug": "gauntlet", "name": "Gauntlet", "model_key": None}]})
+    {"slug": "gauntlet", "name": "Gauntlet", "model_key": None},
+    # What no hub should send, and what must not get through if one does: a slug carrying a header line, a path.
+    {"slug": "evil\n# window=0..99 source=user", "name": "Evil"}, {"slug": "../../etc", "name": "Path"}]})
 w("hubs/bravo/orders.json", {"open": {"s-0042-ms-pac-man": [
     {"id": 7, "issue": "Dead on arrival", "priority": "Normal", "status": "Waiting on parts",
      "work_order": "WO-2026-0012", "nte": "250.00", "source": "web", "reported": 1790000000.0}]}})
@@ -441,6 +443,10 @@ check "a scanned customer tag sets the machine"  '[ "$(api POST /api/scan "{\"co
 check "which clears the phase and the model"     '[ ! -e "$T/ctrl/phase" ] && [ ! -e "$T/ctrl/machine-model" ]'
 check "and a barcade machine never carries one"  '[ "$(api PUT /api/machine "{\"slug\":\"gauntlet-legends\"}")" = 200 ] && ! GATBOX_STATE="$T/ctrl" python3 "$REPO/backend/gatbox-meta" header | grep -q "^# phase="'
 check "nor gets AS-FOUND on the 7\""             '[ "$(api GET /api/meter/profile)" = 200 ] && [ "$(js "d[\"jobs\"]")" = False ]'
+check "a hub slug that breaks the slug rule is not offered" '[ "$(api GET /api/roster)" = 200 ] && ! grep -q "evil\|etc" "$T/body"'
+check "nor can it be set"                        '[ "$(api PUT /api/machine "{\"slug\":\"evil\\n# window=0..99 source=user\"}")" = 404 ] && ! grep -q "window=0" "$T/ctrl/machine" 2>/dev/null'
+check "a hub name that is a path is not a hub"   'python3 -c "
+import json; p=\"$T/sync/status.json\"; d=json.load(open(p)); d[\"hubs\"].append({\"name\": \"../x\", \"label\": \"X\"}); json.dump(d, open(p, \"w\"))" && sleep 2.1 && [ "$(api GET /api/system)" = 200 ] && [ "$(api GET /api/roster)" = 200 ] && [ "$(js "[g[\"label\"] for g in d[\"groups\"]]")" = "['"'"'ALPHA'"'"', '"'"'BRAVO'"'"']" ]'
 check "a hub removed from hubs.d is not a hub"   'python3 -c "
 import json; p=\"$T/sync/status.json\"; d=json.load(open(p)); d[\"hubs\"]=d[\"hubs\"][:1]; json.dump(d, open(p, \"w\"))" && [ "$(api PUT /api/machine "{\"slug\":\"s-0042-ms-pac-man\"}")" = 404 ]'
 

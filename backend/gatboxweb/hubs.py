@@ -22,7 +22,14 @@ import re
 
 SYNC_STATE = "/var/lib/gatbox-sync"
 DEFAULT = "default"
-NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
+NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
+# A hub's slug becomes a state file here and a "# machine=" line in a CSV header: only the roster's own slug rule
+# gets through (roster.SLUG), whole-string, so nothing a hub sends can carry a newline or a path into either.
+SLUG = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
+
+
+def good_slug(x):
+    return isinstance(x, str) and len(x) <= 64 and SLUG.fullmatch(x) is not None
 PHASES = ("as_found", "as_left")      # what the 7" offers; the hub also takes "during"
 
 
@@ -61,7 +68,7 @@ def hubs():
         names, labels = [DEFAULT], {}
     out = []
     for name in names:
-        if not isinstance(name, str) or not NAME.match(name):
+        if not isinstance(name, str) or not NAME.fullmatch(name):
             continue
         d = _dir(name)
         info = _read(os.path.join(d, "hub.json"), {}) or {}
@@ -73,7 +80,7 @@ def hubs():
                     "capabilities": caps, "jobs": "jobs" in caps, "app": info.get("app"),
                     "url": info.get("url"), "reached_at": info.get("reached_at"),
                     "machines": [m for m in roster.get("machines") or []
-                                 if isinstance(m, dict) and isinstance(m.get("slug"), str)],
+                                 if isinstance(m, dict) and good_slug(m.get("slug"))],
                     "roster_at": roster.get("at"), "dir": d})
     return out
 

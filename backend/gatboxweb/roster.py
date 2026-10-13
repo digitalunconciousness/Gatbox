@@ -26,7 +26,7 @@ KINDS = profiles.FLOOR                                 # ("video_games", "pinbal
 FIELDS = ("slug", "name", "platform", "mfr", "risk", "faults", "parts", "notes")   # a roster entry, in the file's order
 NOT_SURE = "confirm"      # platform + risk flag for "not sure yet" (how the roster already lists an unconfirmed board)
 RESERVED = {"unassigned"}                              # the captures / dumps name for "no machine"
-SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+SLUG = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")     # whole-string: SLUG.fullmatch
 _lock = threading.Lock()
 
 
@@ -204,7 +204,7 @@ def add(body):
         raise meter.Bad(400, f"kind: one of {', '.join(KINDS)}")
     plat = _platform(body)
     slug = slugify(nm, kind)
-    if not SLUG.match(slug):
+    if not SLUG.fullmatch(slug):
         raise meter.Bad(400, "name: needs letters or digits (the machine's ID is made from it)")
     if slug in RESERVED:
         raise meter.Bad(409, f"{slug!r} is reserved: pick another name")

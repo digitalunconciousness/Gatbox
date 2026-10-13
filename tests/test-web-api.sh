@@ -447,6 +447,8 @@ check "a hub slug that breaks the slug rule is not offered" '[ "$(api GET /api/r
 check "nor can it be set"                        '[ "$(api PUT /api/machine "{\"slug\":\"evil\\n# window=0..99 source=user\"}")" = 404 ] && ! grep -q "window=0" "$T/ctrl/machine" 2>/dev/null'
 check "a hub name that is a path is not a hub"   'python3 -c "
 import json; p=\"$T/sync/status.json\"; d=json.load(open(p)); d[\"hubs\"].append({\"name\": \"../x\", \"label\": \"X\"}); json.dump(d, open(p, \"w\"))" && sleep 2.1 && [ "$(api GET /api/system)" = 200 ] && [ "$(api GET /api/roster)" = 200 ] && [ "$(js "[g[\"label\"] for g in d[\"groups\"]]")" = "['"'"'ALPHA'"'"', '"'"'BRAVO'"'"']" ]'
+check "SYSTEM says which roster the sync waits for" 'python3 -c "
+import json; p=\"$T/sync/status.json\"; d=json.load(open(p)); d[\"waiting\"]=[\"BRAVO\"]; json.dump(d, open(p, \"w\"))" && waitfor "[ \"\$(api GET /api/system)\" = 200 ] && [ \"\$(js \"d[\\\"hub\\\"][\\\"waiting\\\"]\")\" = \"['"'"'BRAVO'"'"']\" ]" 40'
 check "a hub removed from hubs.d is not a hub"   'python3 -c "
 import json; p=\"$T/sync/status.json\"; d=json.load(open(p)); d[\"hubs\"]=d[\"hubs\"][:1]; json.dump(d, open(p, \"w\"))" && [ "$(api PUT /api/machine "{\"slug\":\"s-0042-ms-pac-man\"}")" = 404 ]'
 

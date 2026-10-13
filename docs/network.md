@@ -165,6 +165,11 @@ HUB_LABEL=WORKSHOP
   roster has is **held** and goes out by itself once a roster lists it. A machine on two
   rosters is a **conflict**: sent to neither, in red on SYSTEM → Hub routing, until one roster
   drops it. Every uid is salted with the destination hub's own device id.
+- **Nothing is routed until every hub has answered once.** A machine missing from a roster
+  only means "not that hub's" once that roster has been seen; until then a hub that has never
+  answered could hold the very machine another roster lists, and a trace sent to the wrong
+  hub cannot be taken back. So a new hub file holds *everything* (SYSTEM → Hub routing says
+  which hub it waits for) until that hub's first roster arrives.
 - The same token in two files is the same hub twice; the second file is refused and says so.
   A malformed token fails the unit (only a person can fix it) but the other hubs still run.
 - The unit loads `hubs.d` as a directory credential. `hub.conf` and `hubs.d` both always

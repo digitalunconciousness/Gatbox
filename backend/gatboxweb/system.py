@@ -261,6 +261,7 @@ def hub():
     out["conflicts"] = [c for c in st.get("conflicts") or [] if isinstance(c, dict)]
     out["refused"] = [{"name": r.get("name"), "reason": r.get("reason")}
                       for r in st.get("refused") or [] if isinstance(r, dict)]
+    out["waiting"] = [w for w in st.get("waiting") or [] if isinstance(w, str)]
     return out
 
 

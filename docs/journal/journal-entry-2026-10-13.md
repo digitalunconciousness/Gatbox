@@ -38,7 +38,16 @@
   MACHINE card and so does the state event it causes; both appended after their awaits. Only
   the newest reload draws now, and a check counts the cards. The race was there before, when
   setting a machine; the JOB card just made it visible.
-- Tests: sync 110, web api 177, dash 91, bootstrap 54, report 17, all passing. The laptop
+- Going back over routing turned up a leak the tests hadn't covered. A machine's absence from
+  a roster was trusted even when that roster had never been seen. A hub never yet reached,
+  plus the other hub's roster listing a barcade machine by mistake, and that machine's traces
+  would have gone to the wrong hub. Now, with two or more hubs, nothing is routed until every
+  hub has answered once.
+- And one from Phase 3: with nothing queued and no hub reachable, the sync exited 1 and failed
+  the unit, every two minutes, against its own policy (a5a723b fixed every other path but
+  missed this one). It's 0 now, with "no hub reachable" in the status, and a check that fails
+  on the old line.
+- Tests: sync 115, web api 178, dash 91, bootstrap 55, report 17, all passing. The laptop
   had no matplotlib, so the dashboard suite ran against a copy in the session's scratch
   directory, not the system Python and not the Pi.
 - Still to do: install on the Pi (the bootstrap shows the unit and tmpfiles diff first), then

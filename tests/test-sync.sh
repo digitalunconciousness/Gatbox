@@ -296,6 +296,12 @@ check "says how many are queued"               'grep -q "no hub reachable; 2 que
 check "records it for the SYSTEM tile"         'python3 -c "
 import json; d=json.load(open(\"$T/state/status.json\"))
 assert d[\"ok\"] is False and d[\"queued\"] == 2, d"'
+# The same with nothing waiting: it used to exit 1 here, failing the unit every 2 minutes off the network.
+rm -f "$T/work/hub-down"; run; touch "$T/work/hub-down"     # send everything, then lose the hub
+run
+check "and with nothing queued, still 0"       'grep -q "0 to send" "$T/out" && [ "$(cat "$T/rc")" = 0 ] && python3 -c "
+import json; d=json.load(open(\"$T/state/status.json\"))
+assert d[\"ok\"] is False and d[\"error\"] == \"no hub reachable\", d"'
 rm -f "$T/work/hub-down"
 
 echo "a hub that answers and refuses is not 'unreachable':"
@@ -606,6 +612,19 @@ check "BRAVO's wait, counted against BRAVO"    '[ "$(st2 "[h[\"queued\"] for h i
 check "BRAVO's capabilities survive from cache" '[ "$(python3 -c "import json;print(json.load(open(\"$S2/hubs/bravo/hub.json\"))[\"capabilities\"])")" = "['"'"'jobs'"'"']" ]'
 check "and BRAVO's machines are still routed to it, not held" '[ "$(st2 "d[\"held\"]")" = "[]" ]'
 python3 "$T/stub.py" hub2 "$PORT_B" "$W2" & sleep 0.5
+
+echo "  a hub never heard from yet holds everything, for every hub:"
+# The case that would leak: BRAVO's roster unknown, ALPHA's roster listing a machine that is really BRAVO's.
+# Absence from a roster means nothing until that roster has been seen once.
+kill %5 2>/dev/null; wait %5 2>/dev/null
+rm -rf "$S2/hubs/bravo" "$W2/posted.json" "$W2/posted-hub2.json" "$S2/sent.json"
+run2
+check "exits 0"                                '[ "$(cat "$T/rc")" = 0 ]'
+check "nothing is sent to the hub that answered" '[ ! -s "$W2/posted.json" ]'
+check "and it says which roster it waits for"  'grep -q "holding everything: no roster yet from BRAVO" "$T/out" && [ "$(st2 "d[\"waiting\"]")" = "['"'"'BRAVO'"'"']" ]'
+python3 "$T/stub.py" hub2 "$PORT_B" "$W2" & sleep 0.5
+run2
+check "once it answers, routing resumes"       'grep -q "widget-wars" "$W2/posted.json" && [ "$(st2 "d[\"waiting\"]")" = "[]" ]'
 
 echo "  the same token in two files:"
 cp "$D2/bravo.conf" "$D2/charlie.conf"

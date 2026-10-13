@@ -596,7 +596,7 @@ def main():
     # refuses a machine it does not have, and parking deals with that. With several, the
     # cached rosters decide, and a stale roster is still better than none for a box that is
     # usually offline.
-    held, conflicts = [], {}
+    held, conflicts, waiting = [], {}, []
     if multi:
         for h in hubs:
             if h["url"]:
@@ -605,10 +605,19 @@ def main():
         for h in hubs:
             for slug in roster_slugs(h):
                 owners.setdefault(slug, []).append(h)
+        # A machine missing from a roster only means "not that hub's" once that roster has been seen. Until every hub
+        # has answered once, a machine one roster lists may be on the unseen one too -- a conflict nobody can see --
+        # so nothing goes anywhere: a trace sent to the wrong hub cannot be taken back.
+        waiting = [h["label"] for h in hubs if not os.path.exists(os.path.join(h["dir"], "roster.json"))]
+        if waiting:
+            log(f"  holding everything: no roster yet from {', '.join(waiting)}")
 
     def route(slug, what):
         if not multi:
             return hubs[0]
+        if waiting:
+            held.append({"what": what, "machine": slug, "why": "waiting for a roster"})
+            return None
         who = owners.get(slug) or []
         if len(who) == 1:
             return who[0]
@@ -634,7 +643,7 @@ def main():
             mine[h["name"]]["outbox"].append(e)
         elif multi and not slug:
             held.append({"what": e.get("kind") or "item", "machine": None})
-    if held:
+    if held and not waiting:
         log(f"  held, no hub has the machine: "
             f"{', '.join(sorted({str(x['machine']) for x in held}))}")
     for slug, labels in conflicts.items():
@@ -650,11 +659,11 @@ def main():
             statuses.append(st)
     if DRYRUN:
         return rc
-    save("status.json", combine(hubs, statuses, held, conflicts, refused))
+    save("status.json", combine(hubs, statuses, held, conflicts, refused, waiting))
     return rc
 
 
-def combine(hubs, statuses, held, conflicts, refused):
+def combine(hubs, statuses, held, conflicts, refused, waiting=()):
     """status.json. With one hub, that hub's own keys as they always were; with several, the
     sums the old tile can show, plus "hubs" for the tile per hub."""
     if len(statuses) == 1:
@@ -677,6 +686,7 @@ def combine(hubs, statuses, held, conflicts, refused):
     out["held"] = held
     out["conflicts"] = [{"machine": k, "hubs": v} for k, v in sorted(conflicts.items())]
     out["refused"] = refused
+    out["waiting"] = list(waiting)
     return out
 
 
@@ -723,7 +733,11 @@ def run_hub(h, sessions, mine, outbox, current, started, multi):
         if hub:
             refresh_caches(h, mine["sessions"], current, status, multi)
         save("sent.json", sent, where)
-        return status, 0 if hub else 1
+        if not hub:
+            status["error"] = "no hub reachable"
+        # 0 either way: out of reach is the normal case for a box that travels (a5a723b's policy, which this path
+        # had missed -- it failed the unit every 2 minutes whenever nothing was waiting and no hub answered).
+        return status, 0
 
     if hub is None:
         log(f"  no hub reachable; {len(queue)} queued, nothing sent")

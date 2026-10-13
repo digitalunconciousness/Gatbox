@@ -1184,8 +1184,9 @@
     ];
     // What no hub was sent (Phase 8): a machine two rosters claim, one no roster has, a hub file refused.
     const routing = hb ? [
+      ...((hb.waiting || []).length ? [["waiting", `no roster yet from ${hb.waiting.join(", ")}: nothing is sent to any hub until it answers once`, "warn"]] : []),
       ...(hb.conflicts || []).map(x => ["conflict", `${x.machine}: on ${(x.hubs || []).join(" and ")}, sent to neither`, "bad"]),
-      ...((hb.held || []).length ? [["held", `no hub has ${hb.held.join(", ")}`, "warn"]] : []),
+      ...((hb.held || []).length && !(hb.waiting || []).length ? [["held", `no hub has ${hb.held.join(", ")}`, "warn"]] : []),
       ...(hb.refused || []).map(x => ["refused", `hubs.d/${x.name}.conf: ${x.reason}`, "bad"]),
     ] : [];
     if (hb && (hb.hubs || []).length > 1) {

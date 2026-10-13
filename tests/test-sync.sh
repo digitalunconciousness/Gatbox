@@ -9,7 +9,7 @@
 #   bash tests/test-sync.sh
 set -u
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-T=$(mktemp -d); trap 'rm -rf "$T"; kill %1 %2 2>/dev/null' EXIT
+T=$(mktemp -d); trap 'rm -rf "$T"; kill $(jobs -p) 2>/dev/null' EXIT
 SYNC="$REPO/backend/gatbox-sync"
 pass=0; fail=0
 check() { if eval "$2"; then pass=$((pass + 1)); echo "  ok    $1"; else fail=$((fail + 1)); echo "  FAIL  $1"; fi; }
@@ -70,6 +70,8 @@ class H(BaseHTTPRequestHandler):
                 return self.reply(200, report(path.rsplit("/", 1)[-1]))
             if path.startswith("/api/rail/samples/"):
                 return self.reply(200, samples(path.rsplit("/", 1)[-1]))
+            if path == "/api/machine" and os.path.exists(os.path.join(WORK, "machine.json")):
+                return self.reply(200, json.load(open(os.path.join(WORK, "machine.json"))))
             if path == "/api/orders":
                 p = os.path.join(WORK, "orders.json")
                 return self.reply(200, json.load(open(p)) if os.path.exists(p)
@@ -83,9 +85,16 @@ class H(BaseHTTPRequestHandler):
                 # What a tunnel or WAF in front of the hub does; the application itself
                 # cannot produce this for a route that takes no token.
                 return self.reply(403, {"error": "Forbidden"})
-            return self.reply(200, {"ok": True, "contract": "v1", "time": 0})
+            health = {"ok": True, "contract": "v1", "time": 0}
+            caps = os.path.join(WORK, f"caps-{ROLE}.json")
+            if os.path.exists(caps):            # what the second hub adds to health
+                health.update(json.load(open(caps)))
+            return self.reply(200, health)
         if not self.headers.get("Authorization", "").startswith("Bearer gbx_"):
             return self.reply(401, {"error": "a valid device token is required"})
+        roster = os.path.join(WORK, f"roster-{ROLE}.json")
+        if path == "/api/v1/roster" and os.path.exists(roster):
+            return self.reply(200, {"contract": "v1", "machines": json.load(open(roster))})
         if path == "/api/v1/roster":
             return self.reply(200, {"contract": "v1", "machines":
                                     [{"slug": "widget-wars", "name": "Widget Wars",
@@ -101,7 +110,8 @@ class H(BaseHTTPRequestHandler):
         note(f"POST {self.path} items={len(body.get('items') or [])} "
              f"readings={sum(len(i.get('readings') or []) for i in body.get('items') or [])} "
              f"ua={self.headers.get('User-Agent', '-')}")
-        with open(os.path.join(WORK, "posted.json"), "a") as fh:
+        suffix = "" if ROLE == "hub" else f"-{ROLE}"
+        with open(os.path.join(WORK, f"posted{suffix}.json"), "a") as fh:
             fh.write(json.dumps(body) + "\n")
         if (not self.headers.get("Authorization", "").startswith("Bearer gbx_")
                 or os.path.exists(os.path.join(WORK, "hub-401"))):
@@ -110,7 +120,7 @@ class H(BaseHTTPRequestHandler):
             return self.reply(500, {"error": "the hub fell over"})
         # created the first time a uid is seen, duplicate after -- the real hub's behaviour,
         # which is what makes the ledger an optimisation rather than correctness.
-        seen_path = os.path.join(WORK, "seen.json")
+        seen_path = os.path.join(WORK, f"seen{suffix}.json")
         seen = json.load(open(seen_path)) if os.path.exists(seen_path) else []
         reject = os.path.exists(os.path.join(WORK, "hub-rejects"))
         results = []
@@ -475,6 +485,148 @@ run
 check "once it is accepted the count is cleared" '[ "$(parked)" = "{}" ]' 
 check "and nothing is left counting against it"  '[ "$(python3 -c "import json;print(len(json.load(open(\"$T/state/sent.json\")).get(\"tries\") or {}))")" = 0 ]'
 check "releasing a parked item is possible"      'grep -q "GATBOX_SYNC_UNPARK" "$REPO/backend/gatbox-sync"'
+
+echo "several hubs (Phase 8):"
+# Its own stubs and state, so nothing above can leak in: a gatbox-web, the default hub (ALPHA,
+# no capabilities, like the tracker) and a second one in hubs.d (BRAVO, "jobs").
+PORT_WEB2=18734; PORT_A=18735; PORT_B=18736
+W2="$T/w2"; S2="$T/state2"; D2="$T/hubs.d"
+mkdir -p "$W2" "$S2" "$D2"
+DEV_B=b2c3d4e5f6a7
+python3 - "$W2" <<'PY'
+import json, sys
+w = sys.argv[1]
+names = {"rail_20261001_010000.csv": "widget-wars",        # ALPHA's
+         "rail_20261002_010000.csv": "s-0042-ms-pac-man",  # BRAVO's
+         "rail_20261003_010000.csv": "nobody-has",         # in no roster: held
+         "rail_20261004_010000.csv": "both-sides"}         # in both: a conflict
+json.dump([{"file": n, "live": False, "machine": m, "error": None} for n, m in names.items()],
+          open(f"{w}/sessions.json", "w"))
+for i, (n, m) in enumerate(names.items()):
+    json.dump({"session": {"duration_s": 2.0, "samples": 2, "rate": 1.0, "timebase": "monotonic"},
+               "clock": {"source": "ntp"}, "profile": {"id": "rail-5v"}, "machine": m,
+               "mode_key": "VDC", "window": None, "alarm_hi": None, "powered": None,
+               "verdict": None, "phase": "as_found"}, open(f"{w}/report-{n}.json", "w"))
+    json.dump({"fields": ["epoch", "up", "raw", "unit", "v", "mode", "alarm"],
+               "rows": [[1790000000.0 + i * 100 + k, 10.0 + k, "5.0", "V", 5.0, "VDC", "ok"]
+                        for k in range(2)]}, open(f"{w}/samples-{n}.json", "w"))
+json.dump([{"slug": "widget-wars", "name": "Widget Wars"},
+           {"slug": "both-sides", "name": "Both"}], open(f"{w}/roster-hub.json", "w"))
+json.dump([{"slug": "s-0042-ms-pac-man", "name": "Ms. Pac-Man", "model_key": "mspacman"},
+           {"slug": "s-0099-other", "name": "Other", "model_key": None},
+           {"slug": "both-sides", "name": "Both"}], open(f"{w}/roster-hub2.json", "w"))
+json.dump({"app": "shop-hub", "capabilities": ["jobs"]}, open(f"{w}/caps-hub2.json", "w"))
+json.dump({"slug": "s-0099-other"}, open(f"{w}/machine.json", "w"))
+json.dump({"orders": [
+    {"uid": "e" * 32, "kind": "order", "created": 1790000100.0, "machine": "widget-wars",
+     "issue": "to ALPHA", "priority": "Low"},
+    {"uid": "f" * 32, "kind": "order", "created": 1790000100.0, "machine": "s-0042-ms-pac-man",
+     "issue": "to BRAVO", "priority": "High", "session_file": "rail_20261002_010000.csv"},
+    {"uid": "1" * 32, "kind": "session_tag", "created": 1790000200.0, "order": 7,
+     "machine": "s-0042-ms-pac-man", "session_file": "rail_20261002_010000.csv",
+     "phase": "as_left"},
+    {"uid": "2" * 32, "kind": "session_tag", "created": 1790000200.0, "order": 8,
+     "session_file": "rail_20261002_010000.csv", "phase": "sideways"}]},
+    open(f"{w}/orders.json", "w"))
+PY
+python3 "$T/stub.py" web "$PORT_WEB2" "$W2" &
+python3 "$T/stub.py" hub "$PORT_A" "$W2" &
+python3 "$T/stub.py" hub2 "$PORT_B" "$W2" & sleep 0.6
+cat > "$T/a.conf" <<CONF
+HUB_URLS=http://127.0.0.1:$PORT_A
+HUB_TOKEN=$BEARER
+HUB_LABEL=ALPHA
+CONF
+cat > "$D2/bravo.conf" <<CONF
+HUB_URLS=http://127.0.0.1:$PORT_B
+HUB_TOKEN=gbx_$DEV_B.not-a-real-value
+HUB_LABEL=BRAVO
+CONF
+# Not hubs: a backup, a bad name, and the reserved one.
+cp "$D2/bravo.conf" "$D2/bravo.conf~"; cp "$D2/bravo.conf" "$D2/Bad Name.conf"
+cp "$D2/bravo.conf" "$D2/default.conf"
+run2() {
+    env GATBOX_SYNC_CONF="$T/a.conf" GATBOX_SYNC_CONF_DIR="$D2" \
+        GATBOX_SYNC_WEB="http://127.0.0.1:$PORT_WEB2" STATE_DIRECTORY="$S2" "$@" \
+        python3 "$SYNC" >"$T/out" 2>&1; echo $? > "$T/rc"
+}
+items() {   # items <role-suffix> <python expr over items>
+    python3 - "$W2/posted$1.json" "$2" <<'PY'
+import json, os, sys
+p = sys.argv[1]
+items = [i for line in open(p) for i in json.loads(line).get("items") or []] if os.path.exists(p) else []
+print(eval(sys.argv[2]))
+PY
+}
+st2() { python3 -c "import json,sys; d=json.load(open('$S2/status.json')); print(eval(sys.argv[1]))" "$1"; }
+run2
+check "exits 0"                                '[ "$(cat "$T/rc")" = 0 ]'
+check "only the good file in hubs.d is a hub"  'grep -q "Bad Name.conf: ignored" "$T/out" && grep -q "default.conf: ignored" "$T/out" && ! grep -q "bravo.conf~" "$T/out" && [ "$(st2 "len(d[\"hubs\"])")" = 2 ]'
+check "ALPHA gets ALPHA's machine and nothing else" '[ "$(items "" "sorted({i.get(\"machine\") for i in items})")" = "['"'"'widget-wars'"'"']" ]'
+check "BRAVO gets BRAVO's and nothing else"    '[ "$(items -hub2 "sorted({i.get(\"machine\") for i in items if i[\"kind\"] != \"session_tag\"})")" = "['"'"'s-0042-ms-pac-man'"'"']" ]'
+check "both tags went to BRAVO (one by its machine, one by its session)" '[ "$(items -hub2 "len([i for i in items if i[\"kind\"] == \"session_tag\"])")" = 2 ]'
+check "each hub is told its own device id"     '[ "$(items "" "json.loads(open(p).readline())[\"device\"]")" = "$DEV_ID" ] && [ "$(items -hub2 "json.loads(open(p).readline())[\"device\"]")" = "$DEV_B" ]'
+BUID=$(python3 -c "import hashlib; print(hashlib.sha256(b'$DEV_B|rail_session|rail_20261002_010000.csv').hexdigest()[:32])")
+check "BRAVO's uids are salted with BRAVO's id" '[ "$(items -hub2 "[i[\"uid\"] for i in items if i[\"kind\"] == \"rail_session\"]")" = "['"'"'$BUID'"'"']" ]'
+check "and the order names the session the same way" '[ "$(items -hub2 "[i[\"rail_session\"] for i in items if i[\"kind\"] == \"order\"]")" = "['"'"'$BUID'"'"']" ]'
+check "phase goes to the jobs hub"             '[ "$(items -hub2 "[i.get(\"phase\") for i in items if i[\"kind\"] == \"rail_session\"]")" = "['"'"'as_found'"'"']" ]'
+check "and on the tag that has one"            '[ "$(items -hub2 "sorted(str(i.get(\"phase\")) for i in items if i[\"kind\"] == \"session_tag\")")" = "['"'"'None'"'"', '"'"'as_left'"'"']" ]'
+check "an unknown phase is left out, not sent"  '[ "$(items -hub2 "[\"phase\" in i for i in items if i.get(\"order\") == 8]")" = "[False]" ]'
+check "never to the hub without jobs"          '[ "$(items "" "any(\"phase\" in i for i in items)")" = False ]'
+check "a machine in no roster is sent nowhere" '! grep -q "nobody-has" "$W2/posted.json" "$W2/posted-hub2.json"'
+check "and is listed as held"                  '[ "$(st2 "[h[\"machine\"] for h in d[\"held\"]]")" = "['"'"'nobody-has'"'"']" ]'
+check "a machine in both is sent to neither"   '! grep -q "both-sides" "$W2/posted.json" "$W2/posted-hub2.json"'
+check "and is a conflict, with both labels"    '[ "$(st2 "[(c[\"machine\"], c[\"hubs\"]) for c in d[\"conflicts\"]] == [(\"both-sides\", [\"ALPHA\", \"BRAVO\"])]")" = True ]'
+check "the default hub keeps the top level"    '[ -f "$S2/sent.json" ] && [ -f "$S2/roster.json" ] && [ -f "$S2/hub.json" ]'
+check "the other has its own directory"        '[ -f "$S2/hubs/bravo/sent.json" ] && [ -f "$S2/hubs/bravo/roster.json" ]'
+check "hub.json keeps the label and capabilities" '[ "$(python3 -c "import json;d=json.load(open(\"$S2/hubs/bravo/hub.json\"));print(d[\"label\"],d[\"capabilities\"],d[\"app\"])")" = "BRAVO ['"'"'jobs'"'"'] shop-hub" ]'
+check "the tracker-like hub has none"          '[ "$(python3 -c "import json;print(json.load(open(\"$S2/hub.json\"))[\"capabilities\"])")" = "[]" ]'
+check "the roster cache keeps model_key"       'grep -q mspacman "$S2/hubs/bravo/roster.json"'
+check "the machine on the 7\" gets its orders cached" 'grep -q "GET /api/v1/machines/s-0099-other/orders" "$W2/hub2.log"'
+check "but not from the hub that does not have it" '! grep -q "s-0099-other" "$W2/hub.log"'
+check "status.json still has the old keys"     '[ "$(st2 "sorted(k for k in (\"ok\",\"queued\",\"sent_total\",\"at\") if k in d)")" = "['"'"'at'"'"', '"'"'ok'"'"', '"'"'queued'"'"', '"'"'sent_total'"'"']" ]'
+
+echo "  a held machine goes out once a roster has it:"
+python3 - "$W2" <<'PY'
+import json, sys
+p = f"{sys.argv[1]}/roster-hub2.json"; r = json.load(open(p))
+json.dump(r + [{"slug": "nobody-has", "name": "Found"}], open(p, "w"))
+PY
+run2
+check "BRAVO gets it on the next run"          'grep -q "nobody-has" "$W2/posted-hub2.json"'
+check "and it is no longer held"               '[ "$(st2 "d[\"held\"]")" = "[]" ]'
+
+echo "  one hub out of reach does not stop the other:"
+rm -f "$W2/posted.json" "$W2/posted-hub2.json" "$S2/sent.json" "$S2/hubs/bravo/sent.json"
+kill %5 2>/dev/null; wait %5 2>/dev/null   # BRAVO
+run2
+check "exits 0"                                '[ "$(cat "$T/rc")" = 0 ]'
+check "ALPHA still gets its session"           'grep -q "widget-wars" "$W2/posted.json"'
+check "BRAVO's wait, counted against BRAVO"    '[ "$(st2 "[h[\"queued\"] for h in d[\"hubs\"] if h[\"label\"] == \"BRAVO\"]")" = "[2]" ]'
+check "BRAVO's capabilities survive from cache" '[ "$(python3 -c "import json;print(json.load(open(\"$S2/hubs/bravo/hub.json\"))[\"capabilities\"])")" = "['"'"'jobs'"'"']" ]'
+check "and BRAVO's machines are still routed to it, not held" '[ "$(st2 "d[\"held\"]")" = "[]" ]'
+python3 "$T/stub.py" hub2 "$PORT_B" "$W2" & sleep 0.5
+
+echo "  the same token in two files:"
+cp "$D2/bravo.conf" "$D2/charlie.conf"
+run2
+check "the second is refused, and said why"    'grep -q "hub '"'"'charlie'"'"': refused, same device token" "$T/out" && [ "$(st2 "[r[\"name\"] for r in d[\"refused\"]]")" = "['"'"'charlie'"'"']" ]'
+check "and the first still works"              '[ "$(st2 "len(d[\"hubs\"])")" = 2 ]'
+rm -f "$D2/charlie.conf"
+
+echo "  a bad token in one file:"
+printf 'HUB_URLS=http://127.0.0.1:%s\nHUB_TOKEN=nope\n' "$PORT_B" > "$D2/delta.conf"
+run2
+check "exits 1, since only a person can fix it" '[ "$(cat "$T/rc")" = 1 ] && grep -q "delta.conf: HUB_TOKEN is not of the form" "$T/out"'
+check "but the good hubs still ran"            '[ "$(st2 "len(d[\"hubs\"])")" = 2 ]'
+rm -f "$D2/delta.conf"
+
+echo "  hubs.d alone, with an empty hub.conf (what tmpfiles leaves):"
+printf '' > "$T/a.conf"; rm -rf "$S2"; mkdir -p "$S2"
+run2
+check "the one hub there takes everything, unrouted" 'grep -q "both-sides" "$W2/posted-hub2.json" && [ "$(st2 "d[\"held\"] + d[\"conflicts\"]")" = "[]" ]'
+check "and its state is under hubs/"           '[ -f "$S2/hubs/bravo/sent.json" ] && [ ! -f "$S2/sent.json" ]'
+check "an empty hub.conf is not an error there" '! grep -q "both required" "$T/out"'
 
 echo "sync: $pass passed, $fail failed"
 [ "$fail" = 0 ]

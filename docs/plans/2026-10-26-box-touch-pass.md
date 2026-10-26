@@ -78,4 +78,6 @@ layout is unchanged.
       SEARCH through the keyboard instead of a text box; chart text 14 px)
 - [x] T6 TOUCH TEST + `/api/touchtest` (tests: web api -- a run kept with its mean offset, bad bodies 400, the last
       ten kept; dash -- nine crosses tapped 12 px low and 3 px right: the verdict says so, the run is kept, DONE closes)
-- [ ] T7 full suite, screenshots of every view, BRINGUP, journal, PR, install, ask the owner to run TOUCH TEST
+- [x] T7 screenshots of every view (the manuals viewer was on the edges: fixed, with a test), BRINGUP, journal,
+      CLAUDE.md
+- [ ] T8 full suite, PR, install, the owner runs TOUCH TEST

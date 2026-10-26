@@ -47,6 +47,35 @@ def settles(c, js, timeout=20):
     return False
 
 
+# The keypad at whatever size the viewport is now: how many keys are cut off (by the key grid's
+# own scrolling or by the bottom of the screen), whether SAVE is on screen, the shortest key.
+KP_FIT = """(() => {
+  const k = document.querySelector('#pane .keys'); if (!k) return null;
+  const kb = k.getBoundingClientRect(), bs = [...k.querySelectorAll('button')];
+  const cut = bs.filter(b => { const r = b.getBoundingClientRect();
+                               return r.top < kb.top - 1 || r.bottom > Math.min(kb.bottom, innerHeight) + 1; }).length;
+  const s = [...document.querySelectorAll('#pane button')].find(b => b.textContent === 'SAVE').getBoundingClientRect();
+  return {cut, keys: bs.length, save: s.top >= 0 && s.bottom <= innerHeight && s.height > 0,
+          shortest: Math.round(Math.min(...bs.map(b => b.getBoundingClientRect().height)))};
+})()"""
+
+
+def kp_fits(c, sizes):
+    """The open keypad at each (width, height): every key and SAVE on screen, keys at least 26 px. Back to the 7" after."""
+    bad = {}
+    for w, h in sizes:
+        c.send("Emulation.setDeviceMetricsOverride", {"width": w, "height": h, "deviceScaleFactor": 1, "mobile": False})
+        time.sleep(0.3)
+        m = c.eval(KP_FIT)
+        if not m or m["cut"] or not m["save"] or m["shortest"] < 26:
+            bad[f"{w}x{h}"] = m
+    c.send("Emulation.setDeviceMetricsOverride", {"width": 1024, "height": 600, "deviceScaleFactor": 1, "mobile": False})
+    time.sleep(0.3)
+    if bad:
+        print("    ", bad)
+    return not bad
+
+
 def check(name, ok):
     global passed, failed
     if ok:
@@ -348,6 +377,7 @@ def main():
         shot("12-profile-picker")
         q("[...document.querySelectorAll('#pane .tile')].find(t => t.textContent.startsWith('Ripple')).click()")
         c.wait("document.querySelector('#pane .kp-field')")
+        check("number pad on a phone held sideways (844x320): every key and SAVE on screen", kp_fits(c, [(844, 320)]))
         tap_keys("150")
         c.wait("document.querySelector('#m-profile').textContent.startsWith('Ripple')", 10)
         c.wait("document.querySelector('#banners').textContent.includes('SET DIAL TO')", 20)
@@ -864,6 +894,13 @@ def main():
             "   .find(b => b.textContent === 'CANCEL'); if (!b) return false;"
             " const r = b.getBoundingClientRect();"
             " return r.bottom <= window.innerHeight && r.height > 0; })()"))
+        # Every row, not just SAVE. The rows were a fixed 54 px and only the key grid could give, so
+        # on anything shorter than the 7" (a phone held sideways, its address bar showing) the grid
+        # scrolled its rows out of sight -- one row visible, no scrollbar. The 7" keeps its 54 px keys.
+        m = q(KP_FIT)
+        check("keypad on the 7\": all five rows, keys 54 px", m and m["cut"] == 0 and m["shortest"] == 54)
+        check("keypad on a phone held sideways (844x390, 740x360, 844x320): every row and SAVE on screen",
+              kp_fits(c, [(844, 390), (740, 360), (844, 320)]))
         # The symbols are a layer, reached by a toggle, the way a phone keyboard does it --
         # so the keypad is the same height whatever is being typed.
         shot("17b-keypad-letters")

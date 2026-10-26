@@ -466,7 +466,7 @@ def web_side():
     fake = dict(os.environ, FAKE_PARTS="27C020@DIP32,TMS27C020@DIP32,AM27C020@DIP32,M27C801,M27C801@PLCC32")
     names = subprocess.run([os.path.join(REPO, "tests/fake-minipro"), "-q", "T48", "-l"], capture_output=True, text=True, env=fake).stdout
     open(f"{w}/parts.txt", "w").write("# minipro 0.7.4 T48\n" + names)
-    env = dict(os.environ, GATBOX_WEB_PORT=str(port), STATE_DIRECTORY=f"{w}/ctrl", CACHE_DIRECTORY=f"{w}/cache",
+    env = dict(os.environ, GATBOX_WEB_PORT=str(port), GATBOX_SYNC_STATE=f"{w}/no-hub", STATE_DIRECTORY=f"{w}/ctrl", CACHE_DIRECTORY=f"{w}/cache",
                GATBOX_LOGDIR=f"{w}/log", GATBOX_RUNDIR=f"{w}/run", GATBOX_DATA=f"{w}/data", GATBOX_DUMP_SPOOL=f"{w}/spool",
                GATBOX_ROMS=f"{w}/roms", GATBOX_MINIPRO_PARTS=f"{w}/parts.txt", MPLCONFIGDIR=f"{w}/cache/mpl")
     web = subprocess.Popen(["python3", os.path.join(REPO, "backend/gatbox-web")], env=env, stdout=open(f"{w}/web.log", "w"),

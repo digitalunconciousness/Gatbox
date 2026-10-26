@@ -54,7 +54,7 @@ bash "$GATBOX_KIOSK_LAUNCH" > "$T/launch.log" 2>&1 & lpid=$!
 sleep 1.5
 check "waits for gatbox-web before the browser" '[ ! -e "$T/launches" ]'
 check "stopped screen blanking (swayidle)"   '! kill -0 $sw 2>/dev/null'
-GATBOX_WEB_PORT=$PORT STATE_DIRECTORY="$T/state" CACHE_DIRECTORY="$T/cache" GATBOX_LOGDIR="$T/logs" \
+GATBOX_WEB_PORT=$PORT GATBOX_SYNC_STATE="$T/no-hub" STATE_DIRECTORY="$T/state" CACHE_DIRECTORY="$T/cache" GATBOX_LOGDIR="$T/logs" \
     MPLCONFIGDIR="$T/cache/mpl" python3 "$REPO/backend/gatbox-web" > "$T/web.log" 2>&1 & wpid=$!
 waitfor '[ -s "$T/launches" ]'
 check "browser started once gatbox-web answered" '[ "$(wc -l < "$T/launches")" = 1 ]'

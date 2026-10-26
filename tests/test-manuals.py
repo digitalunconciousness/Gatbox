@@ -158,7 +158,7 @@ def main():
     shutil.copy(f"{T}/src/b.pdf", f"{d}/My Scan (1).pdf")  # dropped in by hand: no sidecar, no text
 
     print("gatbox-web:")
-    env = dict(os.environ, GATBOX_WEB_PORT=str(PORT), STATE_DIRECTORY=f"{T}/ctrl", CACHE_DIRECTORY=f"{T}/cache",
+    env = dict(os.environ, GATBOX_WEB_PORT=str(PORT), GATBOX_SYNC_STATE=f"{T}/no-hub", STATE_DIRECTORY=f"{T}/ctrl", CACHE_DIRECTORY=f"{T}/cache",
                GATBOX_LOGDIR=f"{T}/log", GATBOX_RUNDIR=f"{T}/run", GATBOX_DATA=f"{T}/data", GATBOX_MANUALS=f"{T}/manuals",
                GATBOX_UPLOAD_MAX="200000", MPLCONFIGDIR=f"{T}/cache/mpl")
     with socket.socket() as so:

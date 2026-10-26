@@ -452,6 +452,14 @@ import json; p=\"$T/sync/status.json\"; d=json.load(open(p)); d[\"waiting\"]=[\"
 check "a hub removed from hubs.d is not a hub"   'python3 -c "
 import json; p=\"$T/sync/status.json\"; d=json.load(open(p)); d[\"hubs\"]=d[\"hubs\"][:1]; json.dump(d, open(p, \"w\"))" && [ "$(api PUT /api/machine "{\"slug\":\"s-0042-ms-pac-man\"}")" = 404 ]'
 
+echo "touch test (the 7\" TOUCH TEST keeps its runs for a calibration made from numbers):"
+TAPS='[{"tx":100,"ty":100,"x":103,"y":112},{"tx":500,"ty":300,"x":503,"y":311},{"tx":900,"ty":500,"x":902,"y":513}]'
+check "POST /api/touchtest: kept, with the mean offset" '[ "$(api POST /api/touchtest "{\"w\":1024,\"h\":600,\"taps\":$TAPS}")" = 200 ] && [ "$(js "d[\"dx\"], d[\"dy\"], d[\"n\"]")" = "2.7 12.0 3" ]'
+check "GET /api/touchtest: the runs, newest last" '[ "$(api GET /api/touchtest)" = 200 ] && [ "$(js "len(d[\"runs\"]), d[\"runs\"][-1][\"dy\"], d[\"runs\"][-1][\"taps\"][0][\"y\"]")" = "1 12.0 112" ]'
+check "touchtest: no taps, a tap that isn't numbers, or too many -> 400" '[ "$(api POST /api/touchtest "{\"w\":1024,\"h\":600,\"taps\":[]}")" = 400 ] && [ "$(api POST /api/touchtest "{\"w\":1024,\"h\":600,\"taps\":[{\"tx\":\"a\",\"ty\":1,\"x\":1,\"y\":1}]}")" = 400 ] && [ "$(api POST /api/touchtest "{\"w\":1024,\"h\":600,\"taps\":$(python3 -c "import json; print(json.dumps([{\"tx\":1,\"ty\":1,\"x\":1,\"y\":1}]*41))")}")" = 400 ]'
+for i in 1 2 3 4 5 6 7 8 9 10 11; do api POST /api/touchtest "{\"w\":1024,\"h\":600,\"taps\":$TAPS}" > /dev/null; done
+check "touchtest: the last ten runs are kept" '[ "$(api GET /api/touchtest)" = 200 ] && [ "$(js "len(d[\"runs\"])")" = 10 ]'
+
 check "server log: no errors"                 '! grep -q "Traceback\|error on\|^live: \|^warm-up: " "$T/web.log"'
 
 echo "web api: $pass passed, $fail failed"

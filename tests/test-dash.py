@@ -1250,6 +1250,29 @@ def main():
         check("box: LABEL LIST: SEARCH is the keyboard, and it filters", q("document.querySelectorAll('#pane .row').length") == 1
               and "gauntlet-legends" in text("#pane"))
         q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'CLOSE').click()")
+        # TOUCH TEST: is there a steady offset between where a finger aims and where the touch lands? Nine crosses; here
+        # every tap lands 12 px low and 3 px right of its centre, the way a fingertip's contact patch would.
+        click('[data-view="system"]')
+        c.wait("document.querySelector('#sy-touch')", 10)
+        check("box: SYSTEM has TOUCH TEST", q("document.querySelector('#sy-touch').getClientRects().length > 0"))
+        click("#sy-touch")
+        c.wait("document.querySelector('#tt:not(.hide) .tt-target')", 5)
+        for _ in range(9):
+            q("(() => { const t = document.querySelector('#tt .tt-target'), r = t.getBoundingClientRect();"
+              " const x = r.left + r.width / 2 + 3, y = r.top + r.height / 2 + 12;"
+              " document.querySelector('#tt').dispatchEvent(new PointerEvent('pointerdown',"
+              " {clientX: x, clientY: y, bubbles: true, pointerType: 'touch'})); return true; })()")
+            time.sleep(0.15)
+        c.wait("document.querySelector('#tt .tt-result')", 5)
+        res = text("#tt .tt-result")
+        check("box: TOUCH TEST: nine crosses, and the verdict names the offset (12 px below, 3 px right)",
+              "12 px below" in res and "3 px right" in res)
+        shot("22-touch-test")
+        tt = api("GET", "/api/touchtest")
+        check("box: TOUCH TEST keeps the run for a calibration (GET /api/touchtest)",
+              tt["runs"][-1]["n"] == 9 and abs(tt["runs"][-1]["dy"] - 12) < 0.6 and abs(tt["runs"][-1]["dx"] - 3) < 0.6)
+        q("[...document.querySelectorAll('#tt button')].find(b => b.textContent === 'DONE').click()")
+        check("box: DONE closes it", q("document.querySelector('#tt').classList.contains('hide')"))
         # A toast lies over the page for seconds: it must never be what a finger hits.
         q("(() => { const t = document.querySelector('#toast'); t.textContent = 'test'; t.classList.remove('hide'); })()")
         tst = q("(() => { const t = document.querySelector('#toast'), r = t.getBoundingClientRect();"

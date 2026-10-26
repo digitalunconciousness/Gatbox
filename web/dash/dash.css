@@ -307,4 +307,17 @@ html.box button.why{margin:2px 0 6px;color:var(--cyan)}
 .box-only{display:none}
 html.box .box-only{display:inline}
 html.box .web-only{display:none}
+/* TOUCH TEST: a plain screen, a cross at a time; then every cross with its tap (a magenta dot) and the verdict. */
+#tt{position:fixed;inset:0;z-index:45;background:var(--bg);touch-action:none}
+#tt .tt-note{position:absolute;left:50%;top:31%;transform:translateX(-50%);display:flex;align-items:center;gap:18px;
+  font:600 18px/1.2 var(--disp);color:var(--mut);white-space:nowrap}
+#tt .tt-target{position:absolute;width:60px;height:60px;pointer-events:none}
+#tt .tt-target::before,#tt .tt-target::after{content:"";position:absolute;background:var(--cyan)}
+#tt .tt-target::before{left:29px;top:0;width:2px;height:60px}
+#tt .tt-target::after{top:29px;left:0;width:60px;height:2px}
+#tt .tt-target.dim::before,#tt .tt-target.dim::after{background:var(--line)}
+#tt .tt-dot{position:absolute;width:14px;height:14px;border-radius:50%;background:var(--mag);box-shadow:0 0 8px var(--mag);
+  pointer-events:none}
+#tt .tt-result{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(640px,80%);display:flex;
+  flex-direction:column;gap:8px;background:var(--bg2)}
 

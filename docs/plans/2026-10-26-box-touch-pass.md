@@ -76,5 +76,6 @@ layout is unchanged.
 - [x] T5 the other pages, from screenshots (tests: no link that leaves the dashboard on any view; METER's button lines
       whole and METER not scrolling; MANUALS' explanation behind HOW THIS WORKS; DEVICES / DUMP text; LABEL LIST
       SEARCH through the keyboard instead of a text box; chart text 14 px)
-- [ ] T6 TOUCH TEST + `/api/touchtest`
+- [x] T6 TOUCH TEST + `/api/touchtest` (tests: web api -- a run kept with its mean offset, bad bodies 400, the last
+      ten kept; dash -- nine crosses tapped 12 px low and 3 px right: the verdict says so, the run is kept, DONE closes)
 - [ ] T7 full suite, screenshots of every view, BRINGUP, journal, PR, install, ask the owner to run TOUCH TEST

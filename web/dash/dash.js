@@ -519,6 +519,69 @@
     } catch (e) { fail(e); }
   }
 
+  // --- TOUCH TEST (the 7") --------------------------------------------------------------------
+  // Crosses across the screen one at a time; where each tap lands against the cross's centre. The verdict says whether
+  // there's a steady offset (a touch calibration fixes that) or only scatter (bigger buttons do). pointerdown, not
+  // click: where the finger came down, before Chromium's tap adjustment moves it onto a button. The run is kept
+  // (/api/touchtest) so a calibration is made from measurements.
+  const TT_AT = [[.12, .16], [.5, .16], [.88, .16], [.12, .5], [.5, .5], [.88, .5], [.12, .84], [.5, .84], [.88, .84]];
+  function touchTest() {
+    let ov = $("#tt");
+    if (!ov) { ov = el("div", "hide"); ov.id = "tt"; document.body.appendChild(ov); }
+    const taps = [], target = el("div", "tt-target"), note = el("div", "tt-note"), msg = el("span"), stop = el("button", null, "CANCEL");
+    stop.addEventListener("pointerdown", e => e.stopPropagation());       // not a tap of the test
+    stop.addEventListener("click", () => { ov.removeEventListener("pointerdown", down); ov.classList.add("hide"); });
+    add(note, msg, stop);
+    const step = () => {
+      const [fx, fy] = TT_AT[taps.length], x = Math.round(innerWidth * fx), y = Math.round(innerHeight * fy);
+      Object.assign(target.style, {left: (x - 30) + "px", top: (y - 30) + "px"});
+      Object.assign(target.dataset, {x, y});
+      msg.textContent = `Tap the centre of the cross · ${taps.length + 1} of ${TT_AT.length}`;
+    };
+    const down = e => {
+      e.preventDefault();
+      taps.push({tx: +target.dataset.x, ty: +target.dataset.y, x: Math.round(e.clientX * 10) / 10, y: Math.round(e.clientY * 10) / 10});
+      if (taps.length < TT_AT.length) return step();
+      ov.removeEventListener("pointerdown", down);
+      result();
+    };
+    const result = async () => {
+      clear(ov);
+      for (const t of taps) {                        // every cross, and where its tap landed
+        const c = el("div", "tt-target dim"), d = el("div", "tt-dot");
+        Object.assign(c.style, {left: (t.tx - 30) + "px", top: (t.ty - 30) + "px"});
+        Object.assign(d.style, {left: (t.x - 7) + "px", top: (t.y - 7) + "px"});
+        add(ov, c, d);
+      }
+      let run = null;
+      try { run = await api("POST", "/api/touchtest", {w: innerWidth, h: innerHeight, taps}); } catch (e) { /* said below */ }
+      const r = el("div", "tt-result card");
+      if (!run) r.appendChild(el("div", "warn", "The run wasn't saved (gatbox-web didn't answer)."));
+      else {
+        const off = (v, plus, minus) => Math.abs(v) < 0.5 ? null : `${Math.round(Math.abs(v))} px ${v > 0 ? plus : minus}`;
+        const parts = [off(run.dy, "below", "above"), off(run.dx, "right", "left")].filter(Boolean);
+        const spread = Math.round(Math.max(run.sdx, run.sdy));
+        const steady = (Math.abs(run.dy) >= 5 && Math.abs(run.dy) > run.sdy) || (Math.abs(run.dx) >= 5 && Math.abs(run.dx) > run.sdx);
+        add(r, el("div", "big " + (steady ? "warn" : "ok"), steady ? "A STEADY OFFSET" : "NO STEADY OFFSET"),
+            el("div", null, parts.length ? `Touches land ${parts.join(" and ")} of where you aim (give or take ${spread} px).`
+                                         : `Touches land where you aim (give or take ${spread} px).`),
+            el("div", "mut", steady ? "A touch calibration shifts every touch back by that much. It's a system setting: you see it before anything changes."
+                                    : "The misses are scatter, not an offset: bigger, better-spaced buttons are the fix."));
+      }
+      const row = el("div", "btnrow"), again = el("button", null, "AGAIN"), done = el("button", "primary", "DONE");
+      again.addEventListener("click", touchTest);
+      done.addEventListener("click", () => ov.classList.add("hide"));
+      add(row, again, done);
+      r.appendChild(row);
+      ov.appendChild(r);
+    };
+    clear(ov); add(ov, note, target);
+    ov.classList.remove("hide");
+    ov.addEventListener("pointerdown", down);
+    step();
+  }
+  $("#sy-touch").addEventListener("click", touchTest);
+
   // --- navigation ---------------------------------------------------------------------------
   function show(view) {
     S.view = view;

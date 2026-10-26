@@ -63,12 +63,10 @@ layout is unchanged.
    The calibration itself is a udev / libinput change: shown to the owner first (rule 5).
 
 ## Tasks
-- [x] T1 box mode, bezel margin, readable type, toasts (2026-10-26; dash 100/101: the one failure is #15's
-      sideways-phone keypad check, which now runs in box mode at 127.0.0.1 -- open it with ?box=0 in T2)
-      T1 box mode, bezel margin, readable type, toasts (tests: box class only on the box; no button within 16 px of
-      an edge on any view; a toast never takes a tap)
-- [ ] T2 one keyboard, fixed size (tests: same key block size in keypad, number pad and picker search; every key
-      on screen; the field shows the end of long text)
+- [x] T1 box mode, bezel margin, readable type, toasts (tests: box class only on the box; every view's frame inside
+      the margin; no text under 14 px; a toast never takes a tap)
+- [x] T2 one keyboard, fixed size (tests: the same 274 px block in the same place for letters and the number pad;
+      every key on screen; the field follows the cursor, one line and two; #15's phone check runs with box off)
 - [ ] T3 pickers as buttons (tests: "How urgent?" is buttons with no keyboard; PICK MACHINE shows machines without a
       keyboard, SEARCH brings the full keyboard and filters)
 - [ ] T4 MACHINE reordered and folded; redraws keep the scroll (tests: JOB card before the ROM table; folds closed

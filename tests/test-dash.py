@@ -60,6 +60,7 @@ KP_FIT = """(() => {
 })()"""
 
 
+KB_LETTERS = {}              # the number pad's top on the 7", for the letters keyboard to match
 # The 7" box: the frame (header, nav, main) inside the bezel margin, and the smallest visible text.
 BOX_FRAME = """(() => { const bad = [];
   for (const s of ['header', 'nav', 'main']) { const r = document.querySelector(s).getBoundingClientRect();
@@ -79,8 +80,31 @@ BOX_SMALL = """(() => { const out = new Set();
   return [...out].slice(0, 6); })()"""
 
 
+# The 7" keyboard: one block, one size, wherever it opens. Its top, height, the row heights, keys cut off, and where
+# CANCEL / SAVE end.
+KB_BOX = """(() => {
+  const k = document.querySelector('#pane .keys'), a = document.querySelector('#pane .kp-actions');
+  if (!k || !a) return null;
+  const kr = k.getBoundingClientRect(), ar = a.getBoundingClientRect(), bs = [...k.querySelectorAll('button')];
+  const cut = bs.filter(b => { const r = b.getBoundingClientRect();
+                               return r.top < kr.top - 1 || r.bottom > Math.min(kr.bottom, innerHeight) + 1; }).length;
+  return {top: Math.round(kr.top), h: Math.round(kr.height), cut, act_bottom: Math.round(ar.bottom),
+          act_left: Math.round(ar.left), act_right: Math.round(ar.right),
+          rows: [...new Set(bs.filter(b => !b.classList.contains('x4')).map(b => Math.round(b.getBoundingClientRect().height)))]};
+})()"""
+# Type n characters with a real keyboard's keydown (the keypad takes those too), then: is the cursor inside the field?
+TYPE_LONG = """((n) => { for (let i = 0; i < n; i++) document.dispatchEvent(new KeyboardEvent('keydown', {key: 'W'}));
+  const f = document.querySelector('#pane .kp-field'), cur = f && f.querySelector('.cur');
+  if (!cur) return false;
+  const fr = f.getBoundingClientRect(), cr = cur.getBoundingClientRect();
+  return cr.right <= fr.right + 1 && cr.left >= fr.left - 1 && cr.bottom <= fr.bottom + 1 && cr.top >= fr.top - 1; })"""
+UNTYPE = """((n) => { for (let i = 0; i < n; i++) document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Backspace'})); return true; })"""
+
+
 def kp_fits(c, sizes):
-    """The open keypad at each (width, height): every key and SAVE on screen, keys at least 26 px. Back to the 7" after."""
+    """The open keypad at each (width, height), as a phone sees it (box mode off): every key and SAVE on screen, keys at
+    least 26 px. Back to the 7" (box mode on) after."""
+    c.eval("document.documentElement.classList.remove('box')")
     bad = {}
     for w, h in sizes:
         c.send("Emulation.setDeviceMetricsOverride", {"width": w, "height": h, "deviceScaleFactor": 1, "mobile": False})
@@ -89,6 +113,7 @@ def kp_fits(c, sizes):
         if not m or m["cut"] or not m["save"] or m["shortest"] < 26:
             bad[f"{w}x{h}"] = m
     c.send("Emulation.setDeviceMetricsOverride", {"width": 1024, "height": 600, "deviceScaleFactor": 1, "mobile": False})
+    c.eval("document.documentElement.classList.add('box')")
     time.sleep(0.3)
     if bad:
         print("    ", bad)
@@ -396,6 +421,10 @@ def main():
         shot("12-profile-picker")
         q("[...document.querySelectorAll('#pane .tile')].find(t => t.textContent.startsWith('Ripple')).click()")
         c.wait("document.querySelector('#pane .kp-field')")
+        nb = q(KB_BOX)
+        KB_LETTERS["num_top"] = nb and nb["top"]
+        check("number pad on the 7\": the same 274 px block, every key on screen, CANCEL / SAVE inside the margin",
+              nb and nb["h"] == 274 and nb["cut"] == 0 and nb["act_bottom"] <= 584)
         check("number pad on a phone held sideways (844x320): every key and SAVE on screen", kp_fits(c, [(844, 320)]))
         tap_keys("150")
         c.wait("document.querySelector('#m-profile').textContent.startsWith('Ripple')", 10)
@@ -451,6 +480,8 @@ def main():
         check("machine: NEW ORDER opens the keypad", opened
               and q("!document.querySelector('#sheet').classList.contains('hide')")
               and q("!!document.querySelector('#pane .keys')"))
+        check("machine: a long complaint (two lines), the field follows the cursor", q(TYPE_LONG + "(150)"))
+        q(UNTYPE + "(150)")
         for ch in "BAD":
             q("[...document.querySelectorAll('#pane .keys button')]"
               f".find(b => b.textContent === {json.dumps(ch)}).click()")
@@ -916,8 +947,13 @@ def main():
         # Every row, not just SAVE. The rows were a fixed 54 px and only the key grid could give, so
         # on anything shorter than the 7" (a phone held sideways, its address bar showing) the grid
         # scrolled its rows out of sight -- one row visible, no scrollbar. The 7" keeps its 54 px keys.
-        m = q(KP_FIT)
-        check("keypad on the 7\": all five rows, keys 54 px", m and m["cut"] == 0 and m["shortest"] == 54)
+        kb = q(KB_BOX)
+        check("keypad on the 7\": the whole keyboard, a fixed 274 px block of 50 px rows, CANCEL / SAVE inside the margin",
+              kb and kb["h"] == 274 and kb["rows"] == [50] and kb["cut"] == 0 and kb["act_bottom"] <= 584
+              and kb["act_left"] >= 20 and kb["act_right"] <= 1004)
+        check("keypad on the 7\": letters and number pad sit in the same place", kb and kb["top"] == KB_LETTERS.get("num_top"))
+        check("keypad: typing past the field's width, the field follows the cursor", q(TYPE_LONG + "(60)"))
+        q(UNTYPE + "(60)")
         check("keypad on a phone held sideways (844x390, 740x360, 844x320): every row and SAVE on screen",
               kp_fits(c, [(844, 390), (740, 360), (844, 320)]))
         # The symbols are a layer, reached by a toggle, the way a phone keyboard does it --

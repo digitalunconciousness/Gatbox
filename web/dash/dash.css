@@ -269,4 +269,14 @@ html.box .stat i,html.box table.t th,html.box .fld>span,html.box button.cite,htm
 html.box h3{font-size:15px}
 html.box #toast{top:calc(var(--safe-y) + 4px);bottom:auto;max-width:calc(100% - 2 * var(--safe-x) - 40px);
   pointer-events:none;font-size:17px}
+/* One keyboard, one size, wherever it opens: a fixed block (5 rows of 50 px; the number pad's 4 rows share the same
+   height) with CANCEL / SAVE under it, at the bottom of a full-height sheet, so it is always whole and always in the
+   same place. The title, the field and anything else sit above it and give way. */
+html.box .pane.kp{height:100%}
+html.box .keys{flex:none;height:274px;grid-auto-rows:1fr;gap:6px;overflow:visible}
+html.box .pane.kp .keys{margin-top:auto}
+html.box .keys button{min-height:0;font-size:21px}
+html.box .kp-actions button{min-height:54px;font-size:21px}
+html.box .kp-field{flex:none}
+html.box .kp-field.long{white-space:pre-wrap;overflow-wrap:anywhere;height:calc(2.4em + 14px);font-size:26px}
 

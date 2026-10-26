@@ -368,6 +368,7 @@
   // --- sheets: profile picker, keypad, confirm, machine picker --------------------------------
   function sheet(title, build) {
     const pane = clear($("#pane"));
+    pane.className = "pane";                         // a keypad marks its sheet (kp, num); the next sheet starts clean
     const head = el("div", "pane-head");
     add(head, el("h2", null, title));
     const close = el("button", null, "CLOSE");
@@ -396,11 +397,17 @@
   function keypad({title, max, number, value, keep}) {
     return sheet(title, (pane, done) => {
       let txt = value || "", lower = false, layer = 0;        // 0 letters, 1 symbols
-      const field = el("div", "kp-field");
-      const show = () => { field.textContent = txt; field.appendChild(el("span", "cur")); };
-      show();
+      // A long text (a complaint, a note) gets two lines; either way the field follows the cursor, so the end of what
+      // is being typed is always the part on screen.
+      const field = el("div", "kp-field" + ((max || 40) > 80 ? " long" : ""));
+      const show = () => {
+        field.textContent = txt; field.appendChild(el("span", "cur"));
+        field.scrollLeft = field.scrollWidth; field.scrollTop = field.scrollHeight;
+      };
       pane.appendChild(field);
-      if (number) pane.classList.add("num"); else pane.classList.remove("num");
+      show();
+      pane.classList.add("kp");
+      if (number) pane.classList.add("num");
       const keys = el("div", "keys");
       const press = k => {
         if (k === "\u232B") txt = txt.slice(0, -1);

@@ -321,3 +321,6 @@ html.box .web-only{display:none}
 #tt .tt-result{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(640px,80%);display:flex;
   flex-direction:column;gap:8px;background:var(--bg2)}
 
+/* The manuals viewer covers the screen: on the 7" it keeps off the bezel too, with full-size toolbar buttons. */
+html.box #viewer{padding:var(--safe-y) var(--safe-x)}
+html.box .vw-top button{min-height:56px;min-width:64px}

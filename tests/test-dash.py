@@ -701,6 +701,13 @@ def main():
         c.wait("document.querySelector('#vw-page').textContent === '2 / 3' && document.querySelector('#vw-img').complete "
                "&& document.querySelector('#vw-img').naturalWidth > 0", 30)
         shot("18b-viewer")
+        # The viewer covers the whole screen: on the 7" its buttons too keep off the bezel.
+        vw = q("[...document.querySelectorAll('#viewer button')].filter(b => b.getClientRects().length).map(b => {"
+               " const r = b.getBoundingClientRect(); return [b.textContent, r.left, r.top, r.right, r.bottom]; })"
+               ".filter(([, l, t, r, b]) => l < 19.5 || t < 15.5 || r > innerWidth - 19.5 || b > innerHeight - 15.5).map(x => x[0])")
+        check("viewer (7\"): every button inside the bezel margin", not vw)
+        if vw:
+            print("    ", vw)
         click("#vw-prev")
         c.wait("document.querySelector('#vw-page').textContent === '1 / 3'", 10)
         click("#vw-search")

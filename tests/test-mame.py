@@ -129,7 +129,7 @@ def main():
     check("a disk game says it's not a T48 job", "not a T48 job" in tool("area-51", "--from", out).stdout)
 
     print("GET /api/mame/<slug>:")
-    env = dict(os.environ, GATBOX_WEB_PORT=str(PORT), STATE_DIRECTORY=f"{T}/ctrl", CACHE_DIRECTORY=f"{T}/cache",
+    env = dict(os.environ, GATBOX_WEB_PORT=str(PORT), GATBOX_SYNC_STATE=f"{T}/no-hub", STATE_DIRECTORY=f"{T}/ctrl", CACHE_DIRECTORY=f"{T}/cache",
                GATBOX_LOGDIR=f"{T}/log", GATBOX_RUNDIR=f"{T}/run", GATBOX_DATA=f"{T}/data", GATBOX_ROMS=f"{T}/roms",
                GATBOX_MAME_ROMS=out, MPLCONFIGDIR=f"{T}/cache/mpl")
     for x in ("ctrl", "cache", "log", "run"):

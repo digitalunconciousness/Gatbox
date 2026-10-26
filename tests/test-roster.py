@@ -70,7 +70,7 @@ def main():
     for f in ("profiles.json", "gatbox-machine-specs.json"):
         shutil.copy(os.path.join(REPO, "data", f), f"{T}/data/")
     rp, added = f"{T}/data/gatbox-barcade-roster.json", f"{T}/ctrl/roster-added.json"
-    env = dict(os.environ, GATBOX_WEB_PORT=str(PORT), STATE_DIRECTORY=f"{T}/ctrl", CACHE_DIRECTORY=f"{T}/cache",
+    env = dict(os.environ, GATBOX_WEB_PORT=str(PORT), GATBOX_SYNC_STATE=f"{T}/no-hub", STATE_DIRECTORY=f"{T}/ctrl", CACHE_DIRECTORY=f"{T}/cache",
                GATBOX_LOGDIR=f"{T}/log", GATBOX_RUNDIR=f"{T}/run", GATBOX_DATA=f"{T}/data", GATBOX_ROMS=f"{T}/roms",
                GATBOX_LABELS=os.path.join(REPO, "tools/gatbox-labels"), MPLCONFIGDIR=f"{T}/cache/mpl")
     with socket.socket() as so:

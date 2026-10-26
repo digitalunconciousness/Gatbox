@@ -139,7 +139,7 @@ def main():
                    "retired": [{"slug": "pin-gone", "name": "Gone", "platform": "y"}]}, f)
     os.makedirs(f"{T}/wifi", exist_ok=True)
     os.environ["GATBOX_WIFI_SPOOL"] = f"{T}/wifi"
-    env = dict(os.environ, GATBOX_WEB_PORT=str(PORT), STATE_DIRECTORY=f"{T}/ctrl", CACHE_DIRECTORY=f"{T}/cache",
+    env = dict(os.environ, GATBOX_WEB_PORT=str(PORT), GATBOX_SYNC_STATE=f"{T}/no-hub", STATE_DIRECTORY=f"{T}/ctrl", CACHE_DIRECTORY=f"{T}/cache",
                GATBOX_WIFI_SPOOL=f"{T}/wifi",
                GATBOX_LOGDIR=f"{T}/log", GATBOX_RUNDIR=f"{T}/run", GATBOX_DATA=f"{T}/data",
                GATBOX_SCAND_STATE=f"{T}/scand/state.json", GATBOX_LABELS=os.path.join(REPO, "tools/gatbox-labels"),

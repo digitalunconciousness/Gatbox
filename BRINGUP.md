@@ -553,7 +553,8 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   customer machine's `model_key` brings its model's manuals, limits and ROM list (its own
   actuals stay its own), and a hub that lists `jobs` gets the JOB card with AS-FOUND /
   AS-LEFT, which becomes the session's `# phase=` line and a new file when it changes.
-  - [ ] Installed on the Pi (bootstrap; shows the gatbox-sync unit + tmpfiles diff first)
+  - [x] Installed on the Pi 2026-10-26 (owner OK'd the gatbox-sync unit + tmpfiles diff; with #15). The new unit's
+        first run, 14:49: conditions met, both credentials loaded, one hub, 0 queued, no conflicts or held
   - [ ] ⏸ Exit: one session each on the same Pi — a barcade trace lands in the tracker, a
         customer trace lands on its job at the second hub, neither shows up in the other
 - In a cabinet with no known Wi-Fi, the hotspot comes up ~90 s after boot: join **GATBOX**,

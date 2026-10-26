@@ -193,14 +193,18 @@ a.btnlink{display:inline-flex;align-items:center;justify-content:center;min-heig
 .kp-field .cur{display:inline-block;width:3px;height:1em;background:var(--cyan);vertical-align:-3px;margin-left:2px;
   animation:blink 1s steps(1) infinite}
 @keyframes blink{50%{opacity:0}}
-/* min-height:0 + overflow:auto so the grid yields instead of pushing the action row off a
-   600px panel. It should never need to: six rows fit. This is the belt. */
-.keys{display:grid;grid-template-columns:repeat(10,1fr);gap:6px;min-height:0;overflow:auto}
+/* The key rows share the height the panel has, up to 54 px each. On the 7" that is every row
+   at 54 px; on anything shorter (a phone held sideways, its address bar showing) the keys get
+   shorter. Fixed 54 px rows used to scroll out of sight instead, in a grid with no scrollbar:
+   one row visible. min-height:0 lets the grid yield so the action row stays on the screen;
+   overflow:auto is the belt. */
+.keys{display:grid;grid-template-columns:repeat(10,1fr);grid-auto-rows:minmax(0,54px);gap:6px;min-height:0;
+  overflow:auto}
 /* CANCEL / SAVE, outside .keys: the one row that must always be reachable. */
 .kp-actions{display:grid;grid-template-columns:4fr 6fr;gap:6px;flex:none}
 .kp-actions button{min-height:54px;font-size:21px}
 .kp-actions .primary{border-color:var(--mag);color:var(--mag)}
-.keys button{min-height:54px;font-size:21px;padding:0}
+.keys button{min-height:0;font-size:min(21px,4.2vh);padding:0}
 .keys .wide{grid-column:span 2}
 .keys .x4{grid-column:span 4}
 .keys .x6{grid-column:span 6}
@@ -233,7 +237,20 @@ a.btnlink{display:inline-flex;align-items:center;justify-content:center;min-heig
   .list{width:100%}
   .tiles{grid-template-columns:1fr 1fr}
   .picklist{grid-template-columns:1fr 1fr}
-  .keys button,.kp-actions button{min-height:48px;font-size:17px}
+  .keys{grid-auto-rows:minmax(0,48px)}
+  .keys button{font-size:min(17px,4.2vh)}
+  .kp-actions button{min-height:48px;font-size:17px}
   .vw-top{flex-wrap:wrap}
   .vw-top b{flex-basis:100%}
+}
+/* short screens (a phone held sideways): the sheet's title, the typed text and CANCEL / SAVE
+   give up height too, so the keys keep a size a finger can hit */
+@media (max-height:480px){
+  #sheet{padding:4px}
+  .pane{padding:8px;gap:6px}
+  .pane-head button{min-height:40px}
+  .pane-head h2{font-size:15px}
+  .kp-field{font-size:22px;min-height:38px;padding:3px 10px}
+  .keys{gap:4px}
+  .kp-actions button{min-height:42px;font-size:17px}
 }

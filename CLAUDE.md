@@ -35,6 +35,9 @@ The bootstrap's MANIFEST maps repo files to installed paths. `--check` (no root)
   `server.py`). Fonts in `/usr/local/share/gatbox-web/fonts`. Stdlib, DynamicUser, `video` group + a private /dev
   holding only /dev/vcio_gencmd (vcgencmd). No D-Bus from inside it: /api/system reads the kernel, sysfs, /proc, iw.
 - The dashboard (M5) at `/dash/` (static files in `/usr/local/share/gatbox-web/dash`), which the 7" kiosk opens.
+  The kiosk's own page (127.0.0.1; `?box=1/0` forces it) gets `html.box`: the 7" layout (bezel margin, ≥ 14 px text,
+  one fixed-size keyboard, pickers as buttons, MACHINE's reference behind SHOW, no links out, SYSTEM → TOUCH TEST
+  with `/api/touchtest`). A phone keeps the original layout. Change the 7" under `html.box` / `BOX` only.
   MACHINE → + ADD MACHINE writes `/var/lib/gatbox-web/roster-added.json` (roster entry format; the installed roster
   file is never written), merged by `gatboxlib.profiles.roster()`; the file wins a slug both have. `GET /roster.json`
   exports file + additions for the maintenance app.

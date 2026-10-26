@@ -60,6 +60,9 @@
       this.follow = !this.o.history; this.span = this.o.span || 300; this.t0 = 0; this.t1 = 0;
       this.sel = null; this.ptrs = new Map(); this.dirty = true;
       this.P = {l: 64, r: 12, t: 62, b: 24};          // the top strip holds the zoom buttons and the view note
+      // The 7" box (html.box) reads at arm's length in a cabinet: its axis and readout text is a size up.
+      this.fs = document.documentElement.classList.contains("box") ? 14 : 12;
+      if (this.fs > 12) { this.P.l = 72; this.P.b = 28; }
       this.ro = new ResizeObserver(() => this.redraw());
       this.ro.observe(canvas);
       canvas.addEventListener("pointerdown", e => this._down(e));
@@ -205,7 +208,7 @@
       for (const s of this.data) if (s.t >= this.t0 && s.t <= this.t1) vis.push(s);
       const [y0, y1] = this._yRange(vis);
       const Y = v => P.t + (1 - (v - y0) / (y1 - y0)) * ph;
-      g.font = "12px " + css("--mono"); g.textBaseline = "middle";
+      g.font = this.fs + "px " + css("--mono"); g.textBaseline = "middle";
       // view note, left of the buttons: what this chart shows right now
       g.fillStyle = C.mut; g.textAlign = "left";
       if (W >= 600) {
@@ -328,14 +331,14 @@
                     + (s.alarm === "alarm" ? "  ALARM" : s.alarm === "spike" ? "  SPIKE" : "");
         g.font = "600 22px " + css("--disp");
         const w1 = g.measureText(val).width;
-        g.font = "13px " + css("--mono");
+        g.font = (this.fs + 1) + "px " + css("--mono");
         const w = Math.max(w1, g.measureText(sub).width) + 20, h = 52;
         let bx = x + 10; if (bx + w > P.l + pw) bx = x - 10 - w;
         const by = P.t + 8;
         g.fillStyle = "rgba(21,10,40,0.92)"; g.strokeStyle = C.line; g.lineWidth = 1;
         g.beginPath(); g.roundRect(bx, by, w, h, 6); g.fill(); g.stroke();
         g.textAlign = "left"; g.fillStyle = C.fg; g.font = "600 22px " + css("--disp"); g.fillText(val, bx + 10, by + 17);
-        g.fillStyle = C.mut; g.font = "13px " + css("--mono"); g.fillText(sub, bx + 10, by + 39);
+        g.fillStyle = C.mut; g.font = (this.fs + 1) + "px " + css("--mono"); g.fillText(sub, bx + 10, by + 39);
       }
     }
   }

@@ -6,6 +6,14 @@
 <meta name="theme-color" content="#150a28">
 <title>GATBOX//</title>
 <link rel="stylesheet" href="dash.css">
+<script>
+/* The 7" box: the kiosk opens the dashboard at 127.0.0.1; a phone or a laptop comes by the Pi's name or address.
+   html.box carries the box's layout (bezel margin, bigger type, one fixed keyboard); ?box=1 / ?box=0 force it. */
+(function () {
+  var f = /[?&]box=([01])\b/.exec(location.search), h = location.hostname;
+  if (f ? f[1] === "1" : (h === "127.0.0.1" || h === "localhost" || h === "[::1]")) document.documentElement.classList.add("box");
+})();
+</script>
 </head>
 <body>
 <header>
@@ -87,8 +95,10 @@
       <div class="btnrow">
         <button class="hold bad" data-act="shutdown" data-ms="3000">HOLD 3 S TO SHUT DOWN</button>
         <button class="hold" data-act="exit" data-ms="1500">HOLD TO EXIT KIOSK</button>
-        <span class="mut" style="flex:1;min-width:220px">Shut down powers the Pi off safely: unplug only when the screen
+        <button id="sy-touch" class="box-only">TOUCH TEST</button>
+        <span class="mut web-only" style="flex:1;min-width:220px">Shut down powers the Pi off safely: unplug only when the screen
           is dark and the LED is red. Exit closes the kiosk until the next login.</span>
+        <span class="mut box-only" style="flex:1;min-width:200px">Unplug only once the screen is dark.</span>
       </div>
     </div>
     <div id="sy-grid" class="grid"></div>

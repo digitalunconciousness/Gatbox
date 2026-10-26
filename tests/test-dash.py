@@ -60,8 +60,67 @@ KP_FIT = """(() => {
 })()"""
 
 
+def swap_file(path, text):
+    """Replace a file whole (gatbox-web may read it at any moment: never let it see half of one)."""
+    with open(path + ".tmp", "w") as f:
+        f.write(text)
+    os.replace(path + ".tmp", path)
+
+
+# A picker's choices: how many, and the shortest (a finger needs >= 64 px on the 7").
+PICK_ROWS = """(() => { const rs = [...document.querySelectorAll('#pane .picklist .row')];
+  return {n: rs.length, min: rs.length ? Math.round(Math.min(...rs.map(r => r.getBoundingClientRect().height))) : 0}; })()"""
+# The 7" MACHINE page: the work orders / job card above the first folded section.
+MC_ORDERS_FIRST = """(() => {
+  const o = [...document.querySelectorAll('#mc-body .card')].find(c => {
+    const h = ((c.querySelector('h3') || {}).textContent || ''); return h === 'Work orders' || h.startsWith('Job'); });
+  const f = document.querySelector('#mc-body button.fold');
+  return !!(o && f) && o.getBoundingClientRect().top < f.getBoundingClientRect().top; })()"""
+KB_LETTERS = {}              # the number pad's top on the 7", for the letters keyboard to match
+# The 7" box: the frame (header, nav, main) inside the bezel margin, and the smallest visible text.
+BOX_FRAME = """(() => { const bad = [];
+  for (const s of ['header', 'nav', 'main']) { const r = document.querySelector(s).getBoundingClientRect();
+    if (r.left < 19.5 || r.top < 15.5 || r.right > innerWidth - 19.5 || r.bottom > innerHeight - 15.5)
+      bad.push(s + ' ' + [r.left, r.top, r.right, r.bottom].map(Math.round).join(',')); }
+  return bad; })()"""
+BOX_SMALL = """(() => { const out = new Set();
+  for (const root of [document.querySelector('header'), document.querySelector('nav'), document.querySelector('.view.on')]) {
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n; (n = w.nextNode()); ) {
+      if (!n.textContent.trim()) continue;
+      const e = n.parentElement, r = e.getBoundingClientRect();
+      if (!r.width || !r.height || getComputedStyle(e).visibility === 'hidden') continue;
+      const f = parseFloat(getComputedStyle(e).fontSize);
+      if (f < 14) out.add(e.tagName.toLowerCase() + '.' + e.className + ' ' + f + 'px ' + n.textContent.trim().slice(0, 24));
+    } }
+  return [...out].slice(0, 6); })()"""
+
+
+# The 7" keyboard: one block, one size, wherever it opens. Its top, height, the row heights, keys cut off, and where
+# CANCEL / SAVE end.
+KB_BOX = """(() => {
+  const k = document.querySelector('#pane .keys'), a = document.querySelector('#pane .kp-actions');
+  if (!k || !a) return null;
+  const kr = k.getBoundingClientRect(), ar = a.getBoundingClientRect(), bs = [...k.querySelectorAll('button')];
+  const cut = bs.filter(b => { const r = b.getBoundingClientRect();
+                               return r.top < kr.top - 1 || r.bottom > Math.min(kr.bottom, innerHeight) + 1; }).length;
+  return {top: Math.round(kr.top), h: Math.round(kr.height), cut, act_bottom: Math.round(ar.bottom),
+          act_left: Math.round(ar.left), act_right: Math.round(ar.right),
+          rows: [...new Set(bs.filter(b => !b.classList.contains('x4')).map(b => Math.round(b.getBoundingClientRect().height)))]};
+})()"""
+# Type n characters with a real keyboard's keydown (the keypad takes those too), then: is the cursor inside the field?
+TYPE_LONG = """((n) => { for (let i = 0; i < n; i++) document.dispatchEvent(new KeyboardEvent('keydown', {key: 'W'}));
+  const f = document.querySelector('#pane .kp-field'), cur = f && f.querySelector('.cur');
+  if (!cur) return false;
+  const fr = f.getBoundingClientRect(), cr = cur.getBoundingClientRect();
+  return cr.right <= fr.right + 1 && cr.left >= fr.left - 1 && cr.bottom <= fr.bottom + 1 && cr.top >= fr.top - 1; })"""
+UNTYPE = """((n) => { for (let i = 0; i < n; i++) document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Backspace'})); return true; })"""
+
+
 def kp_fits(c, sizes):
-    """The open keypad at each (width, height): every key and SAVE on screen, keys at least 26 px. Back to the 7" after."""
+    """The open keypad at each (width, height), as a phone sees it (box mode off): every key and SAVE on screen, keys at
+    least 26 px. Back to the 7" (box mode on) after."""
+    c.eval("document.documentElement.classList.remove('box')")
     bad = {}
     for w, h in sizes:
         c.send("Emulation.setDeviceMetricsOverride", {"width": w, "height": h, "deviceScaleFactor": 1, "mobile": False})
@@ -70,6 +129,7 @@ def kp_fits(c, sizes):
         if not m or m["cut"] or not m["save"] or m["shortest"] < 26:
             bad[f"{w}x{h}"] = m
     c.send("Emulation.setDeviceMetricsOverride", {"width": 1024, "height": 600, "deviceScaleFactor": 1, "mobile": False})
+    c.eval("document.documentElement.classList.add('box')")
     time.sleep(0.3)
     if bad:
         print("    ", bad)
@@ -253,6 +313,10 @@ def main():
         click = lambda sel: q(f"document.querySelector({json.dumps(sel)}).click()")  # noqa: E731
         shot = lambda n: c.shot(os.path.join(OUT, n + ".png"))     # noqa: E731
 
+        def open_fold(word):                       # a closed section on the 7" machine page: tap its SHOW
+            q(f"[...document.querySelectorAll('#mc-body button.fold')].find(b => b.textContent.includes({json.dumps(word)})).click()")
+            c.wait(f"[...document.querySelectorAll('#mc-body button.fold.open')].some(b => b.textContent.includes({json.dumps(word)}))", 10)
+
         def tap_keys(s):
             for ch in s:
                 q(f"[...document.querySelectorAll('#pane .keys button')].find(b => b.textContent === {json.dumps(ch)}).click()")
@@ -377,6 +441,10 @@ def main():
         shot("12-profile-picker")
         q("[...document.querySelectorAll('#pane .tile')].find(t => t.textContent.startsWith('Ripple')).click()")
         c.wait("document.querySelector('#pane .kp-field')")
+        nb = q(KB_BOX)
+        KB_LETTERS["num_top"] = nb and nb["top"]
+        check("number pad on the 7\": the same 274 px block, every key on screen, CANCEL / SAVE inside the margin",
+              nb and nb["h"] == 274 and nb["cut"] == 0 and nb["act_bottom"] <= 584)
         check("number pad on a phone held sideways (844x320): every key and SAVE on screen", kp_fits(c, [(844, 320)]))
         tap_keys("150")
         c.wait("document.querySelector('#m-profile').textContent.startsWith('Ripple')", 10)
@@ -389,22 +457,64 @@ def main():
         print("machine: set + clear:")
         click('[data-view="machine"]')
         c.wait("!document.querySelector('#mc-pick').disabled")
+        # A real roster is ~95 machines; this one is two, and a picker of eight or fewer is just buttons. For the long
+        # list, ten more cabinets for the length of this check (gatbox-web re-reads the roster when it changes).
+        roster_f = f"{T}/data/gatbox-barcade-roster.json"
+        roster_orig = open(roster_f).read()
+        big = json.loads(roster_orig)
+        big["video_games"] += [{"slug": f"test-cabinet-{i:02d}", "name": f"Test Cabinet {i:02d}", "platform": "test_hdd",
+                                "mfr": "Test", "risk": [], "faults": [], "parts": [], "notes": ""} for i in range(1, 11)]
+        swap_file(roster_f, json.dumps(big))
         click("#mc-pick")
-        c.wait("document.querySelectorAll('#pane .picklist .row').length === 2")
-        tap_keys_filter = "LEG"
-        for ch in tap_keys_filter:
+        c.wait("document.querySelectorAll('#pane .picklist .row').length === 12")
+        # On the 7" a picker is buttons first: the machines, big, and no keyboard until SEARCH.
+        check("pick machine: big buttons, no keyboard until SEARCH",
+              not q("!!document.querySelector('#pane .keys')") and q(PICK_ROWS)["min"] >= 64
+              and q("[...document.querySelectorAll('#pane button')].some(b => b.textContent === 'SEARCH')"))
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'SEARCH').click()")
+        c.wait("document.querySelector('#pane .keys')")
+        sk = q(KB_BOX)
+        check("pick machine: SEARCH brings the keyboard, the same 274 px block in the same place, every key on screen",
+              sk and sk["h"] == 274 and sk["cut"] == 0 and sk["top"] == KB_LETTERS.get("num_top") and sk["act_bottom"] <= 584)
+        for ch in "LEG":
             q(f"[...document.querySelectorAll('#pane .keys button')].find(b => b.textContent === {json.dumps(ch)}).click()")
         c.wait("document.querySelectorAll('#pane .picklist .row').length === 1")
+        check("pick machine: the matches show above the keyboard", q("(() => { const r = document.querySelector('#pane .picklist .row')"
+              ".getBoundingClientRect(), k = document.querySelector('#pane .keys').getBoundingClientRect();"
+              " return r.height >= 64 && r.bottom <= k.top; })()"))
         q("document.querySelector('#pane .picklist .row').click()")
         c.wait("document.querySelector('#mc-body').textContent.includes('Gauntlet Legends')", 10)
+        swap_file(roster_f, roster_orig)                          # back to the two-machine roster
         time.sleep(0.5)
+        # On the 7" the page leads with what gets acted on (the work orders card) and folds the reference away.
+        check("machine (7\"): the work orders card comes before the reference", settles(c, MC_ORDERS_FIRST))
+        folds = q("[...document.querySelectorAll('#mc-body button.fold')]"
+                  ".map(b => [b.querySelector('.fold-t').textContent, b.querySelector('.fold-act').textContent])") or []
+        check("machine (7\"): DETAILS, SAVED READINGS, ROM CHIPS, DUMPS start closed, each behind SHOW",
+              [f[0] for f in folds] == ["DETAILS", "SAVED READINGS", "ROM CHIPS (MAME)", "DUMPS"]
+              and all(f[1] == "SHOW" for f in folds) and "aging drive" not in text("#mc-body"))
+        shot("14-machine")
+        open_fold("DETAILS")
         check("machine card: name, risk, critical action, rail spec", all(s in text("#mc-body") for s in
               ("Gauntlet Legends", "aging drive", "image drive now", "+5V  4.9–5.1 V")))
-        shot("14-machine")
+        open_fold("ROM")
         c.wait("document.querySelector('#mc-body').textContent.includes('OF 2 DUMPED')", 10)
         check("ROM chips (MAME): 1 of 2 dumped, ✓ with the dump's label, the disk not a T48 job",
-              all(s_ in text("#mc-body") for s_ in ("ROM chips (MAME)", "1 OF 2 DUMPED", "← LEGEND15-U10", "not a T48 job",
+              "ROM CHIPS (MAME)" in text("#mc-body").upper()       # the 7" fold's title is in capitals
+              and all(s_ in text("#mc-body") for s_ in ("1 OF 2 DUMPED", "← LEGEND15-U10", "not a T48 job",
                                                      "512 KB · 27C040 / 27C4001 or 27C4096 / 27C400")))
+        # A redraw (every state event) used to empty the page first: it jumped to the top under the finger.
+        q("(() => { const v = document.querySelector('#v-machine'); v.scrollTop = 250;"
+          " document.querySelector('#mc-body').firstChild.dataset.old = '1'; })()")
+        y0 = q("document.querySelector('#v-machine').scrollTop")
+        api("PUT", "/api/meter/profile", {"id": "free"})
+        c.wait("!document.querySelector('#mc-body [data-old]')", 10)
+        time.sleep(0.8)
+        check("machine: a redraw leaves the page where it was, and an open section open",
+              y0 > 100 and abs(q("document.querySelector('#v-machine').scrollTop") - y0) <= 2
+              and "OF 2 DUMPED" in text("#mc-body"))
+        api("PUT", "/api/meter/profile", {"id": "rail-5v"})
+        time.sleep(0.8)
         q("document.querySelector('#v-machine').scrollTop = 10000")
         shot("14b-machine-chips")
         q("[...document.querySelectorAll('#mc-body button')].find(b => b.textContent === 'gauntleg ▸').click()")
@@ -432,6 +542,8 @@ def main():
         check("machine: NEW ORDER opens the keypad", opened
               and q("!document.querySelector('#sheet').classList.contains('hide')")
               and q("!!document.querySelector('#pane .keys')"))
+        check("machine: a long complaint (two lines), the field follows the cursor", q(TYPE_LONG + "(150)"))
+        q(UNTYPE + "(150)")
         for ch in "BAD":
             q("[...document.querySelectorAll('#pane .keys button')]"
               f".find(b => b.textContent === {json.dumps(ch)}).click()")
@@ -442,11 +554,17 @@ def main():
         c.wait("document.querySelectorAll('#pane .picklist .row').length >= 5", 10)
         check("machine: it asks how urgent",
               "Critical" in q("document.querySelector('#pane').textContent"))
+        check("machine: how urgent is five big buttons, no keyboard, no SEARCH",
+              not q("!!document.querySelector('#pane .keys')") and q(PICK_ROWS) == {"n": 5, "min": q(PICK_ROWS)["min"]}
+              and q(PICK_ROWS)["min"] >= 64
+              and not q("[...document.querySelectorAll('#pane button')].some(b => b.textContent === 'SEARCH')"))
         q("[...document.querySelectorAll('#pane .picklist .row')]"
           ".find(r => r.textContent.includes('High')).click()")
         c.wait("document.querySelectorAll('#pane .picklist .row').length === 2", 10)
         check("machine: and whether to attach the last trace",
               "Without a trace" in q("document.querySelector('#pane').textContent"))
+        check("machine: with or without the trace is two big buttons, no keyboard",
+              not q("!!document.querySelector('#pane .keys')") and q(PICK_ROWS)["n"] == 2 and q(PICK_ROWS)["min"] >= 64)
         q("[...document.querySelectorAll('#pane .picklist .row')]"
           ".find(r => r.textContent.includes('Without')).click()")
         time.sleep(1.5)
@@ -583,6 +701,13 @@ def main():
         c.wait("document.querySelector('#vw-page').textContent === '2 / 3' && document.querySelector('#vw-img').complete "
                "&& document.querySelector('#vw-img').naturalWidth > 0", 30)
         shot("18b-viewer")
+        # The viewer covers the whole screen: on the 7" its buttons too keep off the bezel.
+        vw = q("[...document.querySelectorAll('#viewer button')].filter(b => b.getClientRects().length).map(b => {"
+               " const r = b.getBoundingClientRect(); return [b.textContent, r.left, r.top, r.right, r.bottom]; })"
+               ".filter(([, l, t, r, b]) => l < 19.5 || t < 15.5 || r > innerWidth - 19.5 || b > innerHeight - 15.5).map(x => x[0])")
+        check("viewer (7\"): every button inside the bezel margin", not vw)
+        if vw:
+            print("    ", vw)
         click("#vw-prev")
         c.wait("document.querySelector('#vw-page').textContent === '1 / 3'", 10)
         click("#vw-search")
@@ -897,8 +1022,13 @@ def main():
         # Every row, not just SAVE. The rows were a fixed 54 px and only the key grid could give, so
         # on anything shorter than the 7" (a phone held sideways, its address bar showing) the grid
         # scrolled its rows out of sight -- one row visible, no scrollbar. The 7" keeps its 54 px keys.
-        m = q(KP_FIT)
-        check("keypad on the 7\": all five rows, keys 54 px", m and m["cut"] == 0 and m["shortest"] == 54)
+        kb = q(KB_BOX)
+        check("keypad on the 7\": the whole keyboard, a fixed 274 px block of 50 px rows, CANCEL / SAVE inside the margin",
+              kb and kb["h"] == 274 and kb["rows"] == [50] and kb["cut"] == 0 and kb["act_bottom"] <= 584
+              and kb["act_left"] >= 20 and kb["act_right"] <= 1004)
+        check("keypad on the 7\": letters and number pad sit in the same place", kb and kb["top"] == KB_LETTERS.get("num_top"))
+        check("keypad: typing past the field's width, the field follows the cursor", q(TYPE_LONG + "(60)"))
+        q(UNTYPE + "(60)")
         check("keypad on a phone held sideways (844x390, 740x360, 844x320): every row and SAVE on screen",
               kp_fits(c, [(844, 390), (740, 360), (844, 320)]))
         # The symbols are a layer, reached by a toggle, the way a phone keyboard does it --
@@ -1065,15 +1195,114 @@ def main():
               settles(c, "[...document.querySelectorAll('#mc-body h3')].some(h => h.textContent === 'Work orders')")
               and not q(f"!!({job_card})") and "AS-" not in text("#m-window"))
 
+        print("the 7\" box (html.box: the kiosk opens the dashboard at 127.0.0.1):")
+        check("box: the kiosk's page is in box mode", q("document.documentElement.classList.contains('box')"))
+        bad_frame, small = {}, {}
+        for v in ("meter", "sessions", "machine", "manuals", "system", "devices", "dump"):
+            click(f'[data-view="{v}"]')
+            time.sleep(1.2)
+            f, s = q(BOX_FRAME), q(BOX_SMALL)
+            if f:
+                bad_frame[v] = f
+            if s:
+                small[v] = s
+        for d in (bad_frame, small):
+            if d:
+                print("    ", d)
+        check("box: every view sits inside the bezel margin (20 px at the sides, 16 at top and bottom)", not bad_frame)
+        check("box: no text under 14 px, header and nav included", not small)
+        # The kiosk has no back button: a link that leaves the dashboard strands it there.
+        leaving = {}
+        for v in ("meter", "sessions", "machine", "manuals", "system", "devices", "dump"):
+            click(f'[data-view="{v}"]')
+            time.sleep(0.8)
+            if v == "sessions":                       # a session's report is open, as it is when you read one
+                q("(() => { const r = document.querySelector('#s-list .row'); if (r) r.click(); return true; })()")
+                time.sleep(1.5)
+            a = q("[...document.querySelectorAll('a[href]')].filter(a => a.getClientRects().length).map(a => a.textContent)")
+            if a:
+                leaving[v] = a
+        if leaving:
+            print("    ", leaving)
+        check("box: no link that leaves the dashboard (the kiosk has no way back)", not leaving)
+        click('[data-view="meter"]')
+        time.sleep(0.5)
+        check("box: METER's action buttons say all of it (nothing cut off), and METER doesn't scroll",
+              q("[...document.querySelectorAll('.act small')].every(s => s.scrollWidth <= s.clientWidth + 1 && s.scrollHeight <= s.clientHeight + 1)")
+              and q("(() => { const v = document.querySelector('#v-meter'); return v.scrollHeight <= v.clientHeight + 1; })()"))
+        click('[data-view="manuals"]')
+        c.wait("[...document.querySelectorAll('#v-manuals h2')].some(h => h.textContent === 'Spec sheet')", 15)
+        check("box: MANUALS keeps its explanation behind HOW THIS WORKS",
+              "The manual's numbers as" not in q("[...document.querySelectorAll('#v-manuals *')].filter(e => e.getClientRects().length"
+                                                 " && e.children.length === 0).map(e => e.textContent).join(' ')")
+              and q("[...document.querySelectorAll('#v-manuals button')].some(b => b.textContent.includes('HOW THIS WORKS'))"))
+        click('[data-view="devices"]')
+        time.sleep(1)
+        check("box: DEVICES says where the T48 is used (no milestone talk)", "M7" not in text("#v-devices")
+              and "DUMP" in text("#v-devices"))
+        click('[data-view="dump"]')
+        time.sleep(1)
+        check("box: DUMP's header is one short line", "armed by a hold" not in text("#du-body"))
+        click('[data-view="machine"]')
+        c.wait("!document.querySelector('#mc-labels').disabled", 10)
+        click("#mc-labels")
+        c.wait("!document.querySelector('#sheet').classList.contains('hide') && document.querySelectorAll('#pane .row').length >= 3", 10)
+        check("box: LABEL LIST has no text box (the 7\" has no keyboard for one), it has SEARCH",
+              not q("!!document.querySelector('#pane input')")
+              and q("[...document.querySelectorAll('#pane button')].some(b => b.textContent === 'SEARCH')"))
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'SEARCH').click()")
+        c.wait("document.querySelector('#pane .keys')")
+        tap_keys("LEG")
+        c.wait("!document.querySelector('#pane .keys') && document.querySelectorAll('#pane .row').length >= 1", 10)
+        check("box: LABEL LIST: SEARCH is the keyboard, and it filters", q("document.querySelectorAll('#pane .row').length") == 1
+              and "gauntlet-legends" in text("#pane"))
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'CLOSE').click()")
+        # TOUCH TEST: is there a steady offset between where a finger aims and where the touch lands? Nine crosses; here
+        # every tap lands 12 px low and 3 px right of its centre, the way a fingertip's contact patch would.
+        click('[data-view="system"]')
+        c.wait("document.querySelector('#sy-touch')", 10)
+        check("box: SYSTEM has TOUCH TEST", q("document.querySelector('#sy-touch').getClientRects().length > 0"))
+        click("#sy-touch")
+        c.wait("document.querySelector('#tt:not(.hide) .tt-target')", 5)
+        for _ in range(9):
+            q("(() => { const t = document.querySelector('#tt .tt-target'), r = t.getBoundingClientRect();"
+              " const x = r.left + r.width / 2 + 3, y = r.top + r.height / 2 + 12;"
+              " document.querySelector('#tt').dispatchEvent(new PointerEvent('pointerdown',"
+              " {clientX: x, clientY: y, bubbles: true, pointerType: 'touch'})); return true; })()")
+            time.sleep(0.15)
+        c.wait("document.querySelector('#tt .tt-result')", 5)
+        res = text("#tt .tt-result")
+        check("box: TOUCH TEST: nine crosses, and the verdict names the offset (12 px below, 3 px right)",
+              "12 px below" in res and "3 px right" in res)
+        shot("22-touch-test")
+        tt = api("GET", "/api/touchtest")
+        check("box: TOUCH TEST keeps the run for a calibration (GET /api/touchtest)",
+              tt["runs"][-1]["n"] == 9 and abs(tt["runs"][-1]["dy"] - 12) < 0.6 and abs(tt["runs"][-1]["dx"] - 3) < 0.6)
+        q("[...document.querySelectorAll('#tt button')].find(b => b.textContent === 'DONE').click()")
+        check("box: DONE closes it", q("document.querySelector('#tt').classList.contains('hide')"))
+        # A toast lies over the page for seconds: it must never be what a finger hits.
+        q("(() => { const t = document.querySelector('#toast'); t.textContent = 'test'; t.classList.remove('hide'); })()")
+        tst = q("(() => { const t = document.querySelector('#toast'), r = t.getBoundingClientRect();"
+                " return {pe: getComputedStyle(t).pointerEvents, l: r.left, t: r.top, r: r.right, b: r.bottom}; })()")
+        q("document.querySelector('#toast').classList.add('hide')")
+        check("box: a toast never takes a tap, and sits inside the margin", tst["pe"] == "none" and tst["l"] >= 19.5
+              and tst["t"] >= 15.5 and tst["r"] <= 1004.5 and tst["b"] <= 584.5)
+
     print("phone (390x844):")
     with Chrome(f"{T}/browser2") as c:
-        c.open(B + "/dash/", 390, 844)
+        # ?box=0: the test reaches gatbox-web at 127.0.0.1, which is the kiosk's address; a phone comes by name
+        c.open(B + "/dash/?box=0", 390, 844)
         c.wait("document.querySelector('#m-profile').textContent.includes('rail')")
         time.sleep(1.5)
         c.shot(os.path.join(OUT, "18-phone.png"))
         check("phone: no horizontal scroll", c.eval("document.documentElement.scrollWidth <= 391"))
+        check("phone: not box mode (the 7\" changes stay on the 7\")", not c.eval("document.documentElement.classList.contains('box')"))
 
-    check("server log: no errors", not any(k in open(f"{T}/web.log").read() for k in ("Traceback", "error on", "live: ")))
+    wlog = open(f"{T}/web.log").read()
+    werr = [ln for ln in wlog.splitlines() if any(k in ln for k in ("Traceback", "error on", "live: ", "Error"))]
+    if werr:
+        print("    ", "\n     ".join(werr[:12]))
+    check("server log: no errors", not any(k in wlog for k in ("Traceback", "error on", "live: ")))
     print(f"screenshots: {OUT}" if KEEP else "screenshots: not kept (pass a directory to keep them)")
     print(f"dash: {passed} passed, {failed} failed")
 

@@ -5,6 +5,7 @@
 (function () {
   "use strict";
   const $ = s => document.querySelector(s);
+  const BOX = document.documentElement.classList.contains("box");    // the 7" kiosk's own page (index.html)
   const el = (tag, cls, text) => {
     const e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -27,6 +28,7 @@
     st: null, profiles: [], modes: {}, sys: null, dev: null, local: false, offset: 0,
     file: null, last: null, lastAt: 0, marks: [], pending: [], events: [],
     alarmShown: null, alarmAck: new Set(), leadWarn: false, view: "meter", connected: false, fileStart: null, endedAt: 0,
+    folds: {},                                       // the 7"'s folded sections that are open (key -> true)
   };
 
   // --- API ---------------------------------------------------------------------------------
@@ -368,6 +370,7 @@
   // --- sheets: profile picker, keypad, confirm, machine picker --------------------------------
   function sheet(title, build) {
     const pane = clear($("#pane"));
+    pane.className = "pane";                         // a keypad marks its sheet (kp, num); the next sheet starts clean
     const head = el("div", "pane-head");
     add(head, el("h2", null, title));
     const close = el("button", null, "CLOSE");
@@ -393,50 +396,64 @@
   const KP_SYMBOLS = ["1234567890", "!\"#$%^&*()", "+=,:;<>?@[", "]\\_`{|}~-\u232B"];
   const KP_NUMBERS = ["789\u232B", "456-", "123.", "0"];
 
+  // The keys every typed field uses: letters and symbols as two layers of the same size, case, and the modifier row;
+  // or the number pad. press(k) gets each character, and "\u232B" for delete. keypad() and the 7" picker's SEARCH
+  // both build from this, so there is one keyboard.
+  function keyGrid(press, number) {
+    const keys = el("div", "keys");
+    let lower = false, layer = 0;                    // 0 letters, 1 symbols
+    const paint = () => {
+      clear(keys);
+      const key = (k, cls, label, onclick) => {
+        const b = el("button", cls || null, label === undefined ? k : label);
+        b.addEventListener("click", onclick || (() => press(k)));
+        keys.appendChild(b);
+        return b;
+      };
+      if (number) { for (const r of KP_NUMBERS) for (const k of r) key(k); return; }
+      for (const r of (layer ? KP_SYMBOLS : KP_LETTERS))
+        for (const k of r) {
+          const isLetter = /^[A-Z]$/.test(k);
+          key(k, null, isLetter && lower ? k.toLowerCase() : k,
+              isLetter ? () => press(lower ? k.toLowerCase() : k) : undefined);
+        }
+      // The modifier row, in the same five slots on both layers so nothing moves under a
+      // finger: case, layer, space, and the two commonest marks for that layer.
+      // "aA", not "abc": the layer button has to read ABC to mean "back to letters", and two
+      // buttons reading abc and ABC beside each other is a coin toss.
+      const sh = key("aA", "wide shift", "aA", () => { lower = !lower; paint(); });
+      if (lower) sh.classList.add("on");
+      const lay = key("?#+", "wide shift", layer ? "ABC" : "?#+",
+                      () => { layer = layer ? 0 : 1; paint(); });
+      if (layer) lay.classList.add("on");
+      key(" ", "x4", "SPACE");
+      key(layer ? "," : "'");
+      key(layer ? "." : "&");
+    };
+    paint();
+    return keys;
+  }
+
   function keypad({title, max, number, value, keep}) {
     return sheet(title, (pane, done) => {
-      let txt = value || "", lower = false, layer = 0;        // 0 letters, 1 symbols
-      const field = el("div", "kp-field");
-      const show = () => { field.textContent = txt; field.appendChild(el("span", "cur")); };
-      show();
+      let txt = value || "";
+      // A long text (a complaint, a note) gets two lines; either way the field follows the cursor, so the end of what
+      // is being typed is always the part on screen.
+      const field = el("div", "kp-field" + ((max || 40) > 80 ? " long" : ""));
+      const show = () => {
+        field.textContent = txt; field.appendChild(el("span", "cur"));
+        field.scrollLeft = field.scrollWidth; field.scrollTop = field.scrollHeight;
+      };
       pane.appendChild(field);
-      if (number) pane.classList.add("num"); else pane.classList.remove("num");
-      const keys = el("div", "keys");
+      show();
+      pane.classList.add("kp");
+      if (number) pane.classList.add("num");
       const press = k => {
         if (k === "\u232B") txt = txt.slice(0, -1);
         else if (txt.length < (max || 40)) txt += k;
         show();
       };
-      const paint = () => {
-        clear(keys);
-        const key = (k, cls, label, onclick) => {
-          const b = el("button", cls || null, label === undefined ? k : label);
-          b.addEventListener("click", onclick || (() => press(k)));
-          keys.appendChild(b);
-          return b;
-        };
-        if (number) { for (const r of KP_NUMBERS) for (const k of r) key(k); return; }
-        for (const r of (layer ? KP_SYMBOLS : KP_LETTERS))
-          for (const k of r) {
-            const isLetter = /^[A-Z]$/.test(k);
-            key(k, null, isLetter && lower ? k.toLowerCase() : k,
-                isLetter ? () => press(lower ? k.toLowerCase() : k) : undefined);
-          }
-        // The modifier row, in the same five slots on both layers so nothing moves under a
-        // finger: case, layer, space, and the two commonest marks for that layer.
-        // "aA", not "abc": the layer button has to read ABC to mean "back to letters", and two
-        // buttons reading abc and ABC beside each other is a coin toss.
-        const sh = key("aA", "wide shift", "aA", () => { lower = !lower; paint(); });
-        if (lower) sh.classList.add("on");
-        const lay = key("?#+", "wide shift", layer ? "ABC" : "?#+",
-                        () => { layer = layer ? 0 : 1; paint(); });
-        if (layer) lay.classList.add("on");
-        key(" ", "x4", "SPACE");
-        key(layer ? "," : "'");
-        key(layer ? "." : "&");
-      };
-      paint();
-      pane.appendChild(keys);
+      pane.appendChild(keyGrid(press, number));
       // Outside the key grid, so the grid can never push it off the screen. `.keys` scrolls if
       // it ever has to; this row does not move.
       const actions = el("div", "kp-actions");
@@ -501,6 +518,69 @@
       toast(`Profile: ${st.profile.label}${st.new_file ? " · new file started" : ""}`);
     } catch (e) { fail(e); }
   }
+
+  // --- TOUCH TEST (the 7") --------------------------------------------------------------------
+  // Crosses across the screen one at a time; where each tap lands against the cross's centre. The verdict says whether
+  // there's a steady offset (a touch calibration fixes that) or only scatter (bigger buttons do). pointerdown, not
+  // click: where the finger came down, before Chromium's tap adjustment moves it onto a button. The run is kept
+  // (/api/touchtest) so a calibration is made from measurements.
+  const TT_AT = [[.12, .16], [.5, .16], [.88, .16], [.12, .5], [.5, .5], [.88, .5], [.12, .84], [.5, .84], [.88, .84]];
+  function touchTest() {
+    let ov = $("#tt");
+    if (!ov) { ov = el("div", "hide"); ov.id = "tt"; document.body.appendChild(ov); }
+    const taps = [], target = el("div", "tt-target"), note = el("div", "tt-note"), msg = el("span"), stop = el("button", null, "CANCEL");
+    stop.addEventListener("pointerdown", e => e.stopPropagation());       // not a tap of the test
+    stop.addEventListener("click", () => { ov.removeEventListener("pointerdown", down); ov.classList.add("hide"); });
+    add(note, msg, stop);
+    const step = () => {
+      const [fx, fy] = TT_AT[taps.length], x = Math.round(innerWidth * fx), y = Math.round(innerHeight * fy);
+      Object.assign(target.style, {left: (x - 30) + "px", top: (y - 30) + "px"});
+      Object.assign(target.dataset, {x, y});
+      msg.textContent = `Tap the centre of the cross · ${taps.length + 1} of ${TT_AT.length}`;
+    };
+    const down = e => {
+      e.preventDefault();
+      taps.push({tx: +target.dataset.x, ty: +target.dataset.y, x: Math.round(e.clientX * 10) / 10, y: Math.round(e.clientY * 10) / 10});
+      if (taps.length < TT_AT.length) return step();
+      ov.removeEventListener("pointerdown", down);
+      result();
+    };
+    const result = async () => {
+      clear(ov);
+      for (const t of taps) {                        // every cross, and where its tap landed
+        const c = el("div", "tt-target dim"), d = el("div", "tt-dot");
+        Object.assign(c.style, {left: (t.tx - 30) + "px", top: (t.ty - 30) + "px"});
+        Object.assign(d.style, {left: (t.x - 7) + "px", top: (t.y - 7) + "px"});
+        add(ov, c, d);
+      }
+      let run = null;
+      try { run = await api("POST", "/api/touchtest", {w: innerWidth, h: innerHeight, taps}); } catch (e) { /* said below */ }
+      const r = el("div", "tt-result card");
+      if (!run) r.appendChild(el("div", "warn", "The run wasn't saved (gatbox-web didn't answer)."));
+      else {
+        const off = (v, plus, minus) => Math.abs(v) < 0.5 ? null : `${Math.round(Math.abs(v))} px ${v > 0 ? plus : minus}`;
+        const parts = [off(run.dy, "below", "above"), off(run.dx, "right", "left")].filter(Boolean);
+        const spread = Math.round(Math.max(run.sdx, run.sdy));
+        const steady = (Math.abs(run.dy) >= 5 && Math.abs(run.dy) > run.sdy) || (Math.abs(run.dx) >= 5 && Math.abs(run.dx) > run.sdx);
+        add(r, el("div", "big " + (steady ? "warn" : "ok"), steady ? "A STEADY OFFSET" : "NO STEADY OFFSET"),
+            el("div", null, parts.length ? `Touches land ${parts.join(" and ")} of where you aim (give or take ${spread} px).`
+                                         : `Touches land where you aim (give or take ${spread} px).`),
+            el("div", "mut", steady ? "A touch calibration shifts every touch back by that much. It's a system setting: you see it before anything changes."
+                                    : "The misses are scatter, not an offset: bigger, better-spaced buttons are the fix."));
+      }
+      const row = el("div", "btnrow"), again = el("button", null, "AGAIN"), done = el("button", "primary", "DONE");
+      again.addEventListener("click", touchTest);
+      done.addEventListener("click", () => ov.classList.add("hide"));
+      add(row, again, done);
+      r.appendChild(row);
+      ov.appendChild(r);
+    };
+    clear(ov); add(ov, note, target);
+    ov.classList.remove("hide");
+    ov.addEventListener("pointerdown", down);
+    step();
+  }
+  $("#sy-touch").addEventListener("click", touchTest);
 
   // --- navigation ---------------------------------------------------------------------------
   function show(view) {
@@ -569,12 +649,12 @@
     if (J.powered) head.appendChild(el("div", null,
         `powered ${si(J.powered.min, "V", 0.001)} – ${si(J.powered.max, "V", 0.001)}, mean ${si(J.powered.mean, "V", 0.0001)} · ${J.powered.in_window_pct != null ? J.powered.in_window_pct.toFixed(2) + "% in window" : ""}`));
     const btns = el("div", "btnrow");
-    if (!S.local) {                             // on the kiosk a PDF has no way back: phone only
+    if (!S.local && !BOX) {                     // on the kiosk a PDF has no way back: phone only
       const pdf = el("a", null, "PDF"); pdf.href = J.pdf; pdf.target = "_blank";
       const csv = el("a", null, "CSV"); csv.href = J.csv;
       add(btns, pdf, el("span", "mut", " · "), csv, el("span", "mut", " · "));
     }
-    const ph = el("a", null, "phone page"); ph.href = "/s/" + name; btns.appendChild(ph);
+    if (!BOX) { const ph = el("a", null, "phone page"); ph.href = "/s/" + name; btns.appendChild(ph); }   // no way back on the 7"
     head.appendChild(btns);
     D.appendChild(head);
     const box = el("div", "chartbox"), cv = el("canvas");
@@ -664,18 +744,49 @@
   }
 
   // --- MACHINE ------------------------------------------------------------------------------
+  // A section on the 7" that starts closed: one full-width button with its title, a short summary and SHOW; the
+  // content is only built once it's open. Open ones stay open across redraws (S.folds) until tapped shut. redraw()
+  // redraws the page it's on.
+  async function fold(parent, key, title, summary, build, redraw) {
+    const open = !!S.folds[key], b = el("button", "fold" + (open ? " open" : ""));
+    add(b, el("span", "fold-t", title), el("span", "fold-s mut", summary || ""), el("span", "fold-act", open ? "HIDE" : "SHOW"));
+    b.addEventListener("click", () => { S.folds[key] = !open; redraw(); });
+    parent.appendChild(b);
+    if (!open) return;
+    const body = el("div", "fold-b");
+    parent.appendChild(body);
+    await build(body);
+  }
+
+  // An explanation on the 7" sits behind a small button (the page is for the numbers); a phone shows it as it was.
+  function foldText(parent, label, text) {
+    const d = el("div", "mut", text);
+    if (!BOX) return parent.appendChild(d);
+    const b = el("button", "mini why", label + " ▸");
+    d.classList.add("hide");
+    b.addEventListener("click", () => { const open = d.classList.toggle("hide") === false; b.textContent = label + (open ? " ▾" : " ▸"); });
+    add(parent, b, d);
+  }
+
   async function loadMachine() {
     // Every state event reloads this card, and so does the button that caused the event: two reloads overlap, and
-    // each appends after its awaits. Only the newest one draws.
+    // each appends after its awaits. Only the newest one draws. It's built off-screen and swapped in whole: emptied
+    // first, the page used to blank and jump back to the top whenever it redrew -- under a finger reaching for NEW JOB.
     const gen = S.mcGen = (S.mcGen || 0) + 1, stale = () => gen !== S.mcGen;
-    const B = clear($("#mc-body"));
+    const B = el("div");
+    const swap = () => {
+      if (stale()) return;
+      const sc = $("#v-machine"), top = sc.scrollTop;
+      $("#mc-body").replaceChildren(...B.childNodes);
+      sc.scrollTop = top;
+    };
     let m;
     try { m = await api("GET", "/api/machine"); } catch (e) { return fail(e); }
     if (stale()) return;
     $("#mc-clear").disabled = !m.slug;
     $("#mc-pick").disabled = $("#mc-export").disabled = $("#mc-labels").disabled = !m.roster;
-    if (!m.roster) { B.appendChild(el("div", "card warn", "No roster installed on this Pi (data/gatbox-barcade-roster.json). + ADD MACHINE starts one here.")); return; }
-    if (!m.slug) { B.appendChild(el("div", "card mut", "No machine set. PICK MACHINE, or scan its QR code.")); return; }
+    if (!m.roster) { B.appendChild(el("div", "card warn", "No roster installed on this Pi (data/gatbox-barcade-roster.json). + ADD MACHINE starts one here.")); return swap(); }
+    if (!m.slug) { B.appendChild(el("div", "card mut", "No machine set. PICK MACHINE, or scan its QR code.")); return swap(); }
     const e = m.entry, c = el("div", "card"), hubOnly = e.kind == null;   // a machine only a hub has (Phase 8)
     add(c, el("div", "big", e.name), el("div", "mut", hubOnly
       ? [e.slug, e.location, e.status].filter(Boolean).join(" · ")
@@ -700,58 +811,89 @@
     }
     if (e.platform_info) add(c, el("div", null, e.platform_info.desc || e.platform));
     else if (e.platform === NOT_SURE) add(c, el("div", "warn", "Platform: not sure yet"));
-    if (e.notes) add(c, el("div", "mut", e.notes));
-    if (e.risk_info && e.risk_info.length) {
-      const ch = el("div", "chips");
-      for (const r of e.risk_info) ch.appendChild(el("span", "badge warn", r.flag + (r.meaning ? ": " + r.meaning : "")));
-      add(c, el("h3", null, "Risks"), ch);
-    }
-    const list = (title, items) => {
-      if (!items || !items.length) return;
-      const ul = el("ul", "plain");
-      items.forEach(i => ul.appendChild(el("li", null, i)));
-      add(c, el("h3", null, title), ul);
-    };
-    list("Faults", e.faults_all); list("Parts", e.parts_all);
-    if (e.platform_info && e.platform_info.pm) add(c, el("h3", null, "PM"), el("div", null, e.platform_info.pm));
-    if (e.critical_actions && e.critical_actions.length) {
-      c.appendChild(el("h3", null, "Critical actions"));
-      for (const a of e.critical_actions) {
-        const d = el("div", "card");
-        add(d, el("b", "bad", a.path.replace(/_/g, " ").replace(/\//g, " › ")), a.note ? el("div", null, a.note) : null);
-        if (a.detail) for (const [k, v] of Object.entries(a.detail)) {
-          if (k === "sources") continue;
-          d.appendChild(el("div", "mut", `${k.replace(/_/g, " ")}: ${typeof v === "string" ? v : JSON.stringify(v)}`));
-        }
-        c.appendChild(d);
+    // The rest as pieces: a phone draws them in one card as it always has; the 7" puts the actions first and folds
+    // the reference behind SHOW.
+    const details = d => {
+      if (e.notes) add(d, el("div", "mut", e.notes));
+      if (e.risk_info && e.risk_info.length) {
+        const ch = el("div", "chips");
+        for (const r of e.risk_info) ch.appendChild(el("span", "badge warn", r.flag + (r.meaning ? ": " + r.meaning : "")));
+        add(d, el("h3", null, "Risks"), ch);
       }
-    }
-    c.appendChild(el("h3", null, "Rail specs"));
-    if (e.spec && e.spec.rails) {
-      for (const [r, w] of Object.entries(e.spec.rails))
-        c.appendChild(el("div", null, `${r.replace("-", "−")}  ${w[0]}–${w[1]} V` + (e.spec.sources ? ` · ${srcLabel(e.spec.sources[r])}` : "")));
-      if (e.spec.source) c.appendChild(el("div", "mut", e.spec.source));
-    } else c.appendChild(el("div", "mut", hubOnly && !e.library ? "None yet."
-      : "None yet: the MANUALS tab has the machine's spec sheet (CONFIRM a limit from its manual)."));
-    if (!hubOnly || e.library) {
-      const sp = el("button", null, "SPEC SHEET & MANUALS ▸");
-      sp.addEventListener("click", () => { M.slug = M.name = null; show("manuals"); });   // the card is the current machine's
-      c.appendChild(sp);
-    }
-    c.appendChild(el("h3", null, "Saved readings"));
-    try {
-      const cp = await api("GET", "/api/captures?machine=" + encodeURIComponent(e.slug));
-      if (!cp.captures.length) c.appendChild(el("div", "mut", "None yet: pick a bench profile and press SAVE READING."));
-      for (const k of cp.captures.slice(-30).reverse())
-        c.appendChild(el("div", null, `${k.iso.replace("T", " ")}  ${k.label}  ${savedText(k)}  (${modeLabel(k.mode)}${k.flags ? ", " + k.flags : ""})`));
-    } catch (x) { c.appendChild(el("div", "bad", String(x.message))); }
-    await mameSection(c, e.slug);
-    c.appendChild(el("h3", null, "Dumps"));
-    try { dumpList(c, (await api("GET", "/api/dumps?machine=" + encodeURIComponent(e.slug))).dumps); }
-    catch (x) { c.appendChild(el("div", "mut", "No dump archive on this Pi yet.")); }
+      const list = (title, items) => {
+        if (!items || !items.length) return;
+        const ul = el("ul", "plain");
+        items.forEach(i => ul.appendChild(el("li", null, i)));
+        add(d, el("h3", null, title), ul);
+      };
+      list("Faults", e.faults_all); list("Parts", e.parts_all);
+      if (e.platform_info && e.platform_info.pm) add(d, el("h3", null, "PM"), el("div", null, e.platform_info.pm));
+    };
+    const critical = d => {
+      if (!e.critical_actions || !e.critical_actions.length) return;
+      d.appendChild(el("h3", null, "Critical actions"));
+      for (const a of e.critical_actions) {
+        const k = el("div", "card");
+        add(k, el("b", "bad", a.path.replace(/_/g, " ").replace(/\//g, " › ")), a.note ? el("div", null, a.note) : null);
+        if (a.detail) for (const [x, v] of Object.entries(a.detail)) {
+          if (x === "sources") continue;
+          k.appendChild(el("div", "mut", `${x.replace(/_/g, " ")}: ${typeof v === "string" ? v : JSON.stringify(v)}`));
+        }
+        d.appendChild(k);
+      }
+    };
+    const rails = d => {
+      d.appendChild(el("h3", null, "Rail specs"));
+      if (e.spec && e.spec.rails) {
+        for (const [r, w] of Object.entries(e.spec.rails))
+          d.appendChild(el("div", null, `${r.replace("-", "−")}  ${w[0]}–${w[1]} V` +
+                                           ((e.spec.sources && srcLabel(e.spec.sources[r])) ? ` · ${srcLabel(e.spec.sources[r])}` : "")));
+        if (e.spec.source) d.appendChild(el("div", "mut", e.spec.source));
+      } else d.appendChild(el("div", "mut", hubOnly && !e.library ? "None yet."
+        : "None yet: the MANUALS tab has the machine's spec sheet (CONFIRM a limit from its manual)."));
+      if (!hubOnly || e.library) {
+        const sp = el("button", null, "SPEC SHEET & MANUALS ▸");
+        sp.addEventListener("click", () => { M.slug = M.name = null; show("manuals"); });   // the card is the current machine's
+        d.appendChild(sp);
+      }
+    };
+    let cp = null, cpErr = null, dumps = null;
+    try { cp = await api("GET", "/api/captures?machine=" + encodeURIComponent(e.slug)); } catch (x) { cpErr = x; }
+    try { dumps = (await api("GET", "/api/dumps?machine=" + encodeURIComponent(e.slug))).dumps; } catch (x) { /* none */ }
     if (stale()) return;
+    const saved = d => {
+      if (cpErr) return d.appendChild(el("div", "bad", String(cpErr.message)));
+      if (!cp.captures.length) d.appendChild(el("div", "mut", "None yet: pick a bench profile and press SAVE READING."));
+      for (const k of cp.captures.slice(-30).reverse())
+        d.appendChild(el("div", null, `${k.iso.replace("T", " ")}  ${k.label}  ${savedText(k)}  (${modeLabel(k.mode)}${k.flags ? ", " + k.flags : ""})`));
+    };
+    const dumpsInto = d => {
+      if (dumps) dumpList(d, dumps); else d.appendChild(el("div", "mut", "No dump archive on this Pi yet."));
+    };
+    if (!BOX) {
+      details(c); critical(c); rails(c);
+      c.appendChild(el("h3", null, "Saved readings")); saved(c);
+      await mameSection(c, e.slug);
+      c.appendChild(el("h3", null, "Dumps")); dumpsInto(c);
+      if (stale()) return;
+      B.appendChild(c);
+      await ordersSection(B, e, stale);
+      return swap();
+    }
     B.appendChild(c);
-    await ordersSection(B, e, stale);
+    await ordersSection(B, e, stale);                // the work orders / job card: what gets acted on, first
+    if (stale()) return;
+    const r = el("div", "card");
+    critical(r); rails(r);
+    const n = (x, one) => x == null ? "" : `${x} ${one}${x === 1 ? "" : "s"}`;
+    let rom = "";
+    try { const [, v] = await mameList(e.slug); if (v) rom = `${v.dumped} of ${v.roms.length} dumped · ${v.name}`; } catch (x) { /* shown when open */ }
+    await fold(r, "mc-details", "DETAILS", ["risks", "faults", "parts", "PM"].join(" · "), details, loadMachine);
+    await fold(r, "mc-saved", "SAVED READINGS", cp ? n(cp.captures.length, "reading") : "", saved, loadMachine);
+    await fold(r, "mc-rom", "ROM CHIPS (MAME)", rom, d => mameSection(d, e.slug, true), loadMachine);
+    await fold(r, "mc-dumps", "DUMPS", dumps ? n(dumps.length, "dump") : "", dumpsInto, loadMachine);
+    B.appendChild(r);
+    swap();
   }
 
   // --- WORK ORDERS ---------------------------------------------------------------------------
@@ -908,36 +1050,54 @@
   $("#mc-labels").addEventListener("click", async () => {
     let R;
     try { R = await api("GET", "/api/roster"); } catch (e) { return fail(e); }
-    await sheet("Label list: the text for each QR", (pane, done) => {
-      const note = el("div", "mut", "Each QR holds just this text. Tap COPY, then paste it as the QR text in the label app.");
-      const filter = el("input");
-      filter.placeholder = "filter"; filter.className = "kp-field"; filter.style.fontSize = "18px";
-      const list = el("div", "scroll");
-      list.style.cssText = "overflow:auto;min-height:0;flex:1";
-      const row = (name, code) => {
-        const r = el("div", "row card");
-        r.style.cssText = "display:flex;align-items:center;gap:10px";
-        const txt = el("div");
-        txt.style.flex = "1";
-        add(txt, el("b", null, name), el("div", "cy", code));
-        txt.lastChild.style.userSelect = "all";
-        const b = el("button", null, "COPY");
-        b.addEventListener("click", () => copyText(code).then(() => toast("Copied " + code)).catch(fail));
-        add(r, txt, b);
-        return r;
-      };
-      const draw = () => {
-        clear(list);
-        const Q = filter.value.trim().toLowerCase();
-        if (!Q) { list.appendChild(row("MARK (it just crashed)", "GATBOX:MARK")); list.appendChild(row("NEW FILE", "GATBOX:NEW")); }
-        for (const m of R.machines.slice().sort((a, b) => a.name.localeCompare(b.name)))
-          if (!Q || m.name.toLowerCase().includes(Q) || m.slug.includes(Q)) list.appendChild(row(m.name, m.slug));
-      };
-      filter.addEventListener("input", draw);
-      add(pane, note, filter, list);
-      if (!S.local) { const a = el("a", null, "Or a printable sheet of all of them (PDF) →"); a.href = "/labels.pdf"; a.target = "_blank"; pane.appendChild(a); }
-      draw();
-    });
+    // On the 7" there is no keyboard for a text box: SEARCH opens the dashboard's own, then the list comes back filtered.
+    let find = "";
+    for (;;) {
+      const act = await sheet("Label list: the text for each QR", (pane, done) => {
+        const note = el("div", "mut", "Each QR holds just this text. Tap COPY, then paste it as the QR text in the label app.");
+        const filter = BOX ? null : el("input");
+        if (filter) { filter.placeholder = "filter"; filter.className = "kp-field"; filter.style.fontSize = "18px"; }
+        const list = el("div", "scroll");
+        list.style.cssText = "overflow:auto;min-height:0;flex:1";
+        const row = (name, code) => {
+          const r = el("div", "row card");
+          r.style.cssText = "display:flex;align-items:center;gap:10px";
+          const txt = el("div");
+          txt.style.flex = "1";
+          add(txt, el("b", null, name), el("div", "cy", code));
+          txt.lastChild.style.userSelect = "all";
+          const b = el("button", null, "COPY");
+          b.addEventListener("click", () => copyText(code).then(() => toast("Copied " + code)).catch(fail));
+          add(r, txt, b);
+          return r;
+        };
+        const draw = () => {
+          clear(list);
+          const Q = (filter ? filter.value : find).trim().toLowerCase();
+          if (!Q) { list.appendChild(row("MARK (it just crashed)", "GATBOX:MARK")); list.appendChild(row("NEW FILE", "GATBOX:NEW")); }
+          for (const m of R.machines.slice().sort((a, b) => a.name.localeCompare(b.name)))
+            if (!Q || m.name.toLowerCase().includes(Q) || m.slug.includes(Q)) list.appendChild(row(m.name, m.slug));
+        };
+        if (filter) { filter.addEventListener("input", draw); add(pane, note, filter, list); }
+        else {
+          const row = el("div", "btnrow"), s = el("button", null, "SEARCH");
+          row.style.alignItems = "center";
+          s.addEventListener("click", () => done("search"));
+          row.appendChild(s);
+          if (find) {
+            const x = el("button", null, "SHOW ALL");
+            x.addEventListener("click", () => done("all"));
+            add(row, el("span", "cy", `"${find}"`), x);
+          }
+          add(pane, note, row, list);
+        }
+        if (!S.local && !BOX) { const a = el("a", null, "Or a printable sheet of all of them (PDF) →"); a.href = "/labels.pdf"; a.target = "_blank"; pane.appendChild(a); }
+        draw();
+      });
+      if (act === "search") { const v = await keypad({title: "Search the label list", max: 30, value: find}); if (v != null) find = v; continue; }
+      if (act === "all") { find = ""; continue; }
+      break;
+    }
   });
   $("#mc-clear").addEventListener("click", async () => {
     if (!await confirmBox("CLEAR MACHINE?", "New files won't carry a machine (a live session starts a new file).", "CLEAR")) return;
@@ -962,6 +1122,7 @@
 
   // a pick list filtered with its own letter keys (the kiosk has no keyboard): machines, platforms
   function pickFrom(title, items, cur) {
+    if (BOX) return pickBox(title, items, cur);
     return sheet(title, (pane, done) => {
       let q = "";
       const field = el("div", "kp-field"), list = el("div", "picklist");
@@ -991,6 +1152,59 @@
       document.addEventListener("keydown", S.kd);
       add(pane, field, list, keys);
       draw();
+    });
+  }
+
+  // On the 7" a picker is buttons first. A handful of choices (how urgent, with or without the trace) is big buttons
+  // and nothing else. A long list (the machines, the platforms) is a grid of big buttons, and SEARCH brings up the
+  // keyboard -- the same one, the same size, in the same place -- with the matches above it; the field takes the
+  // title's place so two rows of matches fit.
+  function pickBox(title, items, cur) {
+    const few = items.filter(it => !it.head).length <= 8;
+    return sheet(title, (pane, done) => {
+      let q = "", searching = false, kb = null, acts = null;
+      const head = pane.querySelector(".pane-head"), h2 = head.querySelector("h2"), close = head.lastChild;
+      const list = el("div", "picklist" + (few ? " few" : "")), field = el("div", "kp-field");
+      const draw = () => {
+        field.textContent = q || "type to search"; field.classList.toggle("ph", !q);
+        field.appendChild(el("span", "cur")); field.scrollLeft = field.scrollWidth;
+        clear(list);
+        const Q = q.toLowerCase();
+        let shown = 0, grp = null;
+        for (const it of items) {
+          if (it.head) { grp = it.head; continue; }              // a group heading: drawn only above a match under it
+          if (Q && !it.find.some(f => f.includes(Q))) continue;
+          if (Q && shown >= 60) break;
+          shown++;
+          if (grp) { list.appendChild(el("div", "grp", grp)); grp = null; }
+          const b = el("button", "row" + (it.key === cur ? " on" : ""));
+          add(b, el("b", null, it.title), it.sub ? el("div", it.subCls || "mut", it.sub) : null);
+          b.addEventListener("click", () => done(it.key));
+          list.appendChild(b);
+        }
+        if (!shown) list.appendChild(el("div", "mut", "Nothing matches: fewer letters?"));
+      };
+      const press = k => { q = k === "\u232B" ? q.slice(0, -1) : (q + k).slice(0, 40); draw(); };
+      const srch = el("button", "search", "SEARCH");
+      const mode = on => {
+        searching = on;
+        pane.classList.toggle("kp", on); h2.classList.toggle("hide", on); srch.classList.toggle("hide", on);
+        if (on) {
+          head.insertBefore(field, close);
+          kb = keyGrid(press); acts = el("div", "kp-actions");
+          const clr = el("button", null, "CLEAR"), dn = el("button", "primary", "DONE");
+          clr.addEventListener("click", () => { q = ""; draw(); });
+          dn.addEventListener("click", () => mode(false));
+          add(acts, clr, dn); add(pane, kb, acts);
+        } else { field.remove(); if (kb) kb.remove(); if (acts) acts.remove(); kb = acts = null; }
+      };
+      if (!few) { srch.addEventListener("click", () => mode(true)); head.insertBefore(srch, close); }
+      pane.appendChild(list);
+      S.kd = e => { if (e.key === "Backspace") press("\u232B"); else if (e.key.length === 1) press(e.key); };
+      document.addEventListener("keydown", S.kd);
+      draw();
+      const on = list.querySelector(".row.on");
+      if (on) on.scrollIntoView({block: "center"});
     });
   }
 
@@ -1081,7 +1295,7 @@
       pane.appendChild(el("div", null, (mine.length ? `The roster file plus the ${mine.length} machine${mine.length > 1 ? "s" : ""} added on this Pi`
                                                     : "The roster file as installed (nothing added on this Pi yet)")
                                         + ", in the file's own format, ready for the maintenance app to import."));
-      if (S.local) {
+      if (S.local || BOX) {
         const a = piAddr();
         add(pane, el("div", "mut", "On your phone (same network), open:"),
             el("div", "big cy", `http://${a ? a.split("/")[0] : "<the Pi's address>"}/roster.json`));
@@ -1294,10 +1508,12 @@
     const v = d.versions || {};
     tile("Software", Object.entries(v).map(([k, x]) => [k, x]));
     if (d.errors && Object.keys(d.errors).length) tile("Couldn't read", Object.entries(d.errors).map(([k, x]) => [k, x, "warn"]));
-    const lk = el("div", "card");
-    const a = el("a", null, "Phone view (sessions, PDF, CSV) →"); a.href = "/";
-    add(lk, el("h2", null, "Elsewhere"), a);
-    G.appendChild(lk);
+    if (!BOX) {                                     // the 7" has no way back from a page it leaves for
+      const lk = el("div", "card");
+      const a = el("a", null, "Phone view (sessions, PDF, CSV) →"); a.href = "/";
+      add(lk, el("h2", null, "Elsewhere"), a);
+      G.appendChild(lk);
+    }
     $("#sy-kiosk").classList.toggle("hide", !S.local);
   }
   // EXIT KIOSK / SHUT DOWN: this screen only (the server refuses them from anywhere else), hold to confirm
@@ -1336,7 +1552,7 @@
         [a.present ? `adapter ${a.usb_id}${a.tty ? " on " + a.tty : ""}` : "adapter NOT PLUGGED IN", a.present ? "ok" : "bad"],
         [rd.flowing ? `readings flowing · ${modeLabel(rd.mode)}` : "no readings (meter off, or D02 head off the IR window)", rd.flowing ? "ok" : "warn"]]);
       card("T48 programmer", [[d.t48.present ? `connected · USB ${d.t48.usb_id}` : "not plugged in", d.t48.present ? "ok" : "mut"],
-                              ["reads only from here; the dump workflow is M7", "mut"]]);
+                              ["READ and BURN: the DUMP tab", "mut"]]);
       const sc = d.scanner;
       card("Barcode scanner", [
         [sc.present ? `Eyoyo EY-H2 · USB ${sc.usb_id}` : "Eyoyo EY-H2 not plugged in", sc.present ? "ok" : "mut"],
@@ -1404,10 +1620,10 @@
   const pageUrl = (slug, file, page, w) => `/manual/${encodeURIComponent(slug)}/${encodeURIComponent(file)}/${page}.png?w=${w}`;
   function specCard(slug, s, d) {
     const c = el("div", "card"), docOf = id => d.docs.find(x => x.id === id);
-    add(c, el("h2", null, "Spec sheet"),
-        el("div", "mut", "The manual's numbers as the manual gives them (p.N opens the page), and this machine's actual values " +
-                         "from the field beside them. A manual limit sets the logger's window only once you CONFIRM it; an " +
-                         "actual only if you give it a window of its own."));
+    c.appendChild(el("h2", null, "Spec sheet"));
+    foldText(c, "HOW THIS WORKS", "The manual's numbers as the manual gives them (p.N opens the page), and this machine's actual " +
+             "values from the field beside them. A manual limit sets the logger's window only once you CONFIRM it; an " +
+             "actual only if you give it a window of its own.");
     const cite = x => {
       const doc = docOf(x.doc), b = el("button", "cite", `p.${x.page} ▸`);
       b.disabled = !doc;
@@ -1615,7 +1831,7 @@
     $("#vw-title").textContent = doc.title;
     const a = $("#vw-pdf");
     a.href = `/manual/${encodeURIComponent(slug)}/${encodeURIComponent(doc.file)}`;
-    a.classList.toggle("hide", S.local);
+    a.classList.toggle("hide", S.local || BOX);
     $("#vw-img").removeAttribute("src"); $("#vw-img").dataset.url = "";
     $("#viewer").classList.remove("hide");
     vwLoad();
@@ -1735,8 +1951,8 @@
     S.mameVer = S.mameVer || {};
     return [j, j.versions.find(x => x.name === (S.mameVer[slug] || j.default)) || j.versions[0]];
   }
-  async function mameSection(c, slug) {
-    c.appendChild(el("h3", null, "ROM chips (MAME)"));
+  async function mameSection(c, slug, folded) {      // folded: inside the 7"'s ROM CHIPS fold, which is its title
+    if (!folded) c.appendChild(el("h3", null, "ROM chips (MAME)"));
     const box = el("div");
     c.appendChild(box);
     let j, v;
@@ -1897,8 +2113,9 @@
     const B = clear($("#du-body")), st = D.st || {}, t48 = (st.t48 || {}).present;
     const head = el("div", "card");
     add(head, el("div", "big " + (t48 ? "ok" : "mut"), t48 ? "T48 READY" : "T48 NOT PLUGGED IN"),
-        el("div", "mut", (t48 ? `USB ${st.t48.usb_id} · ` : "Plug the XGecu T48 into the Pi (USB a466:0a53). ") +
-                         "READ a chip, or BURN one (a blank chip, armed by a hold on the Pi's own screen)"));
+        el("div", "mut", BOX ? (t48 ? `USB ${st.t48.usb_id} · READ a chip, or BURN a blank one` : "Plug the XGecu T48 into the Pi.")
+                             : (t48 ? `USB ${st.t48.usb_id} · ` : "Plug the XGecu T48 into the Pi (USB a466:0a53). ") +
+                               "READ a chip, or BURN one (a blank chip, armed by a hold on the Pi's own screen)"));
     if (!st.spool) head.appendChild(el("div", "warn", "The dump service isn't installed yet (no spool)."));
     B.appendChild(head);
     const s = st.status;

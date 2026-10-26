@@ -254,3 +254,73 @@ a.btnlink{display:inline-flex;align-items:center;justify-content:center;min-heig
   .keys{gap:4px}
   .kp-actions button{min-height:42px;font-size:17px}
 }
+
+/* ---- the 7" box (html.box: the kiosk's own page, see index.html) ------------------------------------------------
+   The panel goes into a 3D-printed box with a wide bezel: nothing sits within 20 px of the sides or 16 px of the
+   top and bottom. No text under 14 px, and the dim text a step brighter. A toast lies at the top over the header
+   and never takes a tap (one lying over NEW JOB at the bottom ate the touch). The phone layout is untouched. */
+html.box{--safe-x:20px;--safe-y:16px;--mut:#ab9dd0}
+html.box body{padding:var(--safe-y) var(--safe-x);font-size:16px}
+html.box #sheet{padding:var(--safe-y) var(--safe-x)}
+html.box .unit,html.box #h-net,html.box #h-log{font-size:14px}
+html.box .badge{font-size:14px}
+html.box nav button small,html.box .act small,html.box #m-saved,html.box .tag,html.box .sect pre,html.box .stat span,
+html.box .stat i,html.box table.t th,html.box .fld>span,html.box button.cite,html.box .quote{font-size:14px}
+html.box h3{font-size:15px}
+html.box #toast{top:calc(var(--safe-y) + 4px);bottom:auto;max-width:calc(100% - 2 * var(--safe-x) - 40px);
+  pointer-events:none;font-size:17px}
+/* One keyboard, one size, wherever it opens: a fixed block (5 rows of 50 px; the number pad's 4 rows share the same
+   height) with CANCEL / SAVE under it, at the bottom of a full-height sheet, so it is always whole and always in the
+   same place. The title, the field and anything else sit above it and give way. */
+html.box .pane.kp{height:100%}
+html.box .keys{flex:none;height:274px;grid-auto-rows:1fr;gap:6px;overflow:visible}
+html.box .pane.kp .keys{margin-top:auto}
+html.box .keys button{min-height:0;font-size:21px}
+html.box .kp-actions button{min-height:54px;font-size:21px}
+html.box .kp-field{flex:none}
+html.box .kp-field.long{white-space:pre-wrap;overflow-wrap:anywhere;height:calc(2.4em + 14px);font-size:26px}
+/* Pickers on the 7": big buttons first, two to a row for a handful of choices, three for a long list; SEARCH sits in
+   the title bar, and while searching the field takes the title's place. */
+html.box .picklist{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;flex:1;min-height:0;overflow:auto;
+  align-content:start}
+html.box .picklist.few{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+html.box .picklist .row{min-height:64px;padding:8px 12px;font-size:15px}
+html.box .picklist .row b{display:block;font:600 19px/1.2 var(--disp)}
+html.box .picklist.few .row{min-height:84px}
+html.box .picklist .row.on{border-color:var(--mag);box-shadow:0 0 10px rgba(255,46,159,.35) inset}
+html.box .pane-head .kp-field{flex:1;min-width:0}
+html.box .kp-field.ph{color:var(--mut)}
+html.box .pane-head button{min-width:120px}
+/* Folded sections (the 7" MACHINE page): one full-width button, title, a short summary, SHOW / HIDE. */
+html.box .fold{display:flex;align-items:center;gap:14px;width:100%;text-align:left;margin-top:10px;min-height:60px}
+html.box .fold .fold-t{font-size:18px;white-space:nowrap}
+html.box .fold .fold-t::before{content:"▸ ";color:var(--cyan)}
+html.box .fold.open .fold-t::before{content:"▾ "}
+html.box .fold .fold-s{flex:1;min-width:0;font:15px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+html.box .fold .fold-act{color:var(--cyan);font-size:15px;letter-spacing:.08em}
+html.box .fold.open{border-color:var(--cyan)}
+html.box .fold-b{padding:4px 4px 6px}
+/* The other pages on the 7": the METER buttons' small line wraps instead of being cut off; explanations sit behind a
+   small button; the long and the short version of a note pick themselves. */
+html.box .act small{white-space:normal;overflow:visible;text-overflow:clip;text-align:center;line-height:1.15}
+html.box button.why{margin:2px 0 6px;color:var(--cyan)}
+.box-only{display:none}
+html.box .box-only{display:inline}
+html.box .web-only{display:none}
+/* TOUCH TEST: a plain screen, a cross at a time; then every cross with its tap (a magenta dot) and the verdict. */
+#tt{position:fixed;inset:0;z-index:45;background:var(--bg);touch-action:none}
+#tt .tt-note{position:absolute;left:50%;top:31%;transform:translateX(-50%);display:flex;align-items:center;gap:18px;
+  font:600 18px/1.2 var(--disp);color:var(--mut);white-space:nowrap}
+#tt .tt-target{position:absolute;width:60px;height:60px;pointer-events:none}
+#tt .tt-target::before,#tt .tt-target::after{content:"";position:absolute;background:var(--cyan)}
+#tt .tt-target::before{left:29px;top:0;width:2px;height:60px}
+#tt .tt-target::after{top:29px;left:0;width:60px;height:2px}
+#tt .tt-target.dim::before,#tt .tt-target.dim::after{background:var(--line)}
+#tt .tt-dot{position:absolute;width:14px;height:14px;border-radius:50%;background:var(--mag);box-shadow:0 0 8px var(--mag);
+  pointer-events:none}
+#tt .tt-result{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(640px,80%);display:flex;
+  flex-direction:column;gap:8px;background:var(--bg2)}
+
+/* The manuals viewer covers the screen: on the 7" it keeps off the bezel too, with full-size toolbar buttons. */
+html.box #viewer{padding:var(--safe-y) var(--safe-x)}
+html.box .vw-top button{min-height:56px;min-width:64px}

@@ -545,7 +545,7 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   - Installed on the Pi, tracker side deployed, 2026-10-07. Both bench exits passed on
     hardware that day: a real join from the Wi-Fi card, and an order typed on the 7″ that
     reached the tracker's work queue with its trace attached.
-- **Several hubs (Phase 8, built 2026-10-13; not installed yet).** A second hub is
+- **Several hubs (Phase 8, built 2026-10-13; installed 2026-10-26).** A second hub is
   `/etc/gatbox/hubs.d/<name>.conf` (HUB_URLS, HUB_TOKEN, HUB_LABEL), beside the original
   `hub.conf`; see `docs/network.md`. With one hub nothing changes. With two, each item goes to
   the hub whose roster has the machine; a machine on no roster is held, one on two is a
@@ -557,6 +557,22 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         first run, 14:49: conditions met, both credentials loaded, one hub, 0 queued, no conflicts or held
   - [ ] ⏸ Exit: one session each on the same Pi — a barcade trace lands in the tracker, a
         customer trace lands on its job at the second hub, neither shows up in the other
+- **The 7" box: a readability and touch pass (2026-10-26).** The owner: the on-screen keyboard
+  crushed (PICK MACHINE), hard to read and to hit on the touch screen, taps landing above the
+  buttons, and a 3D-printed box with a wide bezel coming. Plan and findings:
+  `docs/plans/2026-10-26-box-touch-pass.md`. Only the kiosk's own page changes (`html.box`, set at
+  127.0.0.1); a phone keeps its layout.
+  - [x] Code + tests: bezel margin (20 px sides, 16 top/bottom) on every view, the sheets and the
+        manuals viewer; no text under 14 px; toasts at the top that never take a tap; one keyboard,
+        a fixed 274 px block always whole and in the same place, field following the cursor;
+        pickers as big buttons (≤ 8 choices: no keyboard; more: SEARCH brings the keyboard);
+        MACHINE with its actions first and DETAILS / SAVED READINGS / ROM CHIPS / DUMPS behind
+        SHOW, and no more jumping to the top on a redraw; no links that strand the kiosk; LABEL
+        LIST searchable without a text box; SYSTEM → TOUCH TEST (`/api/touchtest` keeps the runs).
+        dash 96 → 125, web api 181 → 185.
+  - [ ] Installed (bootstrap: program files only, no system config)
+  - [ ] ⏸ Owner: the 7" in use, and TOUCH TEST run on it. A steady offset → a libinput calibration
+        matrix for the WS170120 (a udev rule: shown first, rule 5); scatter only → nothing more.
 - In a cabinet with no known Wi-Fi, the hotspot comes up ~90 s after boot: join **GATBOX**,
   Pi at `10.42.0.1` / `gatbox.local`. Since 2026-10-05 it also drops again by itself when a
   saved network comes back into range, and there are three ways to join a new one — see

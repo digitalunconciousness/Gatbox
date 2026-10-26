@@ -25,3 +25,38 @@
   `BROWSER=echo gh auth login --web` prints the address instead.
 - NEXT: the Phase 8 exit on hardware: the second hub's file in `/etc/gatbox/hubs.d/`, then one
   session each, each trace landing only on its own hub.
+
+## 2026-10-26 (later) — The 7" box: readability and touch
+- Owner: "The keypad should always be the same size, shown in totality. The other menus should
+  form around the keypad. The machine's page has a crushed an unusable keyboard. [...] The heavy
+  data should probably be behind a hide button. [...] some times the buttons seem to click in an
+  area upward from the rendered button. Keep important things a little bit away from the bezzel,
+  since the scrren is going in a 3d printed box and the bezzle is large."
+- FOUND: the crushed keyboard was PICK MACHINE's own second keyboard, squeezed under the machine
+  list, and this morning's fix (#15) had let key rows shrink, which made it worse.
+- FOUND, the touch: the panel is fine. It reports exactly the screen (0–1024 × 0–600, no
+  calibration). What the code did wrong: toasts lay over the bottom of the page and swallowed
+  taps (one sat on NEW JOB), and MACHINE emptied itself on every redraw and jumped back to the
+  top while a finger was on its way to a button. Both fixed. What's left, if anything, is the
+  fingertip and the glass: SYSTEM → TOUCH TEST measures it.
+- DECIDED: only the 7" changes. The kiosk's page knows it's the kiosk by its address
+  (127.0.0.1); a phone gets the old layout, untouched.
+- The 7" now: nothing within 20 px of the sides or 16 px of the top and bottom; no text smaller
+  than 14 px, and the dim text brighter; toasts at the top, never in the way of a tap.
+- One keyboard everywhere, always whole, always the same size and in the same place; the title,
+  the field and anything else fit above it. Typing past the field's width, it follows the cursor;
+  a long complaint gets two lines.
+- Pickers are buttons: a handful of choices (how urgent, with or without the trace) are big
+  buttons with no keyboard; a long list (the machines) is big buttons, and SEARCH brings up the
+  keyboard with the matches above it.
+- MACHINE leads with the job / work orders card (AS-FOUND, AS-LEFT, NEW JOB), then critical
+  actions and rail specs; DETAILS, SAVED READINGS, ROM CHIPS and DUMPS sit behind SHOW.
+- FOUND along the way: two links on the 7" ("phone page" on SESSIONS, "Phone view" on SYSTEM)
+  led to pages with no way back (the kiosk has no back button). Gone from the 7". LABEL LIST's
+  filter was a text box the 7" had no keyboard for: SEARCH now. The manuals viewer's buttons were
+  on the edges: moved in.
+- TOUCH TEST: nine crosses, tap each centre; it says whether there's a steady offset and by how
+  much, and keeps the run so a calibration can be made from the numbers.
+- NEXT: install (program files only); use the 7" a while; run TOUCH TEST. A steady offset → a
+  calibration (a system setting, shown first); scatter only → done.
+

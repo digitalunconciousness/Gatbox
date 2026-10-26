@@ -253,6 +253,50 @@ def api_phase_put(h, m, q):
     h.json(200, {"phase": b["phase"], "changed": changed, "new_file": new_file})
 
 
+# --- TOUCH TEST (the 7" box, 2026-10-26): where a finger aims vs where the touch lands. The panel reports 1:1
+# (WS170120, ABS 0-1024 x 0-600, no calibration), so a steady offset left over is the fingertip's contact patch and
+# the parallax through its glass: a libinput calibration matrix can shift every touch by it. The runs are kept so
+# that matrix is made from measurements, not a guess (hard rule 12).
+TOUCH_RUNS = 10
+
+
+def _touch_runs():
+    try:
+        with open(os.path.join(config.CTRL, "touchtest.json"), encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return []
+    return d.get("runs", []) if isinstance(d, dict) and isinstance(d.get("runs"), list) else []
+
+
+def api_touchtest_get(h, m, q):
+    """GET /api/touchtest: the TOUCH TEST's runs, newest last."""
+    h.json(200, {"runs": _touch_runs()})
+
+
+def api_touchtest_post(h, m, q):
+    """POST /api/touchtest {"w", "h", "taps": [{"tx", "ty", "x", "y"}, ...]}: one run -- each cross's centre (tx, ty)
+    and where the touch landed (x, y), in CSS px of a w x h screen. Kept (the last ten) with the mean offset and its
+    spread."""
+    b = h.body()
+    def num(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and -1000 <= v <= 10000
+    taps = b.get("taps") if isinstance(b, dict) else None
+    if (not isinstance(taps, list) or not 1 <= len(taps) <= 40 or not num(b.get("w")) or not num(b.get("h"))
+            or not all(isinstance(x, dict) and all(num(x.get(k)) for k in ("tx", "ty", "x", "y")) for x in taps)):
+        raise Bad(400, 'expected {"w", "h", "taps": [{"tx", "ty", "x", "y"}, ...]}: 1 to 40 taps, numbers')
+    taps = [{k: x[k] for k in ("tx", "ty", "x", "y")} for x in taps]
+    dx, dy = [x["x"] - x["tx"] for x in taps], [x["y"] - x["ty"] for x in taps]
+    def mean(a):
+        return sum(a) / len(a)
+    def sd(a):
+        return (sum((v - mean(a)) ** 2 for v in a) / len(a)) ** 0.5
+    run = {"at": round(time.time(), 3), "w": b["w"], "h": b["h"], "n": len(taps), "dx": round(mean(dx), 1),
+           "dy": round(mean(dy), 1), "sdx": round(sd(dx), 1), "sdy": round(sd(dy), 1), "taps": taps}
+    meter._write("touchtest.json", json.dumps({"runs": (_touch_runs() + [run])[-TOUCH_RUNS:]}))
+    h.json(200, run)
+
+
 def api_machine_delete(h, m, q):
     changed, new_file = meter.set_machine(None)
     if changed:
@@ -738,6 +782,8 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("PUT", r"/api/machine", api_machine_put),
     ("DELETE", r"/api/machine", api_machine_delete),
     ("PUT", r"/api/phase", api_phase_put),
+    ("GET", r"/api/touchtest", api_touchtest_get),
+    ("POST", r"/api/touchtest", api_touchtest_post),
     ("POST", r"/api/mark", api_mark),
     ("POST", r"/api/session/new", api_session_new),
     ("POST", r"/api/session/stop", api_session_stop),

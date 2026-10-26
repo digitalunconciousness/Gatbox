@@ -67,8 +67,9 @@ layout is unchanged.
       the margin; no text under 14 px; a toast never takes a tap)
 - [x] T2 one keyboard, fixed size (tests: the same 274 px block in the same place for letters and the number pad;
       every key on screen; the field follows the cursor, one line and two; #15's phone check runs with box off)
-- [ ] T3 pickers as buttons (tests: "How urgent?" is buttons with no keyboard; PICK MACHINE shows machines without a
-      keyboard, SEARCH brings the full keyboard and filters)
+- [x] T3 pickers as buttons (tests: "How urgent?" five big buttons, the trace question two, no keyboard; PICK MACHINE
+      with a 12-machine roster: big buttons, no keyboard; SEARCH brings the same 274 px keyboard in the same place,
+      matches above it)
 - [ ] T4 MACHINE reordered and folded; redraws keep the scroll (tests: JOB card before the ROM table; folds closed
       and reopen; a state event while scrolled leaves the scroll where it was)
 - [ ] T5 the other pages, from screenshots

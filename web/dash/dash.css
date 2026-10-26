@@ -279,4 +279,16 @@ html.box .keys button{min-height:0;font-size:21px}
 html.box .kp-actions button{min-height:54px;font-size:21px}
 html.box .kp-field{flex:none}
 html.box .kp-field.long{white-space:pre-wrap;overflow-wrap:anywhere;height:calc(2.4em + 14px);font-size:26px}
+/* Pickers on the 7": big buttons first, two to a row for a handful of choices, three for a long list; SEARCH sits in
+   the title bar, and while searching the field takes the title's place. */
+html.box .picklist{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;flex:1;min-height:0;overflow:auto;
+  align-content:start}
+html.box .picklist.few{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+html.box .picklist .row{min-height:64px;padding:8px 12px;font-size:15px}
+html.box .picklist .row b{display:block;font:600 19px/1.2 var(--disp)}
+html.box .picklist.few .row{min-height:84px}
+html.box .picklist .row.on{border-color:var(--mag);box-shadow:0 0 10px rgba(255,46,159,.35) inset}
+html.box .pane-head .kp-field{flex:1;min-width:0}
+html.box .kp-field.ph{color:var(--mut)}
+html.box .pane-head button{min-width:120px}
 

@@ -5,6 +5,7 @@
 (function () {
   "use strict";
   const $ = s => document.querySelector(s);
+  const BOX = document.documentElement.classList.contains("box");    // the 7" kiosk's own page (index.html)
   const el = (tag, cls, text) => {
     const e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -394,9 +395,47 @@
   const KP_SYMBOLS = ["1234567890", "!\"#$%^&*()", "+=,:;<>?@[", "]\\_`{|}~-\u232B"];
   const KP_NUMBERS = ["789\u232B", "456-", "123.", "0"];
 
+  // The keys every typed field uses: letters and symbols as two layers of the same size, case, and the modifier row;
+  // or the number pad. press(k) gets each character, and "\u232B" for delete. keypad() and the 7" picker's SEARCH
+  // both build from this, so there is one keyboard.
+  function keyGrid(press, number) {
+    const keys = el("div", "keys");
+    let lower = false, layer = 0;                    // 0 letters, 1 symbols
+    const paint = () => {
+      clear(keys);
+      const key = (k, cls, label, onclick) => {
+        const b = el("button", cls || null, label === undefined ? k : label);
+        b.addEventListener("click", onclick || (() => press(k)));
+        keys.appendChild(b);
+        return b;
+      };
+      if (number) { for (const r of KP_NUMBERS) for (const k of r) key(k); return; }
+      for (const r of (layer ? KP_SYMBOLS : KP_LETTERS))
+        for (const k of r) {
+          const isLetter = /^[A-Z]$/.test(k);
+          key(k, null, isLetter && lower ? k.toLowerCase() : k,
+              isLetter ? () => press(lower ? k.toLowerCase() : k) : undefined);
+        }
+      // The modifier row, in the same five slots on both layers so nothing moves under a
+      // finger: case, layer, space, and the two commonest marks for that layer.
+      // "aA", not "abc": the layer button has to read ABC to mean "back to letters", and two
+      // buttons reading abc and ABC beside each other is a coin toss.
+      const sh = key("aA", "wide shift", "aA", () => { lower = !lower; paint(); });
+      if (lower) sh.classList.add("on");
+      const lay = key("?#+", "wide shift", layer ? "ABC" : "?#+",
+                      () => { layer = layer ? 0 : 1; paint(); });
+      if (layer) lay.classList.add("on");
+      key(" ", "x4", "SPACE");
+      key(layer ? "," : "'");
+      key(layer ? "." : "&");
+    };
+    paint();
+    return keys;
+  }
+
   function keypad({title, max, number, value, keep}) {
     return sheet(title, (pane, done) => {
-      let txt = value || "", lower = false, layer = 0;        // 0 letters, 1 symbols
+      let txt = value || "";
       // A long text (a complaint, a note) gets two lines; either way the field follows the cursor, so the end of what
       // is being typed is always the part on screen.
       const field = el("div", "kp-field" + ((max || 40) > 80 ? " long" : ""));
@@ -408,42 +447,12 @@
       show();
       pane.classList.add("kp");
       if (number) pane.classList.add("num");
-      const keys = el("div", "keys");
       const press = k => {
         if (k === "\u232B") txt = txt.slice(0, -1);
         else if (txt.length < (max || 40)) txt += k;
         show();
       };
-      const paint = () => {
-        clear(keys);
-        const key = (k, cls, label, onclick) => {
-          const b = el("button", cls || null, label === undefined ? k : label);
-          b.addEventListener("click", onclick || (() => press(k)));
-          keys.appendChild(b);
-          return b;
-        };
-        if (number) { for (const r of KP_NUMBERS) for (const k of r) key(k); return; }
-        for (const r of (layer ? KP_SYMBOLS : KP_LETTERS))
-          for (const k of r) {
-            const isLetter = /^[A-Z]$/.test(k);
-            key(k, null, isLetter && lower ? k.toLowerCase() : k,
-                isLetter ? () => press(lower ? k.toLowerCase() : k) : undefined);
-          }
-        // The modifier row, in the same five slots on both layers so nothing moves under a
-        // finger: case, layer, space, and the two commonest marks for that layer.
-        // "aA", not "abc": the layer button has to read ABC to mean "back to letters", and two
-        // buttons reading abc and ABC beside each other is a coin toss.
-        const sh = key("aA", "wide shift", "aA", () => { lower = !lower; paint(); });
-        if (lower) sh.classList.add("on");
-        const lay = key("?#+", "wide shift", layer ? "ABC" : "?#+",
-                        () => { layer = layer ? 0 : 1; paint(); });
-        if (layer) lay.classList.add("on");
-        key(" ", "x4", "SPACE");
-        key(layer ? "," : "'");
-        key(layer ? "." : "&");
-      };
-      paint();
-      pane.appendChild(keys);
+      pane.appendChild(keyGrid(press, number));
       // Outside the key grid, so the grid can never push it off the screen. `.keys` scrolls if
       // it ever has to; this row does not move.
       const actions = el("div", "kp-actions");
@@ -969,6 +978,7 @@
 
   // a pick list filtered with its own letter keys (the kiosk has no keyboard): machines, platforms
   function pickFrom(title, items, cur) {
+    if (BOX) return pickBox(title, items, cur);
     return sheet(title, (pane, done) => {
       let q = "";
       const field = el("div", "kp-field"), list = el("div", "picklist");
@@ -998,6 +1008,59 @@
       document.addEventListener("keydown", S.kd);
       add(pane, field, list, keys);
       draw();
+    });
+  }
+
+  // On the 7" a picker is buttons first. A handful of choices (how urgent, with or without the trace) is big buttons
+  // and nothing else. A long list (the machines, the platforms) is a grid of big buttons, and SEARCH brings up the
+  // keyboard -- the same one, the same size, in the same place -- with the matches above it; the field takes the
+  // title's place so two rows of matches fit.
+  function pickBox(title, items, cur) {
+    const few = items.filter(it => !it.head).length <= 8;
+    return sheet(title, (pane, done) => {
+      let q = "", searching = false, kb = null, acts = null;
+      const head = pane.querySelector(".pane-head"), h2 = head.querySelector("h2"), close = head.lastChild;
+      const list = el("div", "picklist" + (few ? " few" : "")), field = el("div", "kp-field");
+      const draw = () => {
+        field.textContent = q || "type to search"; field.classList.toggle("ph", !q);
+        field.appendChild(el("span", "cur")); field.scrollLeft = field.scrollWidth;
+        clear(list);
+        const Q = q.toLowerCase();
+        let shown = 0, grp = null;
+        for (const it of items) {
+          if (it.head) { grp = it.head; continue; }              // a group heading: drawn only above a match under it
+          if (Q && !it.find.some(f => f.includes(Q))) continue;
+          if (Q && shown >= 60) break;
+          shown++;
+          if (grp) { list.appendChild(el("div", "grp", grp)); grp = null; }
+          const b = el("button", "row" + (it.key === cur ? " on" : ""));
+          add(b, el("b", null, it.title), it.sub ? el("div", it.subCls || "mut", it.sub) : null);
+          b.addEventListener("click", () => done(it.key));
+          list.appendChild(b);
+        }
+        if (!shown) list.appendChild(el("div", "mut", "Nothing matches: fewer letters?"));
+      };
+      const press = k => { q = k === "\u232B" ? q.slice(0, -1) : (q + k).slice(0, 40); draw(); };
+      const srch = el("button", "search", "SEARCH");
+      const mode = on => {
+        searching = on;
+        pane.classList.toggle("kp", on); h2.classList.toggle("hide", on); srch.classList.toggle("hide", on);
+        if (on) {
+          head.insertBefore(field, close);
+          kb = keyGrid(press); acts = el("div", "kp-actions");
+          const clr = el("button", null, "CLEAR"), dn = el("button", "primary", "DONE");
+          clr.addEventListener("click", () => { q = ""; draw(); });
+          dn.addEventListener("click", () => mode(false));
+          add(acts, clr, dn); add(pane, kb, acts);
+        } else { field.remove(); if (kb) kb.remove(); if (acts) acts.remove(); kb = acts = null; }
+      };
+      if (!few) { srch.addEventListener("click", () => mode(true)); head.insertBefore(srch, close); }
+      pane.appendChild(list);
+      S.kd = e => { if (e.key === "Backspace") press("\u232B"); else if (e.key.length === 1) press(e.key); };
+      document.addEventListener("keydown", S.kd);
+      draw();
+      const on = list.querySelector(".row.on");
+      if (on) on.scrollIntoView({block: "center"});
     });
   }
 

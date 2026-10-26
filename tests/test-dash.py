@@ -60,6 +60,16 @@ KP_FIT = """(() => {
 })()"""
 
 
+def swap_file(path, text):
+    """Replace a file whole (gatbox-web may read it at any moment: never let it see half of one)."""
+    with open(path + ".tmp", "w") as f:
+        f.write(text)
+    os.replace(path + ".tmp", path)
+
+
+# A picker's choices: how many, and the shortest (a finger needs >= 64 px on the 7").
+PICK_ROWS = """(() => { const rs = [...document.querySelectorAll('#pane .picklist .row')];
+  return {n: rs.length, min: rs.length ? Math.round(Math.min(...rs.map(r => r.getBoundingClientRect().height))) : 0}; })()"""
 KB_LETTERS = {}              # the number pad's top on the 7", for the letters keyboard to match
 # The 7" box: the frame (header, nav, main) inside the bezel margin, and the smallest visible text.
 BOX_FRAME = """(() => { const bad = [];
@@ -437,14 +447,34 @@ def main():
         print("machine: set + clear:")
         click('[data-view="machine"]')
         c.wait("!document.querySelector('#mc-pick').disabled")
+        # A real roster is ~95 machines; this one is two, and a picker of eight or fewer is just buttons. For the long
+        # list, ten more cabinets for the length of this check (gatbox-web re-reads the roster when it changes).
+        roster_f = f"{T}/data/gatbox-barcade-roster.json"
+        roster_orig = open(roster_f).read()
+        big = json.loads(roster_orig)
+        big["video_games"] += [{"slug": f"test-cabinet-{i:02d}", "name": f"Test Cabinet {i:02d}", "platform": "test_hdd",
+                                "mfr": "Test", "risk": [], "faults": [], "parts": [], "notes": ""} for i in range(1, 11)]
+        swap_file(roster_f, json.dumps(big))
         click("#mc-pick")
-        c.wait("document.querySelectorAll('#pane .picklist .row').length === 2")
-        tap_keys_filter = "LEG"
-        for ch in tap_keys_filter:
+        c.wait("document.querySelectorAll('#pane .picklist .row').length === 12")
+        # On the 7" a picker is buttons first: the machines, big, and no keyboard until SEARCH.
+        check("pick machine: big buttons, no keyboard until SEARCH",
+              not q("!!document.querySelector('#pane .keys')") and q(PICK_ROWS)["min"] >= 64
+              and q("[...document.querySelectorAll('#pane button')].some(b => b.textContent === 'SEARCH')"))
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'SEARCH').click()")
+        c.wait("document.querySelector('#pane .keys')")
+        sk = q(KB_BOX)
+        check("pick machine: SEARCH brings the keyboard, the same 274 px block in the same place, every key on screen",
+              sk and sk["h"] == 274 and sk["cut"] == 0 and sk["top"] == KB_LETTERS.get("num_top") and sk["act_bottom"] <= 584)
+        for ch in "LEG":
             q(f"[...document.querySelectorAll('#pane .keys button')].find(b => b.textContent === {json.dumps(ch)}).click()")
         c.wait("document.querySelectorAll('#pane .picklist .row').length === 1")
+        check("pick machine: the matches show above the keyboard", q("(() => { const r = document.querySelector('#pane .picklist .row')"
+              ".getBoundingClientRect(), k = document.querySelector('#pane .keys').getBoundingClientRect();"
+              " return r.height >= 64 && r.bottom <= k.top; })()"))
         q("document.querySelector('#pane .picklist .row').click()")
         c.wait("document.querySelector('#mc-body').textContent.includes('Gauntlet Legends')", 10)
+        swap_file(roster_f, roster_orig)                          # back to the two-machine roster
         time.sleep(0.5)
         check("machine card: name, risk, critical action, rail spec", all(s in text("#mc-body") for s in
               ("Gauntlet Legends", "aging drive", "image drive now", "+5V  4.9–5.1 V")))
@@ -492,11 +522,17 @@ def main():
         c.wait("document.querySelectorAll('#pane .picklist .row').length >= 5", 10)
         check("machine: it asks how urgent",
               "Critical" in q("document.querySelector('#pane').textContent"))
+        check("machine: how urgent is five big buttons, no keyboard, no SEARCH",
+              not q("!!document.querySelector('#pane .keys')") and q(PICK_ROWS) == {"n": 5, "min": q(PICK_ROWS)["min"]}
+              and q(PICK_ROWS)["min"] >= 64
+              and not q("[...document.querySelectorAll('#pane button')].some(b => b.textContent === 'SEARCH')"))
         q("[...document.querySelectorAll('#pane .picklist .row')]"
           ".find(r => r.textContent.includes('High')).click()")
         c.wait("document.querySelectorAll('#pane .picklist .row').length === 2", 10)
         check("machine: and whether to attach the last trace",
               "Without a trace" in q("document.querySelector('#pane').textContent"))
+        check("machine: with or without the trace is two big buttons, no keyboard",
+              not q("!!document.querySelector('#pane .keys')") and q(PICK_ROWS)["n"] == 2 and q(PICK_ROWS)["min"] >= 64)
         q("[...document.querySelectorAll('#pane .picklist .row')]"
           ".find(r => r.textContent.includes('Without')).click()")
         time.sleep(1.5)
@@ -1154,7 +1190,11 @@ def main():
         check("phone: no horizontal scroll", c.eval("document.documentElement.scrollWidth <= 391"))
         check("phone: not box mode (the 7\" changes stay on the 7\")", not c.eval("document.documentElement.classList.contains('box')"))
 
-    check("server log: no errors", not any(k in open(f"{T}/web.log").read() for k in ("Traceback", "error on", "live: ")))
+    wlog = open(f"{T}/web.log").read()
+    werr = [ln for ln in wlog.splitlines() if any(k in ln for k in ("Traceback", "error on", "live: ", "Error"))]
+    if werr:
+        print("    ", "\n     ".join(werr[:12]))
+    check("server log: no errors", not any(k in wlog for k in ("Traceback", "error on", "live: ")))
     print(f"screenshots: {OUT}" if KEEP else "screenshots: not kept (pass a directory to keep them)")
     print(f"dash: {passed} passed, {failed} failed")
 

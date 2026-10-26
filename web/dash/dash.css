@@ -254,3 +254,19 @@ a.btnlink{display:inline-flex;align-items:center;justify-content:center;min-heig
   .keys{gap:4px}
   .kp-actions button{min-height:42px;font-size:17px}
 }
+
+/* ---- the 7" box (html.box: the kiosk's own page, see index.html) ------------------------------------------------
+   The panel goes into a 3D-printed box with a wide bezel: nothing sits within 20 px of the sides or 16 px of the
+   top and bottom. No text under 14 px, and the dim text a step brighter. A toast lies at the top over the header
+   and never takes a tap (one lying over NEW JOB at the bottom ate the touch). The phone layout is untouched. */
+html.box{--safe-x:20px;--safe-y:16px;--mut:#ab9dd0}
+html.box body{padding:var(--safe-y) var(--safe-x);font-size:16px}
+html.box #sheet{padding:var(--safe-y) var(--safe-x)}
+html.box .unit,html.box #h-net,html.box #h-log{font-size:14px}
+html.box .badge{font-size:14px}
+html.box nav button small,html.box .act small,html.box #m-saved,html.box .tag,html.box .sect pre,html.box .stat span,
+html.box .stat i,html.box table.t th,html.box .fld>span,html.box button.cite,html.box .quote{font-size:14px}
+html.box h3{font-size:15px}
+html.box #toast{top:calc(var(--safe-y) + 4px);bottom:auto;max-width:calc(100% - 2 * var(--safe-x) - 40px);
+  pointer-events:none;font-size:17px}
+

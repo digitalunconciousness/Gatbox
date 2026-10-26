@@ -60,6 +60,25 @@ KP_FIT = """(() => {
 })()"""
 
 
+# The 7" box: the frame (header, nav, main) inside the bezel margin, and the smallest visible text.
+BOX_FRAME = """(() => { const bad = [];
+  for (const s of ['header', 'nav', 'main']) { const r = document.querySelector(s).getBoundingClientRect();
+    if (r.left < 19.5 || r.top < 15.5 || r.right > innerWidth - 19.5 || r.bottom > innerHeight - 15.5)
+      bad.push(s + ' ' + [r.left, r.top, r.right, r.bottom].map(Math.round).join(',')); }
+  return bad; })()"""
+BOX_SMALL = """(() => { const out = new Set();
+  for (const root of [document.querySelector('header'), document.querySelector('nav'), document.querySelector('.view.on')]) {
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n; (n = w.nextNode()); ) {
+      if (!n.textContent.trim()) continue;
+      const e = n.parentElement, r = e.getBoundingClientRect();
+      if (!r.width || !r.height || getComputedStyle(e).visibility === 'hidden') continue;
+      const f = parseFloat(getComputedStyle(e).fontSize);
+      if (f < 14) out.add(e.tagName.toLowerCase() + '.' + e.className + ' ' + f + 'px ' + n.textContent.trim().slice(0, 24));
+    } }
+  return [...out].slice(0, 6); })()"""
+
+
 def kp_fits(c, sizes):
     """The open keypad at each (width, height): every key and SAVE on screen, keys at least 26 px. Back to the 7" after."""
     bad = {}
@@ -1065,13 +1084,39 @@ def main():
               settles(c, "[...document.querySelectorAll('#mc-body h3')].some(h => h.textContent === 'Work orders')")
               and not q(f"!!({job_card})") and "AS-" not in text("#m-window"))
 
+        print("the 7\" box (html.box: the kiosk opens the dashboard at 127.0.0.1):")
+        check("box: the kiosk's page is in box mode", q("document.documentElement.classList.contains('box')"))
+        bad_frame, small = {}, {}
+        for v in ("meter", "sessions", "machine", "manuals", "system", "devices", "dump"):
+            click(f'[data-view="{v}"]')
+            time.sleep(1.2)
+            f, s = q(BOX_FRAME), q(BOX_SMALL)
+            if f:
+                bad_frame[v] = f
+            if s:
+                small[v] = s
+        for d in (bad_frame, small):
+            if d:
+                print("    ", d)
+        check("box: every view sits inside the bezel margin (20 px at the sides, 16 at top and bottom)", not bad_frame)
+        check("box: no text under 14 px, header and nav included", not small)
+        # A toast lies over the page for seconds: it must never be what a finger hits.
+        q("(() => { const t = document.querySelector('#toast'); t.textContent = 'test'; t.classList.remove('hide'); })()")
+        tst = q("(() => { const t = document.querySelector('#toast'), r = t.getBoundingClientRect();"
+                " return {pe: getComputedStyle(t).pointerEvents, l: r.left, t: r.top, r: r.right, b: r.bottom}; })()")
+        q("document.querySelector('#toast').classList.add('hide')")
+        check("box: a toast never takes a tap, and sits inside the margin", tst["pe"] == "none" and tst["l"] >= 19.5
+              and tst["t"] >= 15.5 and tst["r"] <= 1004.5 and tst["b"] <= 584.5)
+
     print("phone (390x844):")
     with Chrome(f"{T}/browser2") as c:
-        c.open(B + "/dash/", 390, 844)
+        # ?box=0: the test reaches gatbox-web at 127.0.0.1, which is the kiosk's address; a phone comes by name
+        c.open(B + "/dash/?box=0", 390, 844)
         c.wait("document.querySelector('#m-profile').textContent.includes('rail')")
         time.sleep(1.5)
         c.shot(os.path.join(OUT, "18-phone.png"))
         check("phone: no horizontal scroll", c.eval("document.documentElement.scrollWidth <= 391"))
+        check("phone: not box mode (the 7\" changes stay on the 7\")", not c.eval("document.documentElement.classList.contains('box')"))
 
     check("server log: no errors", not any(k in open(f"{T}/web.log").read() for k in ("Traceback", "error on", "live: ")))
     print(f"screenshots: {OUT}" if KEEP else "screenshots: not kept (pass a directory to keep them)")

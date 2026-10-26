@@ -6,6 +6,14 @@
 <meta name="theme-color" content="#150a28">
 <title>GATBOX//</title>
 <link rel="stylesheet" href="dash.css">
+<script>
+/* The 7" box: the kiosk opens the dashboard at 127.0.0.1; a phone or a laptop comes by the Pi's name or address.
+   html.box carries the box's layout (bezel margin, bigger type, one fixed keyboard); ?box=1 / ?box=0 force it. */
+(function () {
+  var f = /[?&]box=([01])\b/.exec(location.search), h = location.hostname;
+  if (f ? f[1] === "1" : (h === "127.0.0.1" || h === "localhost" || h === "[::1]")) document.documentElement.classList.add("box");
+})();
+</script>
 </head>
 <body>
 <header>

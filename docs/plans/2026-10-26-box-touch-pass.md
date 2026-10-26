@@ -70,8 +70,9 @@ layout is unchanged.
 - [x] T3 pickers as buttons (tests: "How urgent?" five big buttons, the trace question two, no keyboard; PICK MACHINE
       with a 12-machine roster: big buttons, no keyboard; SEARCH brings the same 274 px keyboard in the same place,
       matches above it)
-- [ ] T4 MACHINE reordered and folded; redraws keep the scroll (tests: JOB card before the ROM table; folds closed
-      and reopen; a state event while scrolled leaves the scroll where it was)
+- [x] T4 MACHINE reordered and folded; redraws keep the scroll (tests: the orders card above the first fold; DETAILS,
+      SAVED READINGS, ROM CHIPS, DUMPS closed behind SHOW; a state event while scrolled leaves the page where it was
+      and an open fold open)
 - [ ] T5 the other pages, from screenshots
 - [ ] T6 TOUCH TEST + `/api/touchtest`
 - [ ] T7 full suite, screenshots of every view, BRINGUP, journal, PR, install, ask the owner to run TOUCH TEST

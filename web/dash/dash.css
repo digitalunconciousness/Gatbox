@@ -291,4 +291,13 @@ html.box .picklist .row.on{border-color:var(--mag);box-shadow:0 0 10px rgba(255,
 html.box .pane-head .kp-field{flex:1;min-width:0}
 html.box .kp-field.ph{color:var(--mut)}
 html.box .pane-head button{min-width:120px}
+/* Folded sections (the 7" MACHINE page): one full-width button, title, a short summary, SHOW / HIDE. */
+html.box .fold{display:flex;align-items:center;gap:14px;width:100%;text-align:left;margin-top:10px;min-height:60px}
+html.box .fold .fold-t{font-size:18px;white-space:nowrap}
+html.box .fold .fold-t::before{content:"▸ ";color:var(--cyan)}
+html.box .fold.open .fold-t::before{content:"▾ "}
+html.box .fold .fold-s{flex:1;min-width:0;font:15px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+html.box .fold .fold-act{color:var(--cyan);font-size:15px;letter-spacing:.08em}
+html.box .fold.open{border-color:var(--cyan)}
+html.box .fold-b{padding:4px 4px 6px}
 

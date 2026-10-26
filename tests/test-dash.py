@@ -70,6 +70,12 @@ def swap_file(path, text):
 # A picker's choices: how many, and the shortest (a finger needs >= 64 px on the 7").
 PICK_ROWS = """(() => { const rs = [...document.querySelectorAll('#pane .picklist .row')];
   return {n: rs.length, min: rs.length ? Math.round(Math.min(...rs.map(r => r.getBoundingClientRect().height))) : 0}; })()"""
+# The 7" MACHINE page: the work orders / job card above the first folded section.
+MC_ORDERS_FIRST = """(() => {
+  const o = [...document.querySelectorAll('#mc-body .card')].find(c => {
+    const h = ((c.querySelector('h3') || {}).textContent || ''); return h === 'Work orders' || h.startsWith('Job'); });
+  const f = document.querySelector('#mc-body button.fold');
+  return !!(o && f) && o.getBoundingClientRect().top < f.getBoundingClientRect().top; })()"""
 KB_LETTERS = {}              # the number pad's top on the 7", for the letters keyboard to match
 # The 7" box: the frame (header, nav, main) inside the bezel margin, and the smallest visible text.
 BOX_FRAME = """(() => { const bad = [];
@@ -307,6 +313,10 @@ def main():
         click = lambda sel: q(f"document.querySelector({json.dumps(sel)}).click()")  # noqa: E731
         shot = lambda n: c.shot(os.path.join(OUT, n + ".png"))     # noqa: E731
 
+        def open_fold(word):                       # a closed section on the 7" machine page: tap its SHOW
+            q(f"[...document.querySelectorAll('#mc-body button.fold')].find(b => b.textContent.includes({json.dumps(word)})).click()")
+            c.wait(f"[...document.querySelectorAll('#mc-body button.fold.open')].some(b => b.textContent.includes({json.dumps(word)}))", 10)
+
         def tap_keys(s):
             for ch in s:
                 q(f"[...document.querySelectorAll('#pane .keys button')].find(b => b.textContent === {json.dumps(ch)}).click()")
@@ -476,13 +486,35 @@ def main():
         c.wait("document.querySelector('#mc-body').textContent.includes('Gauntlet Legends')", 10)
         swap_file(roster_f, roster_orig)                          # back to the two-machine roster
         time.sleep(0.5)
+        # On the 7" the page leads with what gets acted on (the work orders card) and folds the reference away.
+        check("machine (7\"): the work orders card comes before the reference", settles(c, MC_ORDERS_FIRST))
+        folds = q("[...document.querySelectorAll('#mc-body button.fold')]"
+                  ".map(b => [b.querySelector('.fold-t').textContent, b.querySelector('.fold-act').textContent])") or []
+        check("machine (7\"): DETAILS, SAVED READINGS, ROM CHIPS, DUMPS start closed, each behind SHOW",
+              [f[0] for f in folds] == ["DETAILS", "SAVED READINGS", "ROM CHIPS (MAME)", "DUMPS"]
+              and all(f[1] == "SHOW" for f in folds) and "aging drive" not in text("#mc-body"))
+        shot("14-machine")
+        open_fold("DETAILS")
         check("machine card: name, risk, critical action, rail spec", all(s in text("#mc-body") for s in
               ("Gauntlet Legends", "aging drive", "image drive now", "+5V  4.9–5.1 V")))
-        shot("14-machine")
+        open_fold("ROM")
         c.wait("document.querySelector('#mc-body').textContent.includes('OF 2 DUMPED')", 10)
         check("ROM chips (MAME): 1 of 2 dumped, ✓ with the dump's label, the disk not a T48 job",
-              all(s_ in text("#mc-body") for s_ in ("ROM chips (MAME)", "1 OF 2 DUMPED", "← LEGEND15-U10", "not a T48 job",
+              "ROM CHIPS (MAME)" in text("#mc-body").upper()       # the 7" fold's title is in capitals
+              and all(s_ in text("#mc-body") for s_ in ("1 OF 2 DUMPED", "← LEGEND15-U10", "not a T48 job",
                                                      "512 KB · 27C040 / 27C4001 or 27C4096 / 27C400")))
+        # A redraw (every state event) used to empty the page first: it jumped to the top under the finger.
+        q("(() => { const v = document.querySelector('#v-machine'); v.scrollTop = 250;"
+          " document.querySelector('#mc-body').firstChild.dataset.old = '1'; })()")
+        y0 = q("document.querySelector('#v-machine').scrollTop")
+        api("PUT", "/api/meter/profile", {"id": "free"})
+        c.wait("!document.querySelector('#mc-body [data-old]')", 10)
+        time.sleep(0.8)
+        check("machine: a redraw leaves the page where it was, and an open section open",
+              y0 > 100 and abs(q("document.querySelector('#v-machine').scrollTop") - y0) <= 2
+              and "OF 2 DUMPED" in text("#mc-body"))
+        api("PUT", "/api/meter/profile", {"id": "rail-5v"})
+        time.sleep(0.8)
         q("document.querySelector('#v-machine').scrollTop = 10000")
         shot("14b-machine-chips")
         q("[...document.querySelectorAll('#mc-body button')].find(b => b.textContent === 'gauntleg ▸').click()")

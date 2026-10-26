@@ -28,6 +28,7 @@
     st: null, profiles: [], modes: {}, sys: null, dev: null, local: false, offset: 0,
     file: null, last: null, lastAt: 0, marks: [], pending: [], events: [],
     alarmShown: null, alarmAck: new Set(), leadWarn: false, view: "meter", connected: false, fileStart: null, endedAt: 0,
+    folds: {},                                       // the 7"'s folded sections that are open (key -> true)
   };
 
   // --- API ---------------------------------------------------------------------------------
@@ -680,18 +681,39 @@
   }
 
   // --- MACHINE ------------------------------------------------------------------------------
+  // A section on the 7" that starts closed: one full-width button with its title, a short summary and SHOW; the
+  // content is only built once it's open. Open ones stay open across redraws (S.folds) until tapped shut. redraw()
+  // redraws the page it's on.
+  async function fold(parent, key, title, summary, build, redraw) {
+    const open = !!S.folds[key], b = el("button", "fold" + (open ? " open" : ""));
+    add(b, el("span", "fold-t", title), el("span", "fold-s mut", summary || ""), el("span", "fold-act", open ? "HIDE" : "SHOW"));
+    b.addEventListener("click", () => { S.folds[key] = !open; redraw(); });
+    parent.appendChild(b);
+    if (!open) return;
+    const body = el("div", "fold-b");
+    parent.appendChild(body);
+    await build(body);
+  }
+
   async function loadMachine() {
     // Every state event reloads this card, and so does the button that caused the event: two reloads overlap, and
-    // each appends after its awaits. Only the newest one draws.
+    // each appends after its awaits. Only the newest one draws. It's built off-screen and swapped in whole: emptied
+    // first, the page used to blank and jump back to the top whenever it redrew -- under a finger reaching for NEW JOB.
     const gen = S.mcGen = (S.mcGen || 0) + 1, stale = () => gen !== S.mcGen;
-    const B = clear($("#mc-body"));
+    const B = el("div");
+    const swap = () => {
+      if (stale()) return;
+      const sc = $("#v-machine"), top = sc.scrollTop;
+      $("#mc-body").replaceChildren(...B.childNodes);
+      sc.scrollTop = top;
+    };
     let m;
     try { m = await api("GET", "/api/machine"); } catch (e) { return fail(e); }
     if (stale()) return;
     $("#mc-clear").disabled = !m.slug;
     $("#mc-pick").disabled = $("#mc-export").disabled = $("#mc-labels").disabled = !m.roster;
-    if (!m.roster) { B.appendChild(el("div", "card warn", "No roster installed on this Pi (data/gatbox-barcade-roster.json). + ADD MACHINE starts one here.")); return; }
-    if (!m.slug) { B.appendChild(el("div", "card mut", "No machine set. PICK MACHINE, or scan its QR code.")); return; }
+    if (!m.roster) { B.appendChild(el("div", "card warn", "No roster installed on this Pi (data/gatbox-barcade-roster.json). + ADD MACHINE starts one here.")); return swap(); }
+    if (!m.slug) { B.appendChild(el("div", "card mut", "No machine set. PICK MACHINE, or scan its QR code.")); return swap(); }
     const e = m.entry, c = el("div", "card"), hubOnly = e.kind == null;   // a machine only a hub has (Phase 8)
     add(c, el("div", "big", e.name), el("div", "mut", hubOnly
       ? [e.slug, e.location, e.status].filter(Boolean).join(" · ")
@@ -716,58 +738,89 @@
     }
     if (e.platform_info) add(c, el("div", null, e.platform_info.desc || e.platform));
     else if (e.platform === NOT_SURE) add(c, el("div", "warn", "Platform: not sure yet"));
-    if (e.notes) add(c, el("div", "mut", e.notes));
-    if (e.risk_info && e.risk_info.length) {
-      const ch = el("div", "chips");
-      for (const r of e.risk_info) ch.appendChild(el("span", "badge warn", r.flag + (r.meaning ? ": " + r.meaning : "")));
-      add(c, el("h3", null, "Risks"), ch);
-    }
-    const list = (title, items) => {
-      if (!items || !items.length) return;
-      const ul = el("ul", "plain");
-      items.forEach(i => ul.appendChild(el("li", null, i)));
-      add(c, el("h3", null, title), ul);
-    };
-    list("Faults", e.faults_all); list("Parts", e.parts_all);
-    if (e.platform_info && e.platform_info.pm) add(c, el("h3", null, "PM"), el("div", null, e.platform_info.pm));
-    if (e.critical_actions && e.critical_actions.length) {
-      c.appendChild(el("h3", null, "Critical actions"));
-      for (const a of e.critical_actions) {
-        const d = el("div", "card");
-        add(d, el("b", "bad", a.path.replace(/_/g, " ").replace(/\//g, " › ")), a.note ? el("div", null, a.note) : null);
-        if (a.detail) for (const [k, v] of Object.entries(a.detail)) {
-          if (k === "sources") continue;
-          d.appendChild(el("div", "mut", `${k.replace(/_/g, " ")}: ${typeof v === "string" ? v : JSON.stringify(v)}`));
-        }
-        c.appendChild(d);
+    // The rest as pieces: a phone draws them in one card as it always has; the 7" puts the actions first and folds
+    // the reference behind SHOW.
+    const details = d => {
+      if (e.notes) add(d, el("div", "mut", e.notes));
+      if (e.risk_info && e.risk_info.length) {
+        const ch = el("div", "chips");
+        for (const r of e.risk_info) ch.appendChild(el("span", "badge warn", r.flag + (r.meaning ? ": " + r.meaning : "")));
+        add(d, el("h3", null, "Risks"), ch);
       }
-    }
-    c.appendChild(el("h3", null, "Rail specs"));
-    if (e.spec && e.spec.rails) {
-      for (const [r, w] of Object.entries(e.spec.rails))
-        c.appendChild(el("div", null, `${r.replace("-", "−")}  ${w[0]}–${w[1]} V` + (e.spec.sources ? ` · ${srcLabel(e.spec.sources[r])}` : "")));
-      if (e.spec.source) c.appendChild(el("div", "mut", e.spec.source));
-    } else c.appendChild(el("div", "mut", hubOnly && !e.library ? "None yet."
-      : "None yet: the MANUALS tab has the machine's spec sheet (CONFIRM a limit from its manual)."));
-    if (!hubOnly || e.library) {
-      const sp = el("button", null, "SPEC SHEET & MANUALS ▸");
-      sp.addEventListener("click", () => { M.slug = M.name = null; show("manuals"); });   // the card is the current machine's
-      c.appendChild(sp);
-    }
-    c.appendChild(el("h3", null, "Saved readings"));
-    try {
-      const cp = await api("GET", "/api/captures?machine=" + encodeURIComponent(e.slug));
-      if (!cp.captures.length) c.appendChild(el("div", "mut", "None yet: pick a bench profile and press SAVE READING."));
-      for (const k of cp.captures.slice(-30).reverse())
-        c.appendChild(el("div", null, `${k.iso.replace("T", " ")}  ${k.label}  ${savedText(k)}  (${modeLabel(k.mode)}${k.flags ? ", " + k.flags : ""})`));
-    } catch (x) { c.appendChild(el("div", "bad", String(x.message))); }
-    await mameSection(c, e.slug);
-    c.appendChild(el("h3", null, "Dumps"));
-    try { dumpList(c, (await api("GET", "/api/dumps?machine=" + encodeURIComponent(e.slug))).dumps); }
-    catch (x) { c.appendChild(el("div", "mut", "No dump archive on this Pi yet.")); }
+      const list = (title, items) => {
+        if (!items || !items.length) return;
+        const ul = el("ul", "plain");
+        items.forEach(i => ul.appendChild(el("li", null, i)));
+        add(d, el("h3", null, title), ul);
+      };
+      list("Faults", e.faults_all); list("Parts", e.parts_all);
+      if (e.platform_info && e.platform_info.pm) add(d, el("h3", null, "PM"), el("div", null, e.platform_info.pm));
+    };
+    const critical = d => {
+      if (!e.critical_actions || !e.critical_actions.length) return;
+      d.appendChild(el("h3", null, "Critical actions"));
+      for (const a of e.critical_actions) {
+        const k = el("div", "card");
+        add(k, el("b", "bad", a.path.replace(/_/g, " ").replace(/\//g, " › ")), a.note ? el("div", null, a.note) : null);
+        if (a.detail) for (const [x, v] of Object.entries(a.detail)) {
+          if (x === "sources") continue;
+          k.appendChild(el("div", "mut", `${x.replace(/_/g, " ")}: ${typeof v === "string" ? v : JSON.stringify(v)}`));
+        }
+        d.appendChild(k);
+      }
+    };
+    const rails = d => {
+      d.appendChild(el("h3", null, "Rail specs"));
+      if (e.spec && e.spec.rails) {
+        for (const [r, w] of Object.entries(e.spec.rails))
+          d.appendChild(el("div", null, `${r.replace("-", "−")}  ${w[0]}–${w[1]} V` +
+                                           ((e.spec.sources && srcLabel(e.spec.sources[r])) ? ` · ${srcLabel(e.spec.sources[r])}` : "")));
+        if (e.spec.source) d.appendChild(el("div", "mut", e.spec.source));
+      } else d.appendChild(el("div", "mut", hubOnly && !e.library ? "None yet."
+        : "None yet: the MANUALS tab has the machine's spec sheet (CONFIRM a limit from its manual)."));
+      if (!hubOnly || e.library) {
+        const sp = el("button", null, "SPEC SHEET & MANUALS ▸");
+        sp.addEventListener("click", () => { M.slug = M.name = null; show("manuals"); });   // the card is the current machine's
+        d.appendChild(sp);
+      }
+    };
+    let cp = null, cpErr = null, dumps = null;
+    try { cp = await api("GET", "/api/captures?machine=" + encodeURIComponent(e.slug)); } catch (x) { cpErr = x; }
+    try { dumps = (await api("GET", "/api/dumps?machine=" + encodeURIComponent(e.slug))).dumps; } catch (x) { /* none */ }
     if (stale()) return;
+    const saved = d => {
+      if (cpErr) return d.appendChild(el("div", "bad", String(cpErr.message)));
+      if (!cp.captures.length) d.appendChild(el("div", "mut", "None yet: pick a bench profile and press SAVE READING."));
+      for (const k of cp.captures.slice(-30).reverse())
+        d.appendChild(el("div", null, `${k.iso.replace("T", " ")}  ${k.label}  ${savedText(k)}  (${modeLabel(k.mode)}${k.flags ? ", " + k.flags : ""})`));
+    };
+    const dumpsInto = d => {
+      if (dumps) dumpList(d, dumps); else d.appendChild(el("div", "mut", "No dump archive on this Pi yet."));
+    };
+    if (!BOX) {
+      details(c); critical(c); rails(c);
+      c.appendChild(el("h3", null, "Saved readings")); saved(c);
+      await mameSection(c, e.slug);
+      c.appendChild(el("h3", null, "Dumps")); dumpsInto(c);
+      if (stale()) return;
+      B.appendChild(c);
+      await ordersSection(B, e, stale);
+      return swap();
+    }
     B.appendChild(c);
-    await ordersSection(B, e, stale);
+    await ordersSection(B, e, stale);                // the work orders / job card: what gets acted on, first
+    if (stale()) return;
+    const r = el("div", "card");
+    critical(r); rails(r);
+    const n = (x, one) => x == null ? "" : `${x} ${one}${x === 1 ? "" : "s"}`;
+    let rom = "";
+    try { const [, v] = await mameList(e.slug); if (v) rom = `${v.dumped} of ${v.roms.length} dumped · ${v.name}`; } catch (x) { /* shown when open */ }
+    await fold(r, "mc-details", "DETAILS", ["risks", "faults", "parts", "PM"].join(" · "), details, loadMachine);
+    await fold(r, "mc-saved", "SAVED READINGS", cp ? n(cp.captures.length, "reading") : "", saved, loadMachine);
+    await fold(r, "mc-rom", "ROM CHIPS (MAME)", rom, d => mameSection(d, e.slug, true), loadMachine);
+    await fold(r, "mc-dumps", "DUMPS", dumps ? n(dumps.length, "dump") : "", dumpsInto, loadMachine);
+    B.appendChild(r);
+    swap();
   }
 
   // --- WORK ORDERS ---------------------------------------------------------------------------
@@ -1805,8 +1858,8 @@
     S.mameVer = S.mameVer || {};
     return [j, j.versions.find(x => x.name === (S.mameVer[slug] || j.default)) || j.versions[0]];
   }
-  async function mameSection(c, slug) {
-    c.appendChild(el("h3", null, "ROM chips (MAME)"));
+  async function mameSection(c, slug, folded) {      // folded: inside the 7"'s ROM CHIPS fold, which is its title
+    if (!folded) c.appendChild(el("h3", null, "ROM chips (MAME)"));
     const box = el("div");
     c.appendChild(box);
     let j, v;

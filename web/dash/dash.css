@@ -300,4 +300,11 @@ html.box .fold .fold-s{flex:1;min-width:0;font:15px var(--mono);overflow:hidden;
 html.box .fold .fold-act{color:var(--cyan);font-size:15px;letter-spacing:.08em}
 html.box .fold.open{border-color:var(--cyan)}
 html.box .fold-b{padding:4px 4px 6px}
+/* The other pages on the 7": the METER buttons' small line wraps instead of being cut off; explanations sit behind a
+   small button; the long and the short version of a note pick themselves. */
+html.box .act small{white-space:normal;overflow:visible;text-overflow:clip;text-align:center;line-height:1.15}
+html.box button.why{margin:2px 0 6px;color:var(--cyan)}
+.box-only{display:none}
+html.box .box-only{display:inline}
+html.box .web-only{display:none}
 

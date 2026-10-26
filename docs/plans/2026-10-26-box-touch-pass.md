@@ -73,6 +73,8 @@ layout is unchanged.
 - [x] T4 MACHINE reordered and folded; redraws keep the scroll (tests: the orders card above the first fold; DETAILS,
       SAVED READINGS, ROM CHIPS, DUMPS closed behind SHOW; a state event while scrolled leaves the page where it was
       and an open fold open)
-- [ ] T5 the other pages, from screenshots
+- [x] T5 the other pages, from screenshots (tests: no link that leaves the dashboard on any view; METER's button lines
+      whole and METER not scrolling; MANUALS' explanation behind HOW THIS WORKS; DEVICES / DUMP text; LABEL LIST
+      SEARCH through the keyboard instead of a text box; chart text 14 px)
 - [ ] T6 TOUCH TEST + `/api/touchtest`
 - [ ] T7 full suite, screenshots of every view, BRINGUP, journal, PR, install, ask the owner to run TOUCH TEST

@@ -586,12 +586,12 @@
     if (J.powered) head.appendChild(el("div", null,
         `powered ${si(J.powered.min, "V", 0.001)} – ${si(J.powered.max, "V", 0.001)}, mean ${si(J.powered.mean, "V", 0.0001)} · ${J.powered.in_window_pct != null ? J.powered.in_window_pct.toFixed(2) + "% in window" : ""}`));
     const btns = el("div", "btnrow");
-    if (!S.local) {                             // on the kiosk a PDF has no way back: phone only
+    if (!S.local && !BOX) {                     // on the kiosk a PDF has no way back: phone only
       const pdf = el("a", null, "PDF"); pdf.href = J.pdf; pdf.target = "_blank";
       const csv = el("a", null, "CSV"); csv.href = J.csv;
       add(btns, pdf, el("span", "mut", " · "), csv, el("span", "mut", " · "));
     }
-    const ph = el("a", null, "phone page"); ph.href = "/s/" + name; btns.appendChild(ph);
+    if (!BOX) { const ph = el("a", null, "phone page"); ph.href = "/s/" + name; btns.appendChild(ph); }   // no way back on the 7"
     head.appendChild(btns);
     D.appendChild(head);
     const box = el("div", "chartbox"), cv = el("canvas");
@@ -693,6 +693,16 @@
     const body = el("div", "fold-b");
     parent.appendChild(body);
     await build(body);
+  }
+
+  // An explanation on the 7" sits behind a small button (the page is for the numbers); a phone shows it as it was.
+  function foldText(parent, label, text) {
+    const d = el("div", "mut", text);
+    if (!BOX) return parent.appendChild(d);
+    const b = el("button", "mini why", label + " ▸");
+    d.classList.add("hide");
+    b.addEventListener("click", () => { const open = d.classList.toggle("hide") === false; b.textContent = label + (open ? " ▾" : " ▸"); });
+    add(parent, b, d);
   }
 
   async function loadMachine() {
@@ -977,36 +987,54 @@
   $("#mc-labels").addEventListener("click", async () => {
     let R;
     try { R = await api("GET", "/api/roster"); } catch (e) { return fail(e); }
-    await sheet("Label list: the text for each QR", (pane, done) => {
-      const note = el("div", "mut", "Each QR holds just this text. Tap COPY, then paste it as the QR text in the label app.");
-      const filter = el("input");
-      filter.placeholder = "filter"; filter.className = "kp-field"; filter.style.fontSize = "18px";
-      const list = el("div", "scroll");
-      list.style.cssText = "overflow:auto;min-height:0;flex:1";
-      const row = (name, code) => {
-        const r = el("div", "row card");
-        r.style.cssText = "display:flex;align-items:center;gap:10px";
-        const txt = el("div");
-        txt.style.flex = "1";
-        add(txt, el("b", null, name), el("div", "cy", code));
-        txt.lastChild.style.userSelect = "all";
-        const b = el("button", null, "COPY");
-        b.addEventListener("click", () => copyText(code).then(() => toast("Copied " + code)).catch(fail));
-        add(r, txt, b);
-        return r;
-      };
-      const draw = () => {
-        clear(list);
-        const Q = filter.value.trim().toLowerCase();
-        if (!Q) { list.appendChild(row("MARK (it just crashed)", "GATBOX:MARK")); list.appendChild(row("NEW FILE", "GATBOX:NEW")); }
-        for (const m of R.machines.slice().sort((a, b) => a.name.localeCompare(b.name)))
-          if (!Q || m.name.toLowerCase().includes(Q) || m.slug.includes(Q)) list.appendChild(row(m.name, m.slug));
-      };
-      filter.addEventListener("input", draw);
-      add(pane, note, filter, list);
-      if (!S.local) { const a = el("a", null, "Or a printable sheet of all of them (PDF) →"); a.href = "/labels.pdf"; a.target = "_blank"; pane.appendChild(a); }
-      draw();
-    });
+    // On the 7" there is no keyboard for a text box: SEARCH opens the dashboard's own, then the list comes back filtered.
+    let find = "";
+    for (;;) {
+      const act = await sheet("Label list: the text for each QR", (pane, done) => {
+        const note = el("div", "mut", "Each QR holds just this text. Tap COPY, then paste it as the QR text in the label app.");
+        const filter = BOX ? null : el("input");
+        if (filter) { filter.placeholder = "filter"; filter.className = "kp-field"; filter.style.fontSize = "18px"; }
+        const list = el("div", "scroll");
+        list.style.cssText = "overflow:auto;min-height:0;flex:1";
+        const row = (name, code) => {
+          const r = el("div", "row card");
+          r.style.cssText = "display:flex;align-items:center;gap:10px";
+          const txt = el("div");
+          txt.style.flex = "1";
+          add(txt, el("b", null, name), el("div", "cy", code));
+          txt.lastChild.style.userSelect = "all";
+          const b = el("button", null, "COPY");
+          b.addEventListener("click", () => copyText(code).then(() => toast("Copied " + code)).catch(fail));
+          add(r, txt, b);
+          return r;
+        };
+        const draw = () => {
+          clear(list);
+          const Q = (filter ? filter.value : find).trim().toLowerCase();
+          if (!Q) { list.appendChild(row("MARK (it just crashed)", "GATBOX:MARK")); list.appendChild(row("NEW FILE", "GATBOX:NEW")); }
+          for (const m of R.machines.slice().sort((a, b) => a.name.localeCompare(b.name)))
+            if (!Q || m.name.toLowerCase().includes(Q) || m.slug.includes(Q)) list.appendChild(row(m.name, m.slug));
+        };
+        if (filter) { filter.addEventListener("input", draw); add(pane, note, filter, list); }
+        else {
+          const row = el("div", "btnrow"), s = el("button", null, "SEARCH");
+          row.style.alignItems = "center";
+          s.addEventListener("click", () => done("search"));
+          row.appendChild(s);
+          if (find) {
+            const x = el("button", null, "SHOW ALL");
+            x.addEventListener("click", () => done("all"));
+            add(row, el("span", "cy", `"${find}"`), x);
+          }
+          add(pane, note, row, list);
+        }
+        if (!S.local && !BOX) { const a = el("a", null, "Or a printable sheet of all of them (PDF) →"); a.href = "/labels.pdf"; a.target = "_blank"; pane.appendChild(a); }
+        draw();
+      });
+      if (act === "search") { const v = await keypad({title: "Search the label list", max: 30, value: find}); if (v != null) find = v; continue; }
+      if (act === "all") { find = ""; continue; }
+      break;
+    }
   });
   $("#mc-clear").addEventListener("click", async () => {
     if (!await confirmBox("CLEAR MACHINE?", "New files won't carry a machine (a live session starts a new file).", "CLEAR")) return;
@@ -1204,7 +1232,7 @@
       pane.appendChild(el("div", null, (mine.length ? `The roster file plus the ${mine.length} machine${mine.length > 1 ? "s" : ""} added on this Pi`
                                                     : "The roster file as installed (nothing added on this Pi yet)")
                                         + ", in the file's own format, ready for the maintenance app to import."));
-      if (S.local) {
+      if (S.local || BOX) {
         const a = piAddr();
         add(pane, el("div", "mut", "On your phone (same network), open:"),
             el("div", "big cy", `http://${a ? a.split("/")[0] : "<the Pi's address>"}/roster.json`));
@@ -1417,10 +1445,12 @@
     const v = d.versions || {};
     tile("Software", Object.entries(v).map(([k, x]) => [k, x]));
     if (d.errors && Object.keys(d.errors).length) tile("Couldn't read", Object.entries(d.errors).map(([k, x]) => [k, x, "warn"]));
-    const lk = el("div", "card");
-    const a = el("a", null, "Phone view (sessions, PDF, CSV) →"); a.href = "/";
-    add(lk, el("h2", null, "Elsewhere"), a);
-    G.appendChild(lk);
+    if (!BOX) {                                     // the 7" has no way back from a page it leaves for
+      const lk = el("div", "card");
+      const a = el("a", null, "Phone view (sessions, PDF, CSV) →"); a.href = "/";
+      add(lk, el("h2", null, "Elsewhere"), a);
+      G.appendChild(lk);
+    }
     $("#sy-kiosk").classList.toggle("hide", !S.local);
   }
   // EXIT KIOSK / SHUT DOWN: this screen only (the server refuses them from anywhere else), hold to confirm
@@ -1459,7 +1489,7 @@
         [a.present ? `adapter ${a.usb_id}${a.tty ? " on " + a.tty : ""}` : "adapter NOT PLUGGED IN", a.present ? "ok" : "bad"],
         [rd.flowing ? `readings flowing · ${modeLabel(rd.mode)}` : "no readings (meter off, or D02 head off the IR window)", rd.flowing ? "ok" : "warn"]]);
       card("T48 programmer", [[d.t48.present ? `connected · USB ${d.t48.usb_id}` : "not plugged in", d.t48.present ? "ok" : "mut"],
-                              ["reads only from here; the dump workflow is M7", "mut"]]);
+                              ["READ and BURN: the DUMP tab", "mut"]]);
       const sc = d.scanner;
       card("Barcode scanner", [
         [sc.present ? `Eyoyo EY-H2 · USB ${sc.usb_id}` : "Eyoyo EY-H2 not plugged in", sc.present ? "ok" : "mut"],
@@ -1527,10 +1557,10 @@
   const pageUrl = (slug, file, page, w) => `/manual/${encodeURIComponent(slug)}/${encodeURIComponent(file)}/${page}.png?w=${w}`;
   function specCard(slug, s, d) {
     const c = el("div", "card"), docOf = id => d.docs.find(x => x.id === id);
-    add(c, el("h2", null, "Spec sheet"),
-        el("div", "mut", "The manual's numbers as the manual gives them (p.N opens the page), and this machine's actual values " +
-                         "from the field beside them. A manual limit sets the logger's window only once you CONFIRM it; an " +
-                         "actual only if you give it a window of its own."));
+    c.appendChild(el("h2", null, "Spec sheet"));
+    foldText(c, "HOW THIS WORKS", "The manual's numbers as the manual gives them (p.N opens the page), and this machine's actual " +
+             "values from the field beside them. A manual limit sets the logger's window only once you CONFIRM it; an " +
+             "actual only if you give it a window of its own.");
     const cite = x => {
       const doc = docOf(x.doc), b = el("button", "cite", `p.${x.page} ▸`);
       b.disabled = !doc;
@@ -1738,7 +1768,7 @@
     $("#vw-title").textContent = doc.title;
     const a = $("#vw-pdf");
     a.href = `/manual/${encodeURIComponent(slug)}/${encodeURIComponent(doc.file)}`;
-    a.classList.toggle("hide", S.local);
+    a.classList.toggle("hide", S.local || BOX);
     $("#vw-img").removeAttribute("src"); $("#vw-img").dataset.url = "";
     $("#viewer").classList.remove("hide");
     vwLoad();
@@ -2020,8 +2050,9 @@
     const B = clear($("#du-body")), st = D.st || {}, t48 = (st.t48 || {}).present;
     const head = el("div", "card");
     add(head, el("div", "big " + (t48 ? "ok" : "mut"), t48 ? "T48 READY" : "T48 NOT PLUGGED IN"),
-        el("div", "mut", (t48 ? `USB ${st.t48.usb_id} · ` : "Plug the XGecu T48 into the Pi (USB a466:0a53). ") +
-                         "READ a chip, or BURN one (a blank chip, armed by a hold on the Pi's own screen)"));
+        el("div", "mut", BOX ? (t48 ? `USB ${st.t48.usb_id} · READ a chip, or BURN a blank one` : "Plug the XGecu T48 into the Pi.")
+                             : (t48 ? `USB ${st.t48.usb_id} · ` : "Plug the XGecu T48 into the Pi (USB a466:0a53). ") +
+                               "READ a chip, or BURN one (a blank chip, armed by a hold on the Pi's own screen)"));
     if (!st.spool) head.appendChild(el("div", "warn", "The dump service isn't installed yet (no spool)."));
     B.appendChild(head);
     const s = st.status;

@@ -1204,6 +1204,52 @@ def main():
                 print("    ", d)
         check("box: every view sits inside the bezel margin (20 px at the sides, 16 at top and bottom)", not bad_frame)
         check("box: no text under 14 px, header and nav included", not small)
+        # The kiosk has no back button: a link that leaves the dashboard strands it there.
+        leaving = {}
+        for v in ("meter", "sessions", "machine", "manuals", "system", "devices", "dump"):
+            click(f'[data-view="{v}"]')
+            time.sleep(0.8)
+            if v == "sessions":                       # a session's report is open, as it is when you read one
+                q("(() => { const r = document.querySelector('#s-list .row'); if (r) r.click(); return true; })()")
+                time.sleep(1.5)
+            a = q("[...document.querySelectorAll('a[href]')].filter(a => a.getClientRects().length).map(a => a.textContent)")
+            if a:
+                leaving[v] = a
+        if leaving:
+            print("    ", leaving)
+        check("box: no link that leaves the dashboard (the kiosk has no way back)", not leaving)
+        click('[data-view="meter"]')
+        time.sleep(0.5)
+        check("box: METER's action buttons say all of it (nothing cut off), and METER doesn't scroll",
+              q("[...document.querySelectorAll('.act small')].every(s => s.scrollWidth <= s.clientWidth + 1 && s.scrollHeight <= s.clientHeight + 1)")
+              and q("(() => { const v = document.querySelector('#v-meter'); return v.scrollHeight <= v.clientHeight + 1; })()"))
+        click('[data-view="manuals"]')
+        c.wait("[...document.querySelectorAll('#v-manuals h2')].some(h => h.textContent === 'Spec sheet')", 15)
+        check("box: MANUALS keeps its explanation behind HOW THIS WORKS",
+              "The manual's numbers as" not in q("[...document.querySelectorAll('#v-manuals *')].filter(e => e.getClientRects().length"
+                                                 " && e.children.length === 0).map(e => e.textContent).join(' ')")
+              and q("[...document.querySelectorAll('#v-manuals button')].some(b => b.textContent.includes('HOW THIS WORKS'))"))
+        click('[data-view="devices"]')
+        time.sleep(1)
+        check("box: DEVICES says where the T48 is used (no milestone talk)", "M7" not in text("#v-devices")
+              and "DUMP" in text("#v-devices"))
+        click('[data-view="dump"]')
+        time.sleep(1)
+        check("box: DUMP's header is one short line", "armed by a hold" not in text("#du-body"))
+        click('[data-view="machine"]')
+        c.wait("!document.querySelector('#mc-labels').disabled", 10)
+        click("#mc-labels")
+        c.wait("!document.querySelector('#sheet').classList.contains('hide') && document.querySelectorAll('#pane .row').length >= 3", 10)
+        check("box: LABEL LIST has no text box (the 7\" has no keyboard for one), it has SEARCH",
+              not q("!!document.querySelector('#pane input')")
+              and q("[...document.querySelectorAll('#pane button')].some(b => b.textContent === 'SEARCH')"))
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'SEARCH').click()")
+        c.wait("document.querySelector('#pane .keys')")
+        tap_keys("LEG")
+        c.wait("!document.querySelector('#pane .keys') && document.querySelectorAll('#pane .row').length >= 1", 10)
+        check("box: LABEL LIST: SEARCH is the keyboard, and it filters", q("document.querySelectorAll('#pane .row').length") == 1
+              and "gauntlet-legends" in text("#pane"))
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'CLOSE').click()")
         # A toast lies over the page for seconds: it must never be what a finger hits.
         q("(() => { const t = document.querySelector('#toast'); t.textContent = 'test'; t.classList.remove('hide'); })()")
         tst = q("(() => { const t = document.querySelector('#toast'), r = t.getBoundingClientRect();"

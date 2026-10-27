@@ -152,9 +152,7 @@ session tags on a 2-minute timer and caches the roster and open orders for the 7
 Phase 6 installed on the Pi and the tracker side deployed 2026-10-07; both bench exits passed
 on hardware that day — a real join from the Wi-Fi card, and an order typed on the 7″ reaching
 the work queue with its trace attached.
-**Phase 8 (several hubs), built 2026-10-13, installed 2026-10-26:** `/etc/gatbox/hubs.d/<name>.conf`
+**Phase 8 (several hubs), built 2026-10-13, installed 2026-10-26, exit passed that night:** `/etc/gatbox/hubs.d/<name>.conf`
 beside `hub.conf`, routing by roster, per-hub state under `/var/lib/gatbox-sync/hubs/<name>/`,
 `model_key`, the capability-gated JOB card and `phase`. Design: `docs/plans/2026-10-13-phase8-multi-hub.md`.
-**Still to do:** the owner's exit: on the same Pi, one session each, a
-barcade trace lands in the tracker and a customer trace on its job at the second hub, neither
-in the other.
+A second hub is live in `hubs.d`; one session each went to its own hub only.

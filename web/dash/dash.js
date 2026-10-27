@@ -315,7 +315,9 @@
       sess.textContent = S.st.stopped ? "not logging (stopped)" : "not logging";
       sess.className = "mut";
     }
-    // actions
+    // actions. STOP LOGGING sits by the logging line while it isn't stopped; once it is, START LOGGING takes the NEW
+    // FILE spot (the owner, 2026-10-27: stopping shouldn't mean hunting through SYSTEM)
+    $("#b-stop").classList.toggle("hide", !!S.st.stopped);
     const nb = $("#b-new");
     nb.firstChild.textContent = S.st.stopped ? "START LOGGING" : "NEW FILE";
     nb.lastChild.textContent = S.st.stopped ? "logging is stopped" : "end this one";
@@ -347,6 +349,10 @@
     const stopped = S.st && S.st.stopped;
     if (!stopped && !await confirmBox("NEW FILE?", "The current file ends here and the next reading starts a new one.", "NEW FILE")) return;
     api("POST", "/api/session/new").then(() => toast(stopped ? "Logging started" : "New file requested")).catch(fail);
+  });
+  $("#b-stop").addEventListener("click", async () => {
+    if (!await confirmBox("STOP LOGGING?", "Nothing is recorded until someone presses START LOGGING.", "STOP")) return;
+    api("POST", "/api/session/stop").then(() => toast("Logging stopped", "warn")).catch(fail);
   });
   $("#b-alarm").addEventListener("click", () => {
     const on = !(S.st.alarm && S.st.alarm.on);

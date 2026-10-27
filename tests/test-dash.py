@@ -337,6 +337,23 @@ def main():
         check("header: LOGGING + clock source", text("#h-logtxt") == "LOGGING" and text("#h-src") in ("NTP", "RTC", "UNVERIFIED"))
         shot("01-normal-rail")
 
+        print("stop logging from METER (the owner: no hunting through SYSTEM for it):")
+        stop_btn = "[...document.querySelectorAll('#v-meter button')].find(b => b.textContent === 'STOP LOGGING')"
+        check("meter: STOP LOGGING by the logging line while it logs, a full-size button",
+              q(f"(() => {{ const b = {stop_btn}; return !!b && b.getClientRects().length > 0 && b.getBoundingClientRect().height >= 56; }})()"))
+        q(f"{stop_btn}.click()")
+        c.wait("[...document.querySelectorAll('#pane button')].some(b => b.textContent === 'STOP')", 5)
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'STOP').click()")
+        check("meter: STOP asks first, then the logger stops (LOGGER STOPPED), and the stop button goes",
+              settles(c, "document.querySelector('#banners').textContent.includes('LOGGER STOPPED')")
+              and api("GET", "/api/meter")["stopped"]           # /api/meter is live; /api/system is cached 2 s
+              and not q(f"(() => {{ const b = {stop_btn}; return !!b && b.getClientRects().length > 0; }})()"))
+        click("#b-new")                                    # it reads START LOGGING now
+        check("meter: START LOGGING (the NEW FILE spot) starts it again",
+              settles(c, "!document.querySelector('#banners').textContent.includes('LOGGER STOPPED')")
+              and not api("GET", "/api/meter")["stopped"])
+        c.wait("document.querySelector('#m-session').textContent.startsWith('LOGGING')", 20)
+
         print("marks:")
         click("#b-mark")
         c.wait("document.querySelector('#toast').textContent.startsWith('MARK')")

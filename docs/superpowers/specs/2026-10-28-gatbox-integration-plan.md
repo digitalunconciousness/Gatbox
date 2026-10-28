@@ -316,7 +316,7 @@ without it, in its repo's suite.
 | phase | what | repos | needs the owner for |
 |---|---|---|---|
 | **A. Groundwork and fixes** | the shared agent rules and the same privacy hook in all three; the contract drift fixed, ownership moved to Gatbox, Phase 8 extras and priorities written down; the realm rule and its test on the deck; **the fix list (§9)** | all three | plan approval; the privacy patterns variable (§12); the two ⏸ server steps in §9 |
-| **A3. Report a problem** | a "Report a problem" link on every page of both apps; reports kept privately in each app's own database with a page for her to triage; a reference on every error page; GitHub issue forms and a SECURITY.md for the repos. Spec: §17 | the two apps (+ issue forms in all three) | F1–F4 (§17) |
+| **A3. Report a problem** | a "Report a problem" link on every page of both apps; reports kept privately in each app's own database with a page for her to triage; a reference on every error page; a problem report and automatic error reports on the coin-door form; "report to the developers" for other installs; GitHub issue forms and a SECURITY.md for the repos. Spec: §17 | the two apps (+ issue forms in all three) | nothing more: F1–F5 decided (§17) |
 | **A2. One look, four themes** | the shared philosophy and `design/themes.css` (Synthwave, Ledger, Graphite, Follow system) with the contrast test; per-user choice in both apps (one setting for every width); the four colour fixes. **The deck stays Synthwave.** | the two apps (+ the shared file from Gatbox) | nothing more: T1–T4 decided |
 | **B. The library on the deck** | `library.sqlite`, seed, readers switched over; LIBRARY on the 7"; the title search; manual fetch on request; MISSING; the CHECK screen; known-good marks; space on SYSTEM | Gatbox | the seed review; new units shown before install |
 | **C. Dumps and burns to their world** | `rom_dump`, `burn`, the file endpoints; the apps store and show them | all three | deploys |
@@ -598,17 +598,63 @@ phase A, before cabcrawl goes into service.
 - **`SECURITY.md`:** how to report a security problem privately, through GitHub's private
   vulnerability reporting, not an issue.
 
+**The public coin-door form** (the owner, 2026-10-28: "or if there's a bug in the coin door
+form"). Whoever scans a coin door has no login, and a broken form loses the fault they came to
+report, so this form gets its own way back:
+- **"Problem with this form?"** under the form opens one text box (what went wrong, 500
+  characters at most). It posts to a new `/report/<token>/problem` in the same blueprint, so the
+  printed `/report/<token>` labels don't change and the route table still shows the blueprint
+  reaching nothing else.
+  - Same rules as the form itself: the token is the authorisation, CSRF-exempt for the same
+    reason, a per-token limit (3 an hour), a honeypot field, text only (no photo, no name
+    asked for). It's stored in `feedback` with the source `coin_door` and the machine, and
+    raises the `feedback` alert like any other report.
+  - An unknown token is a 404, exactly as the form's is, so it can't be used to guess tokens.
+- **A server error on the form is reported without anyone typing.** The error page says
+  "Something went wrong and your report wasn't saved · reference 7F3A2C · please tell the staff",
+  and the error itself is written to `feedback` (source `error`, the page, the reference, no
+  form text) with a new `public_error` alert, so she hears about it even if nobody says a word.
+  A failure while writing that row is only logged; it never hides the error page.
+- **The Tech Tracker's `/d/` customer links** get the second half only: an error there is
+  written to `feedback` as source `error` and counted on the dashboard. No form: a customer
+  with a broken invoice link texts the shop.
+
+**People using the apps at other places** (the owner, 2026-10-28: "for future people who use
+the app"). New staff at her installs need nothing new: every signed-in user can report (F1).
+Once other arcades or techs run their own copy (§14), their reports stay in **their** app,
+read by **their** admins, and never reach her or anyone else on their own. What reaches her is
+what their admins choose to send:
+- **"Report to the developers"** on the Feedback page beside "copy as issue". It opens the
+  repo's bug form on GitHub in a new tab, already filled in with the report's text (stripped as
+  for "copy as issue"), the app's version, the route pattern (`/maintenance/<id>`, never the
+  real address) and the browser. Nothing is sent until that admin reads it and presses Submit
+  on GitHub. GitHub fills a form field from the address when the field has an `id`
+  (`/issues/new?template=bug.yml&version=…&page=…`); the forms below are written with those ids.
+- **Where it goes is a setting:** `UPSTREAM_ISSUES_URL`, the public repo's issues by default.
+  An install that forks the app points it at its own repo; an empty value hides the button.
+- **A reporter without a GitHub account** tells their own admin through "Report a problem",
+  as now. Security problems go through `SECURITY.md` (private vulnerability reporting), never
+  an issue.
+- **The issue forms** ask for the version and the page and warn, at the top and beside the
+  text box, not to paste customer, business or personal data.
+
 **Tests (each app):**
 - any role can file a report and can't see others' unless allowed;
 - the page and the app's version are recorded;
 - the error page's reference matches the logged one;
 - the Feedback page is limited to its roles;
-- "copy as issue" leaves out the reporter, ids and photo;
-- cabcrawl's `feedback` alert reaches the outbox.
+- "copy as issue" and "report to the developers" leave out the reporter, ids, real addresses and
+  the photo, and the link is the configured URL (none when it's empty);
+- cabcrawl's `feedback` and `public_error` alerts reach the outbox.
+- cabcrawl's coin-door problem report: stored with its machine, limited per token, 404 for an
+  unknown token, the honeypot drops a bot's post, and a forced error on the form writes the
+  `error` row and still shows the reference.
+- the Tech Tracker's `/d/` error is recorded and counted.
 
-| # | question | recommended |
+| # | question | decided |
 |---|---|---|
-| F1 | Who can report? | **Any signed-in user, every role.** Not the public pages (the coin-door form, the Tech Tracker's `/d/` links): customers and guests already have their own ways in. |
+| F1 | Who can report? | **Any signed-in user, every role** (the owner: "as recommended works"). **Plus the coin-door form** (her ask): "Problem with this form?" and automatic error reports, above. The Tech Tracker's `/d/` links get automatic error reports only. |
 | F2 | Who reads and triages? | **cabcrawl: managers and admins** (so the boss sees them too). **The Tech Tracker: owner.** |
-| F3 | How she hears about a new one | **cabcrawl: its alert channels** (a `feedback` event, chosen per channel). **The Tech Tracker: a count on the dashboard now, ntfy with phase I.** |
+| F3 | How she hears about a new one | **cabcrawl: its alert channels** (a `feedback` event and a `public_error` event, chosen per channel). **The Tech Tracker: a count on the dashboard now, ntfy with phase I.** |
 | F4 | GitHub issue forms and a SECURITY.md | **Yes, in all three repos,** with the privacy warning. Nothing is ever filed automatically. |
+| F5 | Reports from other places that run the apps | **Their admins send them on**, with "report to the developers": a prefilled GitHub form they read and submit themselves. `UPSTREAM_ISSUES_URL` chooses where; empty turns it off. |

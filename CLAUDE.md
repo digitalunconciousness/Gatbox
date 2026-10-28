@@ -1,5 +1,10 @@
 # GATBOX (GDD-GAT/01) — context for Claude sessions
 
+**Read `docs/agents/RULES.md` first.** It is the one set of agent rules for GATBOX, cabcrawl and the tech
+tracker (GATBOX owns it; the other two vendor it), and it wins where this file disagrees, except on this
+repository's own facts and the hard rules below. The integration plan it serves is
+`docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md`.
+
 Portable arcade-board diagnostic box (Greybard Diagnostics and Design). This Raspberry Pi 5 (4 GB + Active Cooler,
 Raspberry Pi OS Trixie 64-bit **Desktop**, labwc, hostname `gatbox`, user `<user>`) is a self-starting **rail
 logger** that gets left inside an arcade cabinet overnight, and is becoming the bench brain: 7" touch dashboard,

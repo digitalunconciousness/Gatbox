@@ -581,6 +581,17 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   - [ ] Installed (bootstrap: program files only, no system config)
   - [ ] ⏸ Owner: the 7" in use, and TOUCH TEST run on it. A steady offset → a libinput calibration
         matrix for the WS170120 (a udev rule: shown first, rule 5); scatter only → nothing more.
+- **The integration plan, phase A (2026-10-28):** `docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md`,
+  approved by the owner. Repo-only on this side (nothing installed changes except the guard above).
+  - [x] Contract v1 is GATBOX's now: the README takes the hub's 10-26 additions and writes down the Phase 8 extras
+        and the five order priorities; the roster example carries `model_key`; `docs/contract/checksums.sh`
+        checks and regenerates CHECKSUMS; `test-contract.sh` compares each sibling hub checkout's copy. 15 → 20.
+  - [x] One set of agent rules for the three repos, `docs/agents/RULES.md` (vendored into the hubs;
+        `test-rules.sh`), and CLAUDE.md points at it.
+  - [x] One privacy check: `scripts/privacy_check.sh` and `.githooks/pre-push`, byte-identical in all three; this
+        repo's own paths in `.githooks/privacy.conf`. New here: emails are checked, a missing patterns file refuses
+        the push, and a refusal never prints the pattern. `test-hooks.sh` 17 → 24.
+  - [ ] ⏸ Owner: merge the three PRs together (the contract, the rules and the check must match in all three)
 - In a cabinet with no known Wi-Fi, the hotspot comes up ~90 s after boot: join **GATBOX**,
   Pi at `10.42.0.1` / `gatbox.local`. Since 2026-10-05 it also drops again by itself when a
   saved network comes back into range, and there are three ways to join a new one — see

@@ -1,6 +1,10 @@
 # One set of agent rules for the three repos — draft
 
-Status: **draft for the owner's approval, 2026-10-28.** Nothing in any CLAUDE.md has changed yet.
+Status: **decided by the owner and landed, 2026-10-28,** as `docs/agents/RULES.md` (vendored into both
+apps, with the shared privacy check in §6). The rules file is the one in force; this note keeps the
+reasoning and the table of what changed. The text below is the draft as approved; the landed file adds
+the problem-report rule (§2.10), `.githooks/privacy.conf` and the shared hook (§6), and the list of
+shared files (§4).
 
 The owner wants one set of agent rules for Gatbox, cabcrawl and ArcadeTech-Tracker. Today each
 CLAUDE.md carries its own, and they disagree in ways that block cross-repo work. For example,

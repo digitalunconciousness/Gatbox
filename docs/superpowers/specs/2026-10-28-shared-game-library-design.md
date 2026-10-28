@@ -1,44 +1,52 @@
-# One game library for both apps — design
+# The game library (the knowledge archive) — design
 
-Status: **draft for the owner's approval, 2026-10-28. No code yet.**
-Repos: Gatbox (this one), cabcrawl (the floor app, formerly arcade-tracker), ArcadeTech-Tracker
-(the tech hub, deployed as shop-hub). Each repo's CLAUDE.md still governs its own code.
+Status: **draft for the owner's approval, 2026-10-28. No code yet.** Revised the same day after
+the owner's rule that **cabcrawl and the Tech Tracker never talk, not even through the deck.**
+This is the detailed spec behind §4 of `2026-10-28-gatbox-integration-plan.md`, which comes
+first.
 
-The goal: for a game (a model, not a cabinet), both apps hold the same entry: manuals (title,
-kind, source URL, sha256, pages, and the PDF), MAME set and ROM list, rail limits with the manual
-page and quote, and facts (fuses, monitor, PSU). The owner enters and fixes entries on the 7";
-her partner reads and fixes the same entries on the tech tracker from his phone. The gatbox keeps
-a full offline copy, PDFs included. Its offline edits wait in an outbox. When two places change
-the same entry, she sees both side by side and chooses; nothing is overwritten silently.
-Customer machines link to a game by `model_key`.
+Repos: Gatbox (this one), cabcrawl (the barcade's floor app, formerly arcade-tracker),
+ArcadeTech-Tracker (the side business, deployed as shop-hub). Each repo's CLAUDE.md still
+governs its own code.
+
+The goal: one place, the deck, holds everything the owner has learned about each game (a model,
+not a cabinet): manuals (title, kind, source URL, sha256, pages, and the PDF), the MAME set and
+ROM list, known-good ROM images, rail limits with the manual page and quote, and facts (fuses,
+monitor, PSU). It's for the bench (less searching on the spot) and for the archive (the
+knowledge is disappearing). Each app holds the entries for **its own machines' models**, so the
+barcade's staff and the partner can read and fix them. The owner enters and fixes entries on
+the 7"; the partner reads and fixes them in the Tech Tracker from his phone. The deck works with
+no network, and its offline edits wait in an outbox. When two places change the same entry, she
+sees both side by side and chooses; nothing is overwritten silently. Machines link to a game by
+`model_key`.
 
 ---
 
 ## 0. The design in one paragraph
 
-Each app gets a full copy of the library in its own database, with the PDFs in its own private
-file store. **The apps never talk to each other.** The Pi already holds a token for each, so it
-relays: every sync run pulls each app's changes since the last run, merges them with the 7"'s
-own edits, and pushes the result to whichever copy lacks it. Every write to a copy is
-compare-and-set: it names the revision it replaces, and a stale write is refused with the
-current version. So nothing anyone typed can be replaced unseen. When two places changed the
-same entry, nothing moves and the 7" shows both. The Pi keeps its own full copy (SQLite, plus
-the PDF folder it already has), so it works with no network. Its edits that haven't gone up yet
-are the outbox. The contract change is additive to v1, behind a `library` capability, exactly
-as Phase 8 added `jobs`.
+**The deck is the archive's home.** It holds every entry for every machine she has ever seen,
+PDFs included, in SQLite plus the PDF folder it already has, and it works with no network.
+**Each app holds a copy of the entries its own machines use** (by their `model_key`), in its own
+database and private file store. The deck syncs with each app **separately**. It pulls the
+app's library changes and merges them with its own, then pushes what the app lacks. Every write
+is compare-and-set: it names the revision it replaces, and a stale write is refused with the
+current version, so nothing anyone typed is replaced unseen. Same-entry conflicts wait on the 7"
+for her choice. **Nothing goes from one world to the other on its own:** a change made in one
+app reaches the other app's copy only once she adopts it on the deck (decision K in the plan).
+The contract change is additive to v1, behind a `library` capability, as Phase 8 added `jobs`.
 
 ```
-   tech tracker (shop-hub)                     floor app (cabcrawl)
-   library tables + PDFs                       library tables + PDFs
-   partner edits (phone)                       read-only for everyone
-          ▲   │ changes feed                          ▲   │ changes feed
-   CAS PUT│   ▼ GET /api/v1/library/…          CAS PUT│   ▼ GET /api/v1/library/…
-          │                                            │
-          └──────────── gatbox-sync (the Pi) ──────────┘   ← the only merger; calls out only
-                              ▲   │ the same protocol on loopback
-                              │   ▼
-                     gatbox-web: library.sqlite + /srv/gatbox/manuals
-                     the 7" edits here (offline OK); unsent edits = the outbox
+   Tech Tracker (side work)                      cabcrawl (the barcade)
+   entries for its assets' models                entries for its games' models
+   partner edits (phone)                         read-only for everyone
+          ▲   │ changes                                  ▲   │ changes
+   CAS PUT│   ▼ GET /api/v1/library/…             CAS PUT│   ▼ GET /api/v1/library/…
+          │                                               │
+          └──── gatbox-sync: one world at a time ─────────┘  ← never carries one world's
+                         ▲   │ the same protocol on loopback   changes to the other unless
+                         │   ▼                                 she ADOPTs them on the 7"
+                gatbox-web: library.sqlite + /srv/gatbox/manuals
+                THE WHOLE ARCHIVE; the 7" edits here; unsent edits = the outbox
 ```
 
 ---
@@ -57,6 +65,7 @@ cabinet.
 | PDFs | `/srv/gatbox/manuals/<slug>/<id>.pdf` + `.json` sidecar (title, kind, url, source, sha256, pages, bytes, added, date) + `.txt` | slug / doc id | `gatbox-manuals fetch` (the owner), gatbox-web upload (phone or 7"), dropped in by hand (no sidecar) |
 | MAME set | `data/gatbox-mame-sets.json` (git-ignored): `{set, prefer, status: sure\|check\|none, why}` | slug | by hand |
 | ROM list | `/usr/local/share/gatbox/mame-roms.json`, built at install by `gatbox-mame-roms` from `mame -listxml` | slug | the bootstrap |
+| ROM dumps | `/srv/gatbox/roms/<machine>/<label>_<sha1:8>.bin` + sidecar (part, label, size, sha1, crc32, `mame -romident` result, reads compared); `burns.jsonl` | machine slug | `gatbox-dump` (read twice, identify, archive) |
 | rail limits | three layers in `profiles.machine_specs()`: `gatbox-machine-specs.json` (in git, one machine) < `machine-specs-confirmed.json` (state: CONFIRM of a list entry) < `machine-actuals.json` (state: per machine) | slug | CONFIRM on the dashboard; actuals typed or from the meter |
 | facts | `specs.sheet[{what,value,doc,page,quote}]` in the manuals list; per-machine actual facts in `machine-actuals.json` | slug | by hand; dashboard |
 
@@ -70,10 +79,11 @@ cabinet.
   as its own user, reads gatbox-web over loopback HTTP and imports nothing from it. gatbox-web
   reads sync's state directory read-only. The order outbox belongs to gatbox-web: sync drains
   it with `GET /api/orders`, and gatbox-web learns what went out from sync's sent ledger. Uids
-  are minted once, so a re-send comes back `duplicate`. New behaviour is gated by a hub's
-  capabilities. Writes are the Pi's own screen only (`is_local()`).
+  are minted once, so a re-send comes back `duplicate`. Each hub has its own state directory,
+  and routing by machine already keeps each world's traces apart. New behaviour is gated by a
+  hub's capabilities. Writes are the Pi's own screen only (`is_local()`).
 
-### 1.2 cabcrawl (the floor app)
+### 1.2 cabcrawl (the barcade)
 
 - `Game` is **one cabinet**: name, `barcode` (= the roster slug, printed on labels,
   permanent), manufacturer, year, genre, location, status, counters. There's no title/model
@@ -83,13 +93,13 @@ cabinet.
 - Rail data: `RailSession` / `Reading` exactly as GATBOX computed them (floats). No per-machine
   limits.
 - Files: work-order photos live under `static/maintenance_photos`, a public static path. That's
-  the wrong model for copyrighted PDFs.
+  the wrong model for copyrighted PDFs and ROM images.
 - Devices: `gbx_` tokens, each allowed every machine or an allow-list (2026-10-26). Roles go
   readonly < operator < manager < admin. Tests and dev run on SQLite, production on PostgreSQL.
 - v1 roster entries: `slug, name, status, location`, with no `model_key`. Its contract test
   asserts the **exact key set** of `roster-response.json`.
 
-### 1.3 shop-hub (the tech tracker)
+### 1.3 shop-hub (the Tech Tracker)
 
 - `Asset` is a customer's machine or board: `tag` (`s-NNNN-name`, permanent, enforced by a
   trigger), name, manufacturer, `model` (free text), and **`model_key`** (String(60),
@@ -111,64 +121,49 @@ cabinet.
   because nothing compares one repo's copy with another's.
 - The Phase 8 extras are built in Gatbox and shop-hub but **not written in the contract** text or
   examples: health `app`/`capabilities`, roster `model_key`, orders `work_order`/`nte`, and
-  `phase`. The brief says `model_key` is "already in contract v1". In practice it's in the code
-  and in `docs/PLAN.md`, not in `contract/v1/`.
+  `phase`. `model_key` is in the code and in `docs/PLAN.md`, not in `contract/v1/`.
 
 ### 1.5 What follows from this
 
-- Neither app has a "game". The Pi's library is the only one, and it's keyed by cabinet slugs.
+- Neither app has a "game". The deck's library is the only one, and it's keyed by cabinet slugs.
 - `model_key` is the right hook, but today it means "a barcade slug this Pi has".
 - Everything the library needs has a pattern already: pull/push with idempotent uids, an
-  outbox drained over HTTP, capability gating, a content-addressed private file store, and
-  device tokens.
+  outbox drained over HTTP, per-hub state, capability gating, a content-addressed private file
+  store, and device tokens.
 
 ---
 
-## 2. Where the library lives, and how the copies stay identical
+## 2. Where the library lives
 
-**Every copy holds the whole library:** cabcrawl's database and file store, shop-hub's database
-and file store, and the Pi (SQLite plus `/srv/gatbox/manuals`).
-
-Ways to keep the two apps identical:
-
-| | how | verdict |
+| copy | holds | why |
 |---|---|---|
-| A | one app is primary; the other copies it over a server-to-server link | **No.** The apps are separate on purpose (shop-hub's PLAN: "Why not inside the tracker"): different hosts, different tunnels. It would need app-to-app credentials, and a release of one could break the other. |
-| B | one app holds the library and the other reads it live | **No.** Same coupling, and barcade staff would depend on the side business's server, or the other way round. |
-| C | **the Pi relays** | **Recommended.** "The gatbox is the tool connected to both": it already holds a token for each, and it already calls out to both. No new network path: neither hub ever calls the other, or the Pi. |
+| **the deck** | **everything**: every model she has seen, from either world or neither, PDFs included | her one place; the bench works offline; the archive |
+| cabcrawl | the entries for models its `Game`s use (`Game.model_key`, new) | the barcade's staff read their own machines' manuals in their own app |
+| Tech Tracker | the entries for models its `Asset`s use (`Asset.model_key`, exists), plus entries created there | the partner reads and fixes them from his phone |
+| off-deck backup | everything (plan §4.4: USB drive and/or a host she names) | an SD card in a cyberdeck is the most fragile place for lost knowledge |
 
-**The cost of C:** an edit on the tech tracker reaches cabcrawl only through the Pi's next sync
-while it's online (every two minutes when the Pi has a network). If the Pi stays off for a
-week, cabcrawl's copy is a week behind. For a library that changes a few times a week, that's
-acceptable, and nothing is lost meanwhile: the change waits in the tech tracker's change feed.
-The protocol also tolerates a second device relaying (§5.2), so a later Pi doesn't need a
-redesign.
-
-**How "identical" is kept and checked.** Each copy is a plain store with two properties:
-
-1. **A change feed.** Every write gets the next revision number, so "what changed since N" is
-   one query.
-2. **Compare-and-set writes.** A write names the revision it replaces (`if_rev`). If the record
-   has moved on since, the write is refused with the current version.
-
-gatbox-sync remembers, per copy and per record, the last revision it saw. That's the version
-vector, held in one place. §5 describes the merge. To *prove* the copies match, each copy also
-serves a **digest**: a sha256 over every record's kind, id and content hash. The SYSTEM tile
-shows "library identical" when all digests agree, and lists the records that differ when they
-don't.
+- **Scoping to each app's models is what keeps the worlds apart.** The barcade's copy never
+  shows which models turned up on side jobs, and the Tech Tracker's copy never shows the
+  barcade's floor.
+- The two apps never talk, so neither can be the single source of truth for knowledge both
+  use. **The deck is the source of truth for the archive, and each app is the source of truth
+  for its own edits until they reach the deck.**
+- An edit made in an app always reaches the deck's archive (that's the point of letting the
+  partner fix entries). Whether it then reaches the *other* app's copy is decision K: the
+  recommended answer is only when she ADOPTs it on the 7" (§5.2).
 
 ### What is in the library, and what is not
 
-| in the library (model-level) | stays where it is (machine-level) |
+| in the library (model-level knowledge) | not library (it belongs to one machine, in one world) |
 |---|---|
 | game: title, maker, year, kind, notes | the cabinet: location, status, counters, the roster's faults/parts/risk (the roster file's schema is frozen) |
-| documents and their PDFs | customers, sites, assets, jobs (shop-hub only) |
-| MAME set; the ROM list it gives | per-machine **actuals** (the Pi, keyed by machine slug, as today) |
-| rail limits read off a manual page, with page, quote and whether confirmed | the machine → game link: `Game.model_key` (cabcrawl, new) and `Asset.model_key` (shop-hub, exists), each owned by its app |
+| documents and their PDFs | customers, sites, assets, jobs, money |
+| MAME set; the ROM list it gives | ROM **dumps** of a machine, and burns: bench records, sent to that machine's world (plan §5) |
+| **known-good ROM images:** a hash (and optionally the image) she has marked good for a model and chip, including chips MAME doesn't have | per-machine **actuals** (the deck, keyed by machine slug, as today) |
+| rail limits read off a manual page, with page, quote and whether confirmed | the machine → game link: `Game.model_key` / `Asset.model_key`, each owned by its app |
 | facts read off a manual (fuses, monitor, PSU) | |
 
-**No library record names a machine, a customer or a site.** That's what lets the same library
-sit in both apps.
+**No library record names a machine, a customer, a site or a world.**
 
 ---
 
@@ -176,8 +171,8 @@ sit in both apps.
 
 Rules (one function, the same in all three repos, with shared test vectors):
 
-- `^[a-z0-9]+(-[a-z0-9]+)*$`, at most **60** characters (shop-hub's column; the Pi's slug check
-  allows 64).
+- `^[a-z0-9]+(-[a-z0-9]+)*$`, at most **60** characters (shop-hub's column; the deck's slug
+  check allows 64).
 - Made from the title the way the roster makes slugs (`roster.slugify`): lower-case words
   joined by hyphens, apostrophes dropped, `&` read as `and`, accents folded. Pinball keys start
   with `pin-`, the roster's own convention.
@@ -193,7 +188,7 @@ Alternatives considered:
 
 - **MAME short names:** pinball, PC-based games and newer games have none. They also name
   versions rather than games, and the partner can't read `gauntleg` on a phone. They stay as
-  data in the `mame` record.
+  data in the `mame` record, and they're how the deck *suggests* a key (plan §4.2).
 - **UUIDs:** the Phase 8 roster and the 7" already use readable slugs, and the partner types the
   key into shop-hub.
 
@@ -202,42 +197,24 @@ all of them, e.g. `gauntlet-legends`), that slug *becomes* the key. Any `model_k
 to a barcade slug keeps resolving. Two cabinets of one game, or a slug with a cabinet-specific
 part, are mapped to one key in the seed review (§7).
 
-Whoever adds a game (the 7" or the tech tracker) mints the key from the title with that rule,
-and sees it before saving (a dry run, like ADD MACHINE). If two places mint the same key
-offline with different content, that's a conflict like any other (§5).
+Whoever adds a game (the 7" or the Tech Tracker) mints the key from the title with that rule,
+and sees it before saving (a dry run, like ADD MACHINE). If two places mint the same key with
+different content, that's a conflict like any other (§5).
 
 ---
 
-## 4. The contract change: additive in v1
+## 4. The contract: additive in v1
 
-**Recommendation: additive to v1, behind a `library` capability.**
+**Recommendation: additive to v1, behind a `library` capability.** The full contract plan,
+including drift, ownership and the world extensions, is in plan §8. For the library:
 
 - Nothing existing changes: no request shape, uid rule or endpoint. An old Pi never asks, and a
-  hub that doesn't list `library` is never asked. This is the mechanism Phase 8 used for `jobs`.
-- A v2 would mean running two contracts side by side through a transition, with nothing to
-  migrate. Save v2 for the day an existing shape has to change.
+  hub that doesn't list `library` is never asked.
 - "GATBOX pushes, the hub never connects to GATBOX" stays true: the Pi pulls library changes,
   exactly as it pulls rosters and orders today.
-
-The contract work, landed byte-identical in all three PRs:
-
-1. **Fix the drift:** re-vendor cabcrawl's 2026-10-26 README into Gatbox and shop-hub.
-2. **Write down what's already built:** health `app` and `capabilities`, roster `model_key`,
-   orders `work_order` / `nte`, and `phase` on `rail_session` / `session_tag`. Add `model_key`
-   to `roster-response.json` (one entry with a key, one with `null`), and add it to cabcrawl's
-   roster, which then sends `Game.model_key`.
-3. **New `library.md`**, with examples: `library-changes-response.json`,
-   `library-put-request.json`, `library-put-response.json`, `library-file-status.json`, and
-   `library-vectors.json` (canonical-JSON hashes and `model_key` slugs that every repo's test
-   reproduces, like the uid rules).
-4. Regenerate CHECKSUMS.
-
-**Ownership.** The README says the hub owns v1. shop-hub's PLAN already recommends moving
-ownership to Gatbox at the next real change, "because GATBOX is the one client that every hub
-serves". The library protocol is defined by the relay, so: **Gatbox owns `contract/v1` from
-here, and the apps vendor it** (decision 4). To catch drift, each repo's contract test also
-diffs its copy against sibling checkouts when they're present (`../cabcrawl`, `../Gatbox`, …)
-and skips with a note when they aren't. Every contract PR states that the three copies match.
+- The library protocol is **core** contract (both apps implement the same shape), in
+  `library.md`, with examples and `library-vectors.json` (canonical-JSON hashes and `model_key`
+  slugs that every repo's test reproduces, like the uid rules).
 
 ### 4.1 The library protocol (a sketch; the final wording goes in `library.md`)
 
@@ -248,16 +225,19 @@ the device has library access switched on at the hub (a new per-device switch, o
 |---|---|---|
 | GET | `/api/v1/library/changes?since=<cursor>&limit=500` | changed records since the cursor, oldest first; `cursor`, `more` |
 | PUT | `/api/v1/library/records` | up to 100 writes, each compare-and-set |
-| GET | `/api/v1/library/digest` | `{count, digest}` over the whole library |
-| GET | `/api/v1/library/files/<sha256>` | the PDF, `Range` honoured for resume |
-| GET | `/api/v1/library/files/<sha256>/status` | `{have: true}` or `{have: false, parts: [...], size}` |
-| PUT | `/api/v1/library/files/<sha256>/parts/<n>?of=<N>&size=<bytes>` | one part, at most 8 MB |
+| GET | `/api/v1/library/digest` | `{count, digest}` over the hub's copy |
+| GET | `/api/v1/files/<sha256>` | a file (PDF or ROM image), `Range` honoured for resume |
+| GET | `/api/v1/files/<sha256>/status` | `{have: true}` or `{have: false, parts: [...], size}` |
+| PUT | `/api/v1/files/<sha256>/parts/<n>?of=<N>&size=<bytes>&type=<pdf\|rom>` | one part, at most 8 MB |
+
+The file endpoints are shared with ROM dumps (plan §5), so they sit at `/api/v1/files/`, not
+under `library/`.
 
 A record in the change feed:
 
 ```json
 {"kind": "rail_limit", "id": "3f2a…", "rev": 118, "hash": "<sha256 of canonical data>",
- "deleted": false, "at": 1790000000.0, "by": "<who, as the hub shows them>",
+ "deleted": false, "at": 1790000000.0, "by": "<who, as that hub shows them>",
  "data": {"model_key": "widget-wars", "rail": "+5V", "lo": "4.75", "hi": "5.25",
           "doc_id": "widget-wars-manual", "page": 2, "quote": "+5 VDC 4.75 to 5.25 V",
           "confirmed": {"by": "gatbox", "at": 1789990000.0}}}
@@ -278,9 +258,11 @@ A write:
 - Each record gets a result: `created`, `updated`, `duplicate`, `conflict` (with `current`, the
   hub's record; nothing written), or `rejected` (with a reason). A malformed request is a 400
   that writes nothing, as with ingest.
-- **Parents first:** a game before its children, and a document that names a sha256 only once
-  the hub has that file. Otherwise the record is `rejected` and goes again next run, the same
-  rule as "send the session before the order".
+- **Parents first:** a game before its children, and a record that names a sha256 only once the
+  hub has that file. Otherwise the record is `rejected` and goes again next run, the same rule
+  as "send the session before the order".
+- **Writes from a device are attributed to the deck,** never to a person in the other world.
+  The `by` a hub sends stays on the deck.
 
 Record kinds (`data`):
 
@@ -289,7 +271,8 @@ Record kinds (`data`):
 | `game` | the `model_key` | `title, mfr, year, kind (video\|pinball\|other), notes, replaced_by` |
 | `document` | `<model_key>/<doc_id>` | `model_key, doc_id, title, kind (manual\|schematics\|parts\|kit\|bulletin\|other\|yours), source_url, source, sha256, pages, bytes`; `sha256: null` = listed but not fetched yet |
 | `mame` | the `model_key` | `set, prefer, status (sure\|check\|null), why` |
-| `rom_list` | the `model_key` | `mame` (version), `set`, `versions[{name, parent, description, roms[{name, size, crc, sha1}]}]`. **Written only by a device:** the Pi builds it from `mame -listxml`, and people can't edit it in the apps. |
+| `rom_list` | the `model_key` | `mame` (version), `set`, `versions[{name, parent, description, roms[{name, size, crc, sha1}]}]`. **Written only by a device:** the deck builds it from `mame -listxml`, and people can't edit it in the apps. |
+| `rom_image` | uuid | `model_key, chip` (location / label), `size, crc32, sha1, sha256, verdict (good\|bad\|unknown), revision, note, image` (sha256 of the file, or null for hash only) |
 | `rail_limit` | uuid | `model_key, rail, lo, hi, doc_id, page, quote, confirmed (null \| {by, at})` |
 | `fact` | uuid | `model_key, group (fuse\|monitor\|psu\|power\|other), what, value, doc_id, page, quote` |
 
@@ -301,35 +284,34 @@ Record kinds (`data`):
 - **Games are never deleted:** they retire with `replaced_by`. Children can be deleted
   (tombstones).
 - **Limits:** title 120, notes 2000, quote 500, what 60, value 120, why 500, source 200,
-  `source_url` 500 (https), `rom_list` 2 MB. Files: 400 MB (the Pi's fetch limit); parts 8 MB,
+  `source_url` 500 (https), `rom_list` 2 MB. Files: 400 MB (the deck's fetch limit); parts 8 MB,
   under both the ingest body limit and Cloudflare's request-body cap on the tunnels (100 MB on
   the Free and Pro plans; a larger body is a 413 at the edge). Responses aren't capped, so a
   download is one ranged GET.
 - **Files** are content-addressed by sha256. When the last part lands, the hub checks the hash,
-  the `%PDF-` header and the size. Parts already received survive across runs.
+  the type (`%PDF-` for a PDF) and the size. Parts already received survive across runs.
 
 ---
 
 ## 5. Sync and conflict handling
 
-### 5.1 On the Pi
+### 5.1 On the deck
 
-- **gatbox-web owns the Pi's copy:** `/var/lib/gatbox-web/library.sqlite`, written with stdlib
-  `sqlite3` in WAL mode. It holds records, the change feed and the uid behind each revision,
-  with exactly a hub's semantics. It serves **the same protocol on loopback**
-  (`/api/library/changes`, `/records`, `/digest`, `/files/…`), with writes from the Pi's own
-  screen and loopback only, as for orders and Wi-Fi.
-- **The 7"'s edits are local writes, and the outbox is "local changes after sync's last
-  cursor".** Nothing extra to keep or prune: it empties as sync pushes.
-- **gatbox-sync relays.** After sessions and orders, a new step replicates across the local copy
-  and every hub that lists `library`, using one code path for all of them. It moves PDF bytes
-  between copies over HTTP in 8 MB parts, so it never needs write access to
+- **gatbox-web owns the archive:** `/var/lib/gatbox-web/library.sqlite`, written with stdlib
+  `sqlite3` in WAL mode. It holds records, the change feed, the uid behind each revision and
+  each record's **origin** (the deck, or the world an edit came from). It serves **the same
+  protocol on loopback** (`/api/library/changes`, `/records`, `/digest`, `/api/files/…`), with
+  writes from the Pi's own screen and loopback only, as for orders and Wi-Fi.
+- **The 7"'s edits are local writes, and the outbox is "local changes the world's copy hasn't
+  taken yet".** Nothing extra to keep or prune.
+- **gatbox-sync syncs each world on its own.** After sessions and orders, a new step runs once
+  per hub that lists `library`, between the archive and that hub, never between two hubs. It
+  moves PDF bytes over HTTP in 8 MB parts, so it never needs write access to
   `/srv/gatbox/manuals`. **No change to the sync or web unit files is expected.**
-- **Sync's state** lives in `/var/lib/gatbox-sync/library/`: a cursor per copy; per copy and
-  record, the last revision and hash seen; the last agreed content (the *base*, shown in
-  conflicts); `conflicts.json`; and a `library` block in `status.json` (waiting to go up, per
-  hub; files moving; conflicts; digests matching). gatbox-web reads all of it read-only, as it
-  reads the rest of sync's state today.
+- **Sync's state** lives in `/var/lib/gatbox-sync/library/<hub>/`: a cursor; per record, the
+  last revision and hash seen; the last agreed content (the *base*, shown in conflicts); and
+  `conflicts.json`. A `library` block in `status.json` holds, per hub: waiting to go up, files
+  moving, conflicts, digest match. gatbox-web reads all of it read-only.
 - **Why SQLite:** a numbered feed, compare-and-set, atomic writes across many records (a
   resolution or the seed touches hundreds), and power-cut safety in a cabinet overnight. It's in
   the standard library: no apt, no pip, no venv. JSON files would need all of that hand-made.
@@ -339,45 +321,56 @@ Record kinds (`data`):
   JSON files (hard rule 3). Until the library is seeded, every reader keeps using today's files
   through today's code.
 
-### 5.2 The merge, per record, each run
+### 5.2 The merge, per world, per record, each run
 
-For each record that changed anywhere since the last run:
+**Scope.** A world's copy gets the records for its models: games its machines name with
+`model_key` (from its roster), and every child of those games. Records created in that world
+are also in scope. A model that leaves the scope (no machine uses it any more) is no longer
+updated there, but it isn't deleted from that copy.
 
-- A copy **changed it** if its revision is past the one sync last saw there *and* its content
-  hash differs from what sync saw.
-- **Nobody changed it:** nothing to do.
-- **One change**, or several identical ones (same hash): write it to every other copy, with
-  `if_rev` = the revision last seen there.
-- **Two or more different changes:** a **conflict**. Nothing is written for that record anywhere.
-  Each side's version and revision is kept, with the base, for the 7".
+For each record in scope that changed on the deck or in that world since the last run:
+
+- **The world changed it** if its revision is past the one sync last saw there *and* its content
+  hash differs.
+- **The deck changed it** if the archive's revision is past the one sync last pushed to that
+  world.
+- **Only the world changed it:** take it into the archive, with origin = that world.
+- **Only the deck changed it:** push it to the world with `if_rev` = the revision last seen
+  there. **Unless decision K is "automatic", a record whose current origin is the *other* world
+  isn't pushed.** It waits on the 7" under ADOPT (below). Once adopted, its origin becomes the
+  deck and it goes out.
+- **Both changed it, the same way:** nothing to do.
+- **Both changed it, differently:** a **conflict**. Nothing is written on either side. Both
+  versions are kept, with the base, for the 7".
 - A push refused as `conflict` (someone edited between the pull and the push) is treated as a
   newly pulled change and judged again. It's never forced.
-- **An unreachable copy** is skipped this run, and its "last seen" stays put. When it comes
-  back, its own edits made in the meantime are judged against what everyone else did: an edit
-  of a version that has since moved on is a conflict, as it should be.
-- **First contact** with a copy: records only it has are copied everywhere. The same id with
-  different content on two sides (one key created twice, say) is a conflict.
+- **An unreachable world** is simply skipped. The other world is unaffected, since they never
+  depend on each other.
+- **First contact:** records only one side has are copied (subject to scope and origin). The
+  same id with different content on both sides is a conflict.
 - **Deletes** are versions too, so an edit against a delete is a conflict.
-- **A second device** relaying the same hubs is safe: its stale push is refused, it pulls the
-  newer version, finds the same hash, and moves on.
-- Conflicts are per entry (one game header, one document, one limit, one fact), as the owner
-  asked. Merging disjoint field changes inside an entry could come later; it isn't needed for
-  entries this small.
+- **A second device** syncing the same hub is safe: its stale push is refused, it pulls the newer
+  version, finds the same hash, and moves on.
+- Conflicts are per entry (one game header, one document, one limit, one fact, one image), as
+  the owner asked.
+
+**ADOPT** (decision K, recommended): LIBRARY → FROM THE APPS lists the archive entries whose
+latest change came from a world, grouped by world, with what changed. ADOPT makes an entry the
+deck's own (origin = deck), so it goes to every world whose scope includes it. Until then,
+each world keeps its own version, and the deck shows both.
 
 ### 5.3 Conflicts on the 7"
 
-- **SYSTEM gets a Library tile:** edits waiting to go up (per hub label), files moving, open
-  conflicts, and "identical" or not. A conflicted entry carries a red CONFLICT badge wherever it
-  shows: MACHINE, MANUALS, LIBRARY.
-- **LIBRARY → CONFLICTS** shows one card per entry, with columns side by side (BEFORE, THIS PI,
-  and each hub's `HUB_LABEL`): who changed it and when, the fields that differ highlighted, and
-  for a limit, the manual page one tap away. **KEEP THIS** under any column; **EDIT** starts
-  from any column.
-- **Her choice is a local write marked `resolves`**, naming the revision of each side she saw.
-  Sync writes it to those copies with exactly those `if_rev`s. A side that changed again
-  meanwhile makes a new conflict and is never overwritten.
-- The partner sees the outcome on his next page load after the Pi's sync. The apps don't hold
-  conflicts. Each one just keeps showing its own version until the resolution lands.
+- **SYSTEM gets a Library tile:** per hub label, edits waiting to go up, files moving, open
+  conflicts, "identical" or not, and entries waiting for ADOPT. A conflicted entry carries a red
+  CONFLICT badge wherever it shows: MACHINE, MANUALS, LIBRARY.
+- **LIBRARY → CONFLICTS** shows one card per entry, with columns side by side (BEFORE, THIS DECK,
+  and the hub's `HUB_LABEL`): who changed it and when, the fields that differ highlighted, and
+  for a limit, the manual page one tap away. **KEEP THIS** under either column; **EDIT** starts
+  from either column.
+- **Her choice is a local write marked `resolves`**, naming the revision of the side she saw.
+  Sync writes it with exactly that `if_rev`. A side that changed again meanwhile makes a new
+  conflict and is never overwritten.
 
 ### 5.4 Rail limits: what the logger trusts
 
@@ -386,53 +379,55 @@ For each record that changed anywhere since the last run:
 - **A change to `lo`, `hi`, `doc_id` or `page` clears `confirmed`.** Every copy enforces this,
   not only the UI: a write that changes one of them and keeps `confirmed` is rejected.
 - **Who confirms:** recommended, the 7" only, where she sees the page beside the numbers, as
-  today. The tech tracker shows a limit as unconfirmed and can add or fix one (decision 3).
+  today. The Tech Tracker shows a limit as unconfirmed and can add or fix one.
 - For a machine, precedence stays Phase 8's: its own actual window > the confirmed library limit
   for its model > user > profile.
 
 ### 5.5 Who edits where
 
-- **The 7":** everything, including CONFIRM and resolving conflicts. A phone on the Pi gets
-  read access plus PDF upload, as today (decision 8).
-- **shop-hub:** owner and tech edit; viewer reads. Pages: games, a game (documents, MAME,
-  limits, facts, ROM list), the PDF viewer, upload a document. The asset page shows its game,
-  and the asset form picks `model_key` from the library.
-- **cabcrawl: read-only for every role, recommended** (decision 2): barcade staff shouldn't
-  change a library the side business depends on, and the Pi is then its only writer. The
-  protocol allows edits there later without change.
+- **The 7":** everything, including CONFIRM, ADOPT and resolving conflicts. A phone on the deck
+  gets read access plus PDF upload, as today.
+- **Tech Tracker:** owner and tech edit; viewer reads. Pages: games, a game (documents, MAME,
+  limits, facts, known images, ROM list), the PDF viewer, upload a document. The asset page
+  shows its game, and the asset form picks `model_key` from the library its copy holds, or
+  proposes a new game.
+- **cabcrawl: read-only for every role, recommended:** barcade staff shouldn't change the
+  owner's archive, and the deck is then its only writer. The protocol allows edits there later
+  without change.
 
 ---
 
-## 6. PDF storage
+## 6. PDF (and ROM image) storage
 
-- **One file per sha256 in each copy;** records point at the hash.
-- **shop-hub:** its existing file store, `SHOP_FILES_DIR/<aa>/<sha256>.pdf`. It's already
-  content-addressed and atomic, never served without a login, and backed up. A PDF goes only to
-  a logged-in user (inline, `Cache-Control: private`, `X-Robots-Tag: noindex`), never through a
-  `/d/` customer link.
+- **One file per sha256 in each copy;** records point at the hash. ROM images use the same file
+  store and endpoints (plan §5).
+- **Tech Tracker:** its existing file store, `SHOP_FILES_DIR/<aa>/<sha256>.<ext>`. It's already
+  content-addressed and atomic, never served without a login, and backed up. A file goes only
+  to a logged-in user (`Cache-Control: private`, `X-Robots-Tag: noindex`), never through a `/d/`
+  customer link.
 - **cabcrawl:** a new `LIBRARY_FILES_DIR` **outside `static/`**: `instance/library/` in
   development (`instance/` is git-ignored) and `/var/lib/arcade-tracker/library` on the server
   (the old name stays, per its rules). It's served only by a `login_required` route, never by
   `/report/<token>` or any page without a login, and it's added to its backup.
-- **The Pi:** `/srv/gatbox/manuals/<model_key>/<doc_id>.pdf` plus the sidecar, the layout it
+- **The deck:** `/srv/gatbox/manuals/<model_key>/<doc_id>.pdf` plus the sidecar, the layout it
   has now. The seed keys equal today's slugs, so the folders are already in the right place.
   gatbox-web writes them (it already can), and sync streams the bytes through gatbox-web's
   loopback file endpoints. A PDF dropped into the folder by hand still works: gatbox-web finds
   a PDF with no record, as it finds one with no sidecar today, and offers ADD TO LIBRARY.
 - **Archives:** `gatbox-manuals fetch` keeps working. It fills documents that have a
   `source_url` and no bytes (the "not fetched" list). The record then gets its sha256, and the
-  file goes up.
-- **Git: never.** Gatbox already ignores `*.pdf`. Each app adds the library folder to its
-  ignore file and its privacy check.
+  file goes up to the worlds whose scope includes it.
+- **Git: never.** Gatbox already ignores `*.pdf` and `*.bin`. Each app adds its file folder to
+  its ignore file and its privacy check.
 - **Transfers:** resumable 8 MB parts. Sessions and orders go first in every run; file parts get
   what's left of the 240 s budget, so a big first upload spans many runs without holding up a
   trace.
 - **Space:** unknown today. `gatbox-manuals list` prints the total, and the owner can run it.
-  Each app stores the whole set, and shop-hub's backups grow by that much.
+  Each app stores only its own models' files.
 
 ---
 
-## 7. Seeding: the Pi's current library into the apps, once
+## 7. Seeding: the deck's current library, once
 
 A new CLI, **`gatbox-library`**, run as the owner (group `gatbox-manuals`, like
 `gatbox-manuals`).
@@ -442,15 +437,15 @@ A new CLI, **`gatbox-library`**, run as the owner (group `gatbox-manuals`, like
    `model_key` (= the slug), flags slugs that look like the same game, and prints counts.
 2. The owner edits the plan where needed: two cabinets to one key, or a slug with a
    cabinet-specific part.
-3. **`gatbox-library seed --apply PLAN`** writes the records into the Pi's copy as local changes,
-   in one transaction. Re-running it with the same plan changes nothing.
-4. **The next sync** with a hub that lists `library` sends the files first, then the records
-   (`if_rev: 0`). An empty hub gets everything `created`. A hub that already has entries (the
-   partner started early) goes through the normal merge: the same key with different content
-   is a conflict on the 7".
-5. **Linking machines:** shop-hub assets already carry `model_key`. cabcrawl gets
-   `Game.model_key` (new, nullable), set by a one-off script from the plan (slug → key) in the
-   style of its `apply_roster_map.py` (dry run, review, apply), plus a field managers can edit.
+3. **`gatbox-library seed --apply PLAN`** writes the records into the archive as the deck's own
+   changes (origin = deck), in one transaction. Re-running it with the same plan changes
+   nothing.
+4. **Linking machines:** cabcrawl gets `Game.model_key` (new, nullable), set by a one-off script
+   from the plan (slug → key) in the style of its `apply_roster_map.py` (dry run, review,
+   apply), plus a field managers can edit. Tech Tracker assets already carry `model_key`.
+5. **The next sync** with each hub that lists `library` sends the files, then the records
+   (`if_rev: 0`), **for that world's models only.** An empty hub gets everything `created`. A hub
+   that already has entries goes through the normal merge.
 
 | today | becomes |
 |---|---|
@@ -461,117 +456,92 @@ A new CLI, **`gatbox-library`**, run as the owner (group `gatbox-manuals`, like
 | `gatbox-machine-specs.json` (in git: one machine, cited "per the owner") | `rail_limit`, confirmed, its source line as the quote |
 | `specs.sheet` | `fact` |
 | `gatbox-mame-sets.json` / `mame-roms.json` | `mame` / `rom_list` |
+| dumps in `/srv/gatbox/roms` | stay bench records (plan §5); she can mark any of them known-good → `rom_image` |
 | `machine-actuals.json` | **not library:** stays per machine |
 
-After the seed, **the library is the source.** The git-ignored list files are read only by
-`gatbox-library import FILE`, which can be re-run for updates prepared off the Pi. Every record
-an import changes becomes a local edit, so it goes through the same conflict rules.
-`gatbox-mame-roms` builds from the library's `mame` records and writes `rom_list` records back.
+After the seed, **the archive is the source.** The git-ignored list files are read only by
+`gatbox-library import FILE`, which can be re-run for updates prepared off the deck. Every
+record an import changes becomes a local edit, so it goes through the same conflict rules.
+`gatbox-mame-roms` builds from the archive's `mame` records and writes `rom_list` records back.
 
 ---
 
 ## 8. What changes in each repo
 
 **Gatbox**
-- The contract (§4).
-- `backend/gatboxweb/library.py`: the store and the loopback protocol.
-  `manuals.py`, `mame.py` and the spec sheet read through it. Every existing URL stays
+- `backend/gatboxweb/library.py`: the archive store and the loopback protocol. `manuals.py`,
+  `mame.py` and the spec sheet read through it. Every existing URL stays
   (`/api/manuals/<slug>`, `/api/specs/<slug>`, `/api/mame/<slug>`, confirm, upload: rule 14).
-- `roster.library(slug)`: the `model_key` from any hub roster if the library has it, else the
-  slug if the library has a game by that key, else nothing.
-- The dashboard's **LIBRARY** view (games, a game's documents, MAME, limits, facts; ADD GAME;
-  CONFLICTS), built under the existing `html.box` rules (one keyboard, pickers as buttons, the
-  bezel margin).
-- gatbox-sync: the library step, its status, `GATBOX_SYNC_DRYRUN` printing the merge plan.
-- `gatbox-library` (seed, import). `gatbox-manuals` and `gatbox-mame-roms` read the library.
+- `roster.library(slug)`: the `model_key` from the machine's hub roster if the archive has it,
+  else the slug if the archive has a game by that key, else nothing.
+- The dashboard's **LIBRARY** view (games, a game's documents, MAME, known images, limits, facts;
+  ADD GAME; CONFLICTS; FROM THE APPS), built under the existing `html.box` rules (one keyboard,
+  pickers as buttons, the bezel margin).
+- gatbox-sync: the library step per hub, its status, `GATBOX_SYNC_DRYRUN` printing the merge
+  plan.
+- `gatbox-library` (seed, import). `gatbox-manuals` and `gatbox-mame-roms` read the archive.
 - **System config, shown before install (rule 5):** rebuilding a ROM list when a set changes
   needs `mame -listxml` (a minute or two of CPU), which today runs only at install. Proposed:
   a `gatbox-mame-roms.path` / `.service` pair that watches a request file gatbox-web writes,
-  like `gatbox-dump.path`. That's the only new unit.
+  like `gatbox-dump.path`.
 - Tests:
   - `test-library.py`: store, compare-and-set, feed, a retried uid comes back `duplicate`,
-    the `confirmed` rule.
-  - `test-sync.sh`, against stub hubs: one side changed, both changed the same way, a
-    conflict, an unreachable copy, a lost reply, edit against delete, a resumed file, digests.
-  - `test-dash.py`: LIBRARY and CONFLICTS.
+    origin, the `confirmed` rule.
+  - `test-sync.sh`, against two stub hubs: scope, one side changed, both the same way, a
+    conflict, an unreachable hub, a lost reply, edit against delete, a resumed file, digests.
+    **A test that nothing from one stub hub is ever sent to the other without ADOPT.**
+  - `test-dash.py`: LIBRARY, CONFLICTS, FROM THE APPS.
   - `test-contract.sh`: the vectors.
   - The raillog tests: the window from `library-specs.json`, and today's behaviour without it.
 
-**cabcrawl**
-- Library tables + feed + Alembic migration (registered in `scripts/check_schema.py`), the API,
-  `Device.library`, `Game.model_key` and roster `model_key`.
-- Read-only pages: the game list, a game, the PDF viewer behind login, and "Game: …" on the
-  machine page.
-- The link script, the characterization snapshot, and screenshots at 390 and 1280.
+**cabcrawl:** library tables + feed + Alembic migration (registered in
+`scripts/check_schema.py`), the API, `Device.library`, `Game.model_key` and roster
+`model_key`. Read-only pages: the game list, a game, the PDF viewer behind login, and
+"Game: …" on the machine page. The link script, the characterization snapshot, and
+screenshots at 390 and 1280.
 
-**shop-hub**
-- The same tables in PostgreSQL (`grant_app()`, `EXPECTED_GRANTS`), the API, `Device.library`.
-- Mobile-first library pages with editing for owner and tech, the asset page's game, and the
-  asset form's `model_key` picker. PDFs go in the file store.
-- Tests against a throwaway Postgres, plus the privacy check.
+**Tech Tracker:** the same tables in PostgreSQL (`grant_app()`, `EXPECTED_GRANTS`), the API,
+`Device.library`. Mobile-first library pages with editing for owner and tech, the asset page's
+game, and the asset form's `model_key` picker. Files go in the file store. Tests against a
+throwaway Postgres, plus the privacy check.
 
 ---
 
 ## 9. Order of work
 
-1. **The owner approves this design** and the decisions in §10. (Here now.)
-2. **Contract, all three repos together** (§4). It's the first commit of each repo's PR.
-3. **Gatbox, offline first:** the local copy, the loopback protocol, `gatbox-library
-   seed/import`, and the readers switched over. Useful and testable with no hub at all.
-4. **shop-hub:** the store, the API and the pages. The partner can use it as soon as it's
-   deployed, with or without the Pi.
-5. **cabcrawl:** the store, the API, read-only pages, `Game.model_key`, roster `model_key`.
-6. **Gatbox, the relay:** the sync step, CONFLICTS, the SYSTEM tile, all tested against stub
-   hubs that implement the contract.
-7. **The owner, on hardware:** deploys shop-hub and cabcrawl (migrations; library access
-   switched on for the Pi's device), installs Gatbox through the bootstrap (the new unit shown
-   first), runs `seed --plan`, reviews, runs `--apply`, and watches the first sync in dry-run
-   mode, then for real.
-
-**One PR per repo:** Gatbox (this design + steps 2, 3, 6), shop-hub (2, 4), cabcrawl (2, 5).
-Merge either app first; each advertises `library` only once deployed, and an old Pi ignores
-it. Gatbox merges last. Each repo's own gate still applies:
-- **shop-hub:** a PROGRESS.md phase with its design note and the owner's OK, then the diff,
-  the tests and the privacy-check output before every push.
-- **cabcrawl:** after each step, the diff stat, the tests, and screenshots at 390 and 1280.
-
-**Blocker in this cloud session:** shop-hub's privacy check needs `patterns.local`, which its
-setup script writes and which isn't in this environment. Its CLAUDE.md says never to push
-without it, so the shop-hub PR waits until the owner adds it to this environment (or pushes
-from her own checkout).
+See plan §9: the archive on the deck first (phase B, Gatbox only, offline), then ROM images to
+their worlds (C), then this sync (D).
 
 ---
 
-## 10. Decisions for the owner
+## 10. Decisions specific to the library
 
 | # | question | recommended |
 |---|---|---|
-| 1 | How do the two apps stay identical? | **The Pi relays** (§2 C). No app-to-app link; cabcrawl may lag while the Pi is offline. |
-| 2 | Can people edit the library in cabcrawl? | **No, read-only for every role;** the Pi is its only writer. |
-| 3 | Who can CONFIRM a rail limit (the step that feeds the logger)? | **The 7" only.** The tech tracker can add or fix limits, which arrive unconfirmed. |
-| 4 | Contract: additive v1 or v2, and who owns it? | **Additive v1** behind `library`; **ownership moves to Gatbox**; fix the drift first. |
-| 5 | `model_key` naming | **Title slug** (`pin-` for pinball, maker/year suffix on a clash), permanent, seeded from the barcade slugs. |
-| 6 | Full PDF copies in both apps? | Yes, per the brief. Please run `gatbox-manuals list` so the space is known. |
-| 7 | Which devices may sync the library? | **A per-device switch at each hub, off by default.** |
-| 8 | Library edits from a phone on the Pi? | **No:** read access and PDF upload as today; edits on the 7". |
-| 9 | Link a machine to its game from the 7" (a new ingest item that sets the hub's `model_key`)? | **Later, not this round:** links are set in each app. |
+| L1 | Can people edit the library in cabcrawl? | **No, read-only for every role;** the deck is its only writer. |
+| L2 | Who can CONFIRM a rail limit (the step that feeds the logger)? | **The 7" only.** The Tech Tracker can add or fix limits, which arrive unconfirmed. |
+| L3 | `model_key` naming | **Title slug** (`pin-` for pinball, maker/year suffix on a clash), permanent, seeded from the barcade slugs. |
+| L4 | Which devices may sync the library? | **A per-device switch at each hub, off by default.** |
+| L5 | Library edits from a phone on the deck? | **No:** read access and PDF upload as today; edits on the 7". |
+
+Decision K, whether knowledge crosses between the worlds, is in the plan (§10).
 
 ---
 
 ## 11. Risks
 
-1. **One relay.** cabcrawl lags while the Pi is offline (§2). An SD card that dies takes
-   unsynced 7" edits with it, as it would unsent orders today. The Pi syncs every two minutes
-   when it has a network, and a fresh Pi rebuilds its copy with a full pull.
+1. **The deck is the archive's home.** An SD card that dies takes whatever hasn't been backed up
+   or synced. Mitigations: each world's copy holds its own models, plus the off-deck backup
+   (plan §4.4). A fresh deck rebuilds from the backup, then from the worlds.
 2. **A merge bug could cost data.** Mitigations: every write is compare-and-set, nothing writes
    blind, and a refusal is never forced. The merge rules get their own tests, and the first real
    sync runs in dry-run mode.
-3. **Big transfers over home Wi-Fi and tunnels:** resumable parts inside the run budget, after
+3. **Leaking between worlds:** scope by each world's own models, origin plus ADOPT, and
+   attribution to the deck. A test asserts nothing crosses.
+4. **Big transfers over home Wi-Fi and tunnels:** resumable parts inside the run budget, after
    sessions and orders.
-4. **Clocks:** the Pi's `at` may be unverified. Ordering never depends on time, only on
+5. **Clocks:** the deck's `at` may be unverified. Ordering never depends on time, only on
    revisions; times are shown for information.
-5. **Copyright:** PDFs only behind a login in each app, on no public route, and never in git.
-6. **Free text** (notes, `by`) may name people. It lives only in the databases and on the Pi,
-   never in git. Tests and examples use invented names (Widget Wars, `example.com`).
-7. **Phase 8 stays as it is:** a Pi whose hubs don't list `library` behaves as today, and an
-   unseeded Pi reads today's files through today's code.
+6. **Copyright:** files only behind a login in each app, on no public route, and never in git.
+7. **Phase 8 stays as it is:** a deck whose hubs don't list `library` behaves as today, and an
+   unseeded deck reads today's files through today's code.

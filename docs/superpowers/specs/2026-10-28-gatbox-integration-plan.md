@@ -1,7 +1,7 @@
 # The deck, the barcade, the side work and the archive — the integration plan
 
-Status: **draft for the owner's approval, 2026-10-28. No code yet, apart from the fix list (§9).** Revised the same day with
-her decisions (§11). This is the top-level plan. The detailed specs hang off it:
+Status: **approved by the owner, 2026-10-28.** Phase A is under way. Her decisions are in §11.
+This is the top-level plan. The detailed specs hang off it:
 - the library and the archive (`2026-10-28-shared-game-library-design.md`);
 - one set of agent rules (`2026-10-28-agent-rules-draft.md`);
 - one look with four themes (`2026-10-28-one-look-four-themes.md`).
@@ -422,10 +422,15 @@ or arcades could use, or if others could see the GATBOX code.
      outside contributions come with permission to do that (a short contributor agreement, or
      a sign-off on each commit).
    - The Tech Tracker can stay view-only until she decides.
-3. **Check who owns cabcrawl before treating it as hers to license.** It was built for the
-   barcade where she works. Whether code made for an employer belongs to the author or the
-   employer depends on the arrangement and local law, so get it in writing. (This plan isn't
-   legal advice.) The barcade's data never goes in any repo either way.
+3. **Ownership.** The owner, 2026-10-28: all of it is outside work done on her own time, which
+   her boss wants to use, and so far its only authors are her and AI agents. So the code is
+   hers to license.
+   - Worth one short note in writing with the barcade: the code is hers; the barcade uses
+     cabcrawl under its licence (AGPL-3.0 already allows that); the barcade's data stays the
+     barcade's. That settles it before anyone else relies on it. (This plan isn't legal
+     advice.)
+   - Keeping sole authorship is what keeps every licensing option open. If anyone else ever
+     contributes, ask for a sign-off that lets her relicense.
 4. **What makes the projects usable by others** (mostly true already):
    - no site data in code (a rule in all three);
    - everything site-specific in configuration (hub labels, names, branding);
@@ -458,3 +463,64 @@ design without changing it:
   and DUMP → BURN already burns from the archive folder.
 - **The homelab "crash cart" and Proxmox panel** stay out of both worlds and out of the
   library. If built, they're a realm of their own on the deck.
+
+---
+
+## 16. More ideas (not approved yet)
+
+The owner asked for more improvements to the functionality. These are ordered by value for
+the effort, best first. Each would get its own short spec if she picks it.
+
+**At the bench (the deck):**
+
+1. **Guided board dump.** Pick the game, and the deck walks its MAME ROM list chip by chip:
+   - "IC18, a 256 KB chip: insert it", with the label and size filled in;
+   - read twice, identify, tick it off;
+   - finish with a board report: every chip good, another revision, bad, or missing.
+
+   It's built from what exists: DUMP, the ROM checklist and CHECK. She still picks the exact
+   part; the deck only suggests families that match the size (no auto-detect, hard rule 6).
+2. **Overnight alerts to her phone.** The logger already knows when a rail leaves its window, a
+   session ends unexpectedly, or the meter goes quiet in a cabinet overnight. Push that to an
+   ntfy topic on her own server (the guide already plans ntfy). It needs one setting in
+   `/etc/gatbox`, quiet hours, and is sent by gatbox-sync, never by the open web server.
+3. **One timeline per machine.** On MACHINE, everything about that machine, newest first:
+   sessions, saved readings, dumps, burns, orders or jobs, notes, coin counts. It's "what did I
+   do last time?" in one scroll, from the deck's own records and its world's cache.
+4. **Search every manual.** Full-text search across the whole archive (the deck already extracts
+   each page's text), on the 7" and in the archive's pages, e.g. "every manual that mentions
+   'watchdog'", opening at the page. Plus **chip-label search**: type `EPR-12345` and see which
+   games and sockets use it, to identify a board before it's dumped.
+5. **A job timer that offers itself (side work).** Picking a customer machine with an open job
+   offers START TIMER; changing machine offers STOP. The time lands on the job as a deck action,
+   with the bench's times.
+6. **Blank chips as stock.** A burn uses a blank EPROM, so the deck records it as a part used on
+   the open order or job, picked from that world's inventory. Stock and costs stay right with
+   nothing to type.
+7. **Fix notes from closed work.** Closing an order or job on the deck offers SAVE AS FIX:
+   symptom → cause → fix for the game or platform, with the machine and customer left out, into
+   the archive (library spec §2.4). The next time that game comes in, the deck shows "seen
+   before".
+
+**In cabcrawl (the barcade):**
+
+8. **Swap suggestions from plays,** back to where the app started: the weakest floor earners
+   beside the warehouse games that have been off the floor longest, with their last earnings.
+   A manager confirms the swap (the rotation page exists).
+9. **Downtime cost and repeat faults:** plays lost while a machine is down (its usual daily plays
+   times the days down), to rank repairs; and a flag when the same machine gets a similar order
+   three times in 60 days.
+
+**In the Tech Tracker (side work):**
+
+10. **Real repair times for estimates:** time actually spent per kind of repair (from time entries
+    and fix notes), shown while writing an estimate.
+11. **A status link for customers:** a `/d/` link per job that shows only its status (received,
+    waiting on parts, ready), so customers can check instead of calling. It uses the existing
+    `/d/` machinery: expiring, revocable, not indexed.
+
+**Across all three:**
+
+12. **Health at a glance:** one page in each app and on the deck with the last sync, last
+    backup, disk space, queued and parked items. The same facts go to ntfy when something's
+    wrong: a backup that didn't run, an archive disk 90% full, a parked item.

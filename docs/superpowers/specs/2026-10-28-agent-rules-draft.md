@@ -23,7 +23,7 @@ Three repositories, all **public**:
 
 | repo | what it is | its world |
 |---|---|---|
-| Gatbox | the deck: a Pi 5 bench and diagnostic box (meter, T48, 7" touch screen, scanner) and the owner's archive of game knowledge. Offline-first. | neither: it's the owner's tool, and it talks to each world separately |
+| Gatbox | the deck (a Pi 5 bench and diagnostic box: meter, T48, 7" touch screen, scanner; offline-first), and the archive server that keeps the owner's game knowledge in a container of her own | neither: they're the owner's tools; the deck talks to each world separately, and the archive talks to neither |
 | cabcrawl | the floor app for the barcade where the owner works: machines, plays, rotation, maintenance, inventory | the **barcade** |
 | ArcadeTech-Tracker (deployed as shop-hub) | the side business: customers, assets, jobs, parts, money | the **side work** |
 
@@ -56,15 +56,17 @@ never appear in the other world's repo.
 ### 3. How a change flows
 
 1. **Design note first** for anything beyond a small fix: what changes, data, routes, risks,
-   tests. Wait for the owner's OK. One note may cover a change that spans several repos.
-2. **Code and tests in small commits,** each with a test that fails without it. Use the repo's
+   tests. One note may cover a change that spans several repos.
+2. **The owner's OK on the note is the one OK the change needs.** It covers the code, the tests
+   and the push. No separate go per step or per push.
+3. **Code and tests in small commits,** each with a test that fails without it. Use the repo's
    own test commands (in its CLAUDE.md).
-3. **Before pushing, show** the diff stat, the test results and the privacy-check output, clean
-   or not. UI changes also get screenshots (cabcrawl: 390 and 1280 wide; the deck: the 7"
-   layout and a phone).
-4. **Push to a branch and open (or update) one PR per repo per change.** The owner reviews,
-   merges and deploys.
-5. **Say plainly** what was and wasn't checked.
+4. **Push to a branch once the tests and the privacy check pass,** and open (or update) one PR
+   per repo per change. The PR shows the diff stat, the test results and the privacy-check
+   output, clean or not. UI changes also get screenshots (cabcrawl: 390 and 1280 wide; the
+   deck: the 7" layout and a phone).
+5. **The owner reviews, merges and deploys.** An agent never does.
+6. **Say plainly** what was and wasn't checked.
 
 ### 4. Working across repos
 
@@ -121,8 +123,5 @@ matters.
 | cabcrawl | owns contract v1 | Gatbox owns it; cabcrawl vendors it |
 | Gatbox | its hook reads `.githooks/patterns.local` | the shared location (the old path still works) |
 
-**For the owner to decide:**
-1. Is the push gate "the owner says when" (today's tech-tracker rule), or "push to a branch once
-   checks pass; the owner gates design and merge"? Recommended: the second, so a cross-repo
-   change can reach three PRs in one session.
-2. Is the patterns directory name above acceptable? Any neutral name that isn't personal works.
+**Decided by the owner, 2026-10-28:** one shared set of rules, and a single OK to push (§3).
+**Still open:** the patterns directory name above; any neutral name that isn't personal works.

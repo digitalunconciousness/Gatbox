@@ -1,10 +1,12 @@
-# The deck, the barcade and the side work — the integration plan
+# The deck, the barcade, the side work and the archive — the integration plan
 
-Status: **draft for the owner's approval, 2026-10-28. No code yet.** This is the top-level plan.
-Detailed specs hang off it: the knowledge archive (`2026-10-28-shared-game-library-design.md`),
-one set of agent rules (`2026-10-28-agent-rules-draft.md`) and one look with four themes
-(`2026-10-28-one-look-four-themes.md`). Each later phase gets its own
-short spec when it starts, as each repo's rules ask.
+Status: **draft for the owner's approval, 2026-10-28. No code yet.** Revised the same day with
+her decisions (§11). This is the top-level plan. The detailed specs hang off it:
+- the library and the archive (`2026-10-28-shared-game-library-design.md`);
+- one set of agent rules (`2026-10-28-agent-rules-draft.md`);
+- one look with four themes (`2026-10-28-one-look-four-themes.md`).
+
+Each later phase gets its own short spec when it starts.
 
 ---
 
@@ -12,37 +14,41 @@ short spec when it starts, as each repo's rules ask.
 
 - **cabcrawl** is for the barcade where she works, and is barcade-only. It started as play
   counts, to decide which floor games to swap with a big warehouse library, then grew into
-  maintenance and inventory. Not in service yet. **She wants that functionality in the box.**
+  maintenance and inventory. Not in service yet. **She wants that functionality in the box,**
+  including adding coin totals from the deck.
 - **ArcadeTech-Tracker** (the Tech Tracker, deployed as shop-hub) is for side jobs she and the
-  other tech now take: customers, jobs, the customers' machines, parts. **She wants that
-  functionality in the box.**
-- **The deck (GATBOX)** is a Pi-powered cyberdeck becoming a complete arcade diagnostic machine.
-  Today it has a multimeter, a T48 ROM programmer, a screen and a scanner. Meter readings and
-  ROM rips are tied to the machines she works on.
+  other tech take: customers, jobs, the customers' machines, parts. **She wants that
+  functionality in the box,** without customer data on it.
+- **The deck (GATBOX)** is a Pi-powered cyberdeck becoming a complete arcade diagnostic machine:
+  multimeter, T48 ROM programmer, screen, scanner. Meter readings and ROM rips are tied to the
+  machines she works on.
 - **One detailed record of everything:** for the bench (as little searching on the spot as
   possible) and for the archive (arcade knowledge is being lost).
 - **cabcrawl and the Tech Tracker never talk.**
 - **A PDF for every machine she sees,** ROM hashes compared on the spot, and ROM images sent back
   to the source of truth.
-- **One set of agent rules** for the three repos.
+- **Her knowledge in a container of its own** on the Proxmox node where both apps already run.
+- **One set of agent rules** for the repos, with a single OK to push.
 
 ---
 
-## 2. The shape: two worlds, one deck
+## 2. The shape: two worlds, one deck, one archive
 
 ```
         THE BARCADE                                         THE SIDE WORK
    cabcrawl (floor app)                              Tech Tracker (shop-hub)
    machines · plays · rotation                       customers · assets · jobs
    work orders · parts · stock                       parts · money
-          ▲                                                       ▲
-          │ its own token, its own outbox,          its own token, its own outbox,
-          │ its own cache, its own contract part    its own cache, its own contract part
-          │                                                       │
-          └────────────────────── THE DECK ───────────────────────┘
-                 meter · T48 · scanner · 7" · works offline
-                 THE ARCHIVE: every manual, every ROM hash, every reading, every dump
-                 ── nothing passes from one side to the other ──
+          ▲   (a machine page links to the archive)          ▲  (an asset page links to it)
+          │ its own token, outbox, cache, contract part      │ its own token, outbox, cache, contract part
+          └─────────────────────── THE DECK ─────────────────┘
+                  meter · T48 · scanner · 7" · works offline
+                  a full copy of the library · every reading and dump it made
+                                      ▲  │ library sync
+                                      │  ▼
+                  THE ARCHIVE: an LXC on her Proxmox node, hers alone
+                  every manual, every ROM image, every limit and fact
+                  ── nothing passes from one world to the other ──
 ```
 
 There are three kinds of data, and each has one rule:
@@ -50,135 +56,141 @@ There are three kinds of data, and each has one rule:
 | kind | examples | source of truth | on the deck | crosses between worlds? |
 |---|---|---|---|---|
 | **business** | machines, work orders / jobs, customers, parts and stock, plays, rotation, money | the world's app | a working cache of that world, plus an outbox of **actions** | **never** |
-| **bench records** | meter sessions, ROM dumps and images, burns, readings | the app of the machine's world (the deck makes them, sends them there, and keeps its own copy) | everything it ever made | **never**: a record belongs to one machine |
-| **knowledge** | manuals and PDFs, MAME sets and hashes, known-good ROM images, rail limits, facts | **the deck** (her archive), backed up off the deck; each app holds the entries for its own machines' models | everything | **only when she adopts it on the 7"** (decision K) |
+| **bench records** | meter sessions, dump and burn records, readings, coin counts | the app of the machine's world (the deck makes them, sends them, keeps its own copy) | everything it ever made | **never**: a record belongs to one machine |
+| **knowledge** | manuals and PDFs, MAME sets and hashes, ROM images (by hash), rail limits, facts | **the archive** | a full copy | **nothing to cross:** the apps hold none, only a link |
 
 - **Business data flows as actions, not as copies of state.** The deck sends "log 30 min on
-  order 41", "used 2 × fuse from shelf A3 on order 41", "order 41 fixed: replaced C12". Each
-  action has a uid minted once, and the app checks it, applies it once and answers per item,
-  exactly as ingest works today. The deck keeps a read-only cache (open orders, parts, stock) so
-  it can show and scan offline. The app's rules stay the app's: the deck can't make an order
-  skip a step the app wouldn't allow.
-- **Knowledge flows as a shared, merged record:** the archive spec, summarized in §4.
-- **Bench records flow one way, to their machine's world,** with the files, and come back down
-  only to restore a deck (§5).
+  order 41", "used 2 × fuse from shelf A3 on order 41", "coin meter 48,213 on Widget Wars".
+  Each action has a uid minted once, and the app checks it, applies it once and answers per
+  item, as ingest does today. The deck keeps a read-only cache so it can show and scan offline.
+  The app's rules stay the app's.
+- **Knowledge** lives in the archive; the deck keeps a full copy in step with it (§4).
+- **Bench records flow one way, to their machine's world,** and come back down only to restore
+  a deck (§5).
 
 ---
 
 ## 3. On the deck: two realms, kept apart
 
-Phase 8 already keeps a hub's config, token, state directory and routing separate. This plan
-makes that a rule the code proves.
-
 - **Each hub is a realm.** Everything the deck stores that came from a hub or is going to one is
   stamped with exactly one realm when it's made: a cached record, an outbox entry, a session,
-  a dump, a burn. **The sender refuses an item whose realm isn't the destination's**, and a test
-  with two stub hubs asserts nothing ever crosses.
+  a dump record, a burn. **The sender refuses an item whose realm isn't the destination's**, and
+  a test with two stub hubs asserts nothing ever crosses.
 - **A machine is in exactly one realm,** by roster. A slug on both rosters is already a conflict
   that goes nowhere.
-- **A scanned code is resolved per realm.** cabcrawl's part, place and unit labels
-  (`<base>/i/<code>`, `/p/<code>`, `/u/<code>`) and the Tech Tracker's codes are looked up in
-  each realm's cache. Found in one realm, it's that realm's; found in both, the deck asks.
+- **A scanned code is resolved per realm.** cabcrawl's labels (`<base>/g/<slug>`, `/i/<code>`,
+  `/p/<code>`, `/u/<code>`) are looked up in that realm's cache. The Tech Tracker has no printed
+  labels: its machines are picked from its group.
 - **The deck is often on the barcade's Wi-Fi with an open web server** (it lives in cabinets
   overnight). So:
-  - **side-work business data is served to the 7" only** (`is_local()`), never to a phone or
-    the network. Job details already work this way; new side-work screens and APIs follow;
-  - **customers' personal details stay off the deck** (decision P, recommended). A job on the 7"
-    shows the asset, its tag, the complaint and the work, not who owns it or how to reach them.
-    Her phone has the Tech Tracker for that;
-  - **money stays off the deck**, apart from the NTE string the JOB card shows today. No
-    estimates, invoices or payments.
-- **Optional: a deck PIN for the side-work realm** on the 7" (decision Q). The 7" sits behind a
-  closed cabinet door overnight, so recommended: not now.
+  - **no customer data on the deck** (decided). A job shows the asset, its tag, the complaint
+    and the work; her phone has the rest;
+  - **side-work screens and APIs are 7"-only** (`is_local()`), as job details are today;
+  - **money stays off the deck,** apart from the NTE string the JOB card shows today.
+- **The deck acts as her** in each app, and each app's history shows "via GATBOX" (decided).
+- A deck PIN for the side-work realm: not now; revisit with the enclosure.
 
 ---
 
-## 4. Knowledge: the archive (phases B and D)
+## 4. Knowledge: the archive and the deck's copy (phases B and D)
 
 The full spec is `2026-10-28-shared-game-library-design.md`. In short:
 
 ### 4.1 The archive
 
-- **The deck holds every entry for every model she has seen,** PDFs included, in
-  `library.sqlite` plus `/srv/gatbox/manuals`. It's offline, and the 7" is where she edits.
+- **A small always-on server in its own LXC** on her Proxmox node, belonging to neither
+  business. **It runs the deck's own library code** (`archive/` in this repo: stdlib Python,
+  SQLite and files, a systemd unit), so the deck and the archive can't disagree about the
+  format. She installs it with an idempotent script; the Proxmox and Cloudflare steps are
+  written out for her as exact commands.
+- **Reached through a Cloudflare tunnel**, like the apps:
+  - Cloudflare Access in front for people: her and her partner, by email login (free under 50
+    users);
+  - an Access service token plus a device token for the deck;
+  - the archive listens only on localhost.
+- **Her partner reads and fixes entries on his phone** in the archive's own pages (synthwave).
+  CONFIRM of rail limits and conflict choices stay on the 7".
+- **The apps hold no knowledge.** A machine or asset page shows the game's key and a link to the
+  archive, and Access decides who gets in. Nothing passes between an app and the archive.
+- **Backups:** the archive is in her Proxmox backups, and the deck holds a second full copy. A
+  USB copy (`gatbox-backup`) is optional now.
+
+### 4.2 The deck's copy
+
+- **A full copy, offline:** `library.sqlite` plus `/srv/gatbox/manuals`. The 7" is where she
+  edits, and the outbox holds edits the archive hasn't taken yet. Two-way sync with
+  compare-and-set; same-entry conflicts side by side on the 7"; nothing overwritten silently.
 - **Entries:** game (keyed by `model_key`, a permanent title slug), documents (+ PDF), MAME set,
-  ROM list (built on the deck from `mame -listxml`), **known-good ROM images**, rail limits (page,
-  quote, confirmed or not) and facts (fuses, monitor, PSU).
-- **Each app holds the entries its own machines use** (`Game.model_key` / `Asset.model_key`), so
-  the barcade's copy never shows what models turned up on side jobs, and the other way round.
-- **Sync, per world:** compare-and-set writes, same-entry conflicts side by side on the 7",
-  nothing overwritten silently. **An edit made in one app reaches the other app only when she
-  ADOPTs it on the 7"** (decision K).
-- **First fill:** `gatbox-library seed --plan` builds it from today's files (the manuals list,
-  the PDFs and their sidecars, MAME sets, confirmed limits). She reviews the keys, then
-  `--apply`.
+  ROM list (built on the deck from `mame -listxml`), ROM images by hash (every dump, plus her
+  known-good marks), rail limits (page, quote, confirmed or not) and facts.
+- **First fill:** `gatbox-library seed --plan` builds it from today's files, she reviews the
+  keys, and then `--apply`. The first sync fills the archive.
 
-### 4.2 A PDF for every machine she sees
+### 4.3 A PDF for every machine she sees
 
-When she picks or scans a machine with no game, or a game with no manuals, the deck helps on
-the spot:
+When she picks or scans a machine with no game, or a game with no manuals:
 
 1. **Which game?** An offline title search over MAME's own list (description, maker, year for
    every set: a small index built once per MAME version) suggests a game and its `model_key`.
    Pinball and games MAME doesn't have are typed.
-2. **Link it:** on the deck for a machine in no world (THIS PI); in its app for a world's machine
-   (a link from the deck is decision M, recommended later).
+2. **Link it:** on the deck for a THIS PI machine; in its app for a world's machine (linking from
+   the deck is later).
 3. **Manuals:**
-   - **online:** a search of archive.org, an allowed archive, offered as candidates, fetched by
-     `gatbox-manuals` through a request file and a path unit, like dumps (a new unit, shown
-     first);
-   - **offline or not found:** a phone upload (it exists), or the partner uploads it in the
-     Tech Tracker and it comes down on sync;
-   - **LIBRARY → MISSING** lists every game she has met that has no manual, for the next time
-     the deck is online.
+   - **online:** an archive.org search, offered as candidates and fetched by `gatbox-manuals`
+     through a request file and a path unit, like dumps (a new unit, shown first);
+   - **otherwise:** a phone upload (exists), or her partner uploads it to the archive and it
+     comes down on sync;
+   - **LIBRARY → MISSING** lists every game she has met without a manual. Today's list already
+     has a handful, each with the reason (not in the public archives, only on sites that don't
+     serve plain PDFs, which mix it is, …).
 
-### 4.3 Hashes on the spot
+### 4.4 Hashes on the spot
 
 `mame -romident` already runs on every dump and covers all of MAME, offline. The deck adds one
-CHECK screen per dump (and per chip in a game's ROM list), comparing four things:
+CHECK screen per dump (and per chip in a game's ROM list):
 
 | against | source | answers |
 |---|---|---|
 | MAME | `mame -romident` (exists) | which set and ROM this is, or NO MATCH |
-| the game's expected chips | the archive's `rom_list` for the machine's model | right chip / another revision / not this game |
-| known-good images | the archive's `rom_image` entries (hers, including chips MAME lacks) | known good / known bad / never seen |
-| this machine's earlier dumps | the deck's own dumps, and its world's copy | same as last time / changed |
+| the game's expected chips | the library's `rom_list` for the machine's model | right chip / another revision / not this game |
+| her images | the library's `rom_image` entries (every dump, with her known-good / bad marks, including chips MAME lacks) | known good / known bad / seen before / never seen |
+| this machine's earlier dumps | the deck's own dump records | same as last time / changed |
 
-Hash matches span her whole archive on her screen. **A comparison never sends anything anywhere.**
+**A comparison never sends anything anywhere.**
 
-### 4.4 Off-deck backup (decision B)
+### 4.5 Room to grow
 
-An SD card in a cyberdeck is the most fragile place to keep lost knowledge. Proposed: a
-`gatbox-backup` command. It copies the archive, the manuals, the dumps and the rail CSVs to a
-labelled USB drive (no network or host needed), and optionally rsyncs to a host she names
-(her own server). Each world's copy covers its own models too.
+- **Today:** 1.13 GB of manuals (about 12 MB per game) and under 1 MB of dumps.
+- **Plan for about 20 GB over the next years:** manuals for a few hundred games is several GB,
+  and a board's ROMs are 0.5–8 MB.
+- The archive's data mount starts at about 50 GB and grows in Proxmox.
+- **The deck:** SYSTEM shows the library's size and the free space on `/srv`, and warns when
+  it's low. If the SD card ever gets tight, the option is to keep every record but only some
+  PDFs on the deck, fetching the rest from the archive on demand.
 
 ---
 
 ## 5. ROM images and burns, back to the source of truth (phase C)
 
-**The source of truth for a machine's dumps and burns is its world's app:** cabcrawl for a
-barcade machine, the Tech Tracker for a customer's asset. The deck makes them and keeps
-everything; the app holds the record of what was in that machine.
+**A machine's dump and burn records belong to its world's app:** cabcrawl for a barcade
+machine, the Tech Tracker for a customer's asset. **The image itself also goes to the archive,
+by hash:** game code is knowledge, and the barcade's copy isn't hers to keep.
 
 - **New core contract items** (both apps implement them):
   - `rom_dump`: machine, chip label, part, size, CRC32, SHA-1, SHA-256, the `mame -romident`
-    result, "read twice, identical", when, and optionally the open order or job it was for,
-    plus the image itself;
-  - `burn`: machine, image hash, part, verified or stopped, when, and optionally the order or job.
+    result, "read twice, identical", when, optionally the open order or job, plus the image;
+  - `burn`: machine, image hash, part, verified or stopped, when, optionally the order or job.
 - **Uids:**
-  - `rom_dump`: `sha256(f"{public_id}|rom_dump|{machine}|{label}|{sha1}")[:32]`. The archive
-    already treats the same SHA-1 in the same machine's folder as the same dump;
+  - `rom_dump`: `sha256(f"{public_id}|rom_dump|{machine}|{label}|{sha1}")[:32]`. The deck's dump
+    archive already treats the same SHA-1 in the same machine's folder as the same dump;
   - `burn`: from its line in `burns.jsonl`.
-- **Files go first, then the item that names them,** through the shared resumable file
-  endpoints (`/api/v1/files/…`, 8 MB parts), like a session before its order.
-- **In the apps:** a machine or asset page lists its dumps and burns, and an order or job page
-  lists the ones made for it. Images download only behind the login. Files are stored outside
-  any public path (cabcrawl's photos sit in `static/`, which is public: the wrong model).
-- **Back down:** a deck rebuilt after an SD failure pulls its worlds' dumps back. A dump with no
-  machine (`unassigned`) never leaves the deck.
-- **Known good:** she can mark any dump "known good for <game>, chip <location>", which makes
-  it knowledge (a `rom_image` entry in the archive), with or without the image.
+- **Files first, then the item,** through resumable file endpoints (`/api/v1/files/…`, 8 MB
+  parts), like a session before its order.
+- **In the apps:** a machine or asset page lists its dumps and burns, an order or job page lists
+  the ones made for it, and images download only behind the login. Files are kept outside any
+  public path.
+- **Back down:** a rebuilt deck pulls its worlds' dump records back (and every image from the
+  archive). A dump with no machine (`unassigned`) goes to the archive only.
 
 ---
 
@@ -188,29 +200,25 @@ What exists in cabcrawl (recon, 2026-10-28) and what the deck would do with it:
 
 | area | cabcrawl today | on the deck |
 |---|---|---|
-| work orders | `MaintenanceRecord`: Open → In_Progress → Fixed / Deferred; `WorkLog` (text, hours); `machine_down` drives machine status; parts used via `use_parts` | **all open orders** (not just machines metered), detail with logs; **START**, **LOG WORK** (text + minutes), **FIXED** / **DEFERRED** with what was done; NEW ORDER, ATTACH TRACE (exist), ATTACH DUMP (phase C) |
-| parts and stock | `InventoryItem` (code = the `/i/` label), `StockPlace` tree (code = `/p/`), `StockLevel`; every change through `stock_places`; usage costed on the order | **scan a part or shelf label** with the EY-H2, see stock per place; **USED ON THIS ORDER** (part, place, quantity); **COUNT** at a shelf; **REQUEST** a part that's short |
-| serial units | `SerialUnit` (`/u/` label): in stock, in machine, at repair, retired | scan to see where a unit is; INSTALL / REMOVE on the open order (later) |
-| plays | `PlayRecord` meter readings; the collection round (one a day, flags) | not first: rounds are done walking the floor with a phone. Possible later |
-| rotation | swap floor ↔ warehouse (manager) | view only (where a machine is), if at all |
+| work orders | `MaintenanceRecord`: Open → In_Progress → Fixed / Deferred; `WorkLog` (text, hours); `machine_down` drives machine status; parts used via `use_parts` | **all open orders**, with detail and logs; **START**, **LOG WORK** (text + minutes), **FIXED** / **DEFERRED** with what was done; NEW ORDER, ATTACH TRACE (exist), ATTACH DUMP (phase C) |
+| **coin totals** | `PlayRecord` meter readings: no backwards readings, one round reading a day, "far more than usual" needs confirming, a baseline first | **COIN COUNT** on a barcade machine: scan its label, type the meter, send it. cabcrawl applies its own rules and the deck shows the answer (a flag, "confirm high", or refused, with why). The reading's date comes from the deck's clock and is refused when the clock is unverified. |
+| parts and stock | `InventoryItem` (`/i/` label), `StockPlace` tree (`/p/`), `StockLevel`; every change through `stock_places`; usage costed on the order | **scan a part or shelf label**, see stock per place; **USED ON THIS ORDER**; **COUNT** at a shelf; **REQUEST** a part that's short |
+| serial units | `SerialUnit` (`/u/` label) | scan to see where a unit is; INSTALL / REMOVE (later) |
+| rotation | floor ↔ warehouse swaps (manager) | view only, if at all |
 
-What the recon says the app needs before a device can do any of this safely:
+What cabcrawl needs before a device can do any of this safely:
 
 - **A device action ledger** (a uid unique per action, with its result). Today only orders have
-  `external_id`. Work logs, stock history, part usage and meter readings have no idempotency
-  key, so a resent action would be applied twice.
-- **"Acts as" a person.** `WorkLog.user_id` and `StockHistory.user_id` are required, and the
-  history hook records the logged-in user. A device has none. Proposed: each device is linked on
-  the Devices page to the person it acts for (the owner), so every action is hers in the
-  history.
-- **Strict device semantics:** `take` quietly takes less than asked, and `use_parts` skips short
-  rows with a warning. A device action is all-or-nothing: short stock is `rejected` with what's
-  there, and never partly applied. Status changes follow explicit transitions: no closing a
-  closed order or blanking its fields, unlike the web form today.
-- **When it happened:** actions carry `at`, the deck's clock, with its clock source. The app
-  stores it where it has a field and keeps server time for the rest.
-- **Inventory scope:** the device allow-list covers machines only. Recommended: a "parts and
-  stock" switch per device, off by default.
+  `external_id`; work logs, stock history, part usage and meter readings have no idempotency
+  key.
+- **The device acts as her:** each device is linked to a person on the Devices page, and the
+  history shows "via GATBOX". `WorkLog.user_id` and `StockHistory.user_id` are required.
+- **Strict device semantics:**
+  - stock: `take` quietly takes less than asked, so a device action is all-or-nothing, with a
+    shortfall `rejected` and the amount on hand given;
+  - status changes follow explicit transitions.
+- **When it happened:** actions carry `at` and the clock source.
+- **Device switches** (orders, parts and stock, coin counts), off by default.
 
 The contract part: `contract/floor-v1/`, vendored only into Gatbox and cabcrawl (§8).
 
@@ -222,34 +230,15 @@ What exists in the Tech Tracker (recon, 2026-10-28) and what the deck would do w
 
 | area | Tech Tracker today | on the deck (7" only) |
 |---|---|---|
-| jobs | `WorkOrder` (`WO-YYYY-NNNN`, gapless; new → scheduled → in_progress → waiting_parts / waiting_approval → ready → completed / cancelled) holding `WoJob`s (one per asset: complaint, cause, correction, intake; open / done / cancelled). The deck can already raise a job (an `order`) and attach traces with a phase. | **open jobs for assets in the shop**, with complaint, WO status and NTE (as today); **NOTE** → the job's cause / correction (appended, never overwriting the form); **DONE** on a job; WO status only through the app's own moves |
-| time | `TimeEntry` (user, started / ended, minutes, note; one running timer per user, feeding the actual-time line until billed) | **TIMER** on the job from the bench (start / stop as actions with the deck's times), or **ADD TIME** (minutes + note) |
-| readings | `ManualReading` (test point, value, unit, spec lo/hi, phase as_found / during / as_left; `passed` computed by Postgres) | **SAVE READING** on a jobs-hub machine also becomes a `ManualReading` on the job: the meter's value, the rail as the test point, the spec window, and AS-FOUND / AS-LEFT. That's the deck's meter writing straight into the customer record. |
-| parts | `Part` (sku), `StockLot` (FIFO cost), `StockMove` (the sum is on hand; a trigger refuses negatives); issuing a part makes a billable `WoLine` priced by the app | **search a part** (sku or name; parts have no labels to scan yet), see on hand; **USED ON THIS JOB**, which the app issues as if a tech did it. The deck never shows a cost or a price |
-| photos | `Attachment` (job photos, re-encoded, EXIF stripped, in the file store) | later: the deck has no camera |
-| assets | tags `s-NNNN-name`, permanent; no printed labels (the owner removed them) | picked from the shop group (exists); no intake from the deck (tags are minted by the app) |
+| jobs | `WorkOrder` (`WO-YYYY-NNNN`, gapless; new → … → completed / cancelled) holding `WoJob`s (one per asset: complaint, cause, correction; open / done / cancelled). The deck can already raise a job and attach traces with a phase. | **open jobs for assets in the shop**, with complaint, WO status and NTE (as today); **NOTE** → the job's cause / correction (appended, never overwriting); **DONE** on a job |
+| time | `TimeEntry` (user, started / ended, minutes, note; one running timer per user) | **TIMER** (start / stop as actions with the deck's times), or **ADD TIME** |
+| readings | `ManualReading` (test point, value, unit, spec lo/hi, phase; `passed` computed by Postgres) | **SAVE READING** on a jobs-hub machine also becomes a `ManualReading` on the job: the meter's value, the rail, the window and AS-FOUND / AS-LEFT |
+| parts | `Part` (sku), `StockLot` (FIFO), `StockMove` (a trigger refuses negatives); issuing makes a billable line priced by the app | **search a part**, see on hand; **USED ON THIS JOB**, issued as a tech would. No cost or price on the deck |
+| assets | tags `s-NNNN-name`, permanent; no printed labels | picked from the shop group (exists); no intake from the deck |
 
-What the recon says the app needs first:
-
-- **A device action ledger.** `time_entry`, `manual_reading`, `wo_line`, `stock_move` and
-  `attachment` have no idempotency key; only `wo_job.external_id` and the job-session pair do.
-- **"Acts as" a person, and the audit log names the device.** `TimeEntry.user_id` is required,
-  and a device request today runs with no actor, so `created_by` and `audit_log.user_id` come
-  out NULL ("system"). Proposed: the device acts for the person it's linked to on Settings →
-  Devices (the owner). Its requests set `shop.user_id` to her and a new `shop.device_id`, so the
-  audit log reads "the owner, via GATBOX".
-- **Device permissions = a tech's, minus anything financial,** and per-device switches (library,
-  dumps, job work), all off by default. Today any enabled device can read every asset's jobs,
-  and there's no allow-list.
-- **Closed is closed:** nothing in the app stops time, lines or readings landing on a done job
-  or a completed WO. The device API refuses them, except trace tags, which the contract
-  already accepts on a closed job.
-- **Bench time, not sync time:** actions carry `at`, set into `taken_at`, `started_at` and the
-  stock move's time (`reported_at` is the precedent). An `unverified` clock is marked as such.
-- **Strict stock:** a shortfall is `rejected` with what's on hand, never partly issued. Issuing
-  ignores other jobs' reservations today, so the device checks "available", not just "on hand".
-- **Note:** the Tech Tracker's PLAN parks `rom_dump` evidence as "needs v2". As an additive,
-  capability-gated item kind in core v1 (§5, §8), it doesn't.
+What the Tech Tracker needs first: a device action ledger; "acts as" with `shop.device_id` in
+the audit; device switches; "closed is closed" (no time, lines or readings on a done job,
+except trace tags); bench time (`taken_at`, `started_at`); strict stock against "available".
 
 The contract part: `contract/shop-v1/`, vendored only into Gatbox and the Tech Tracker (§8).
 
@@ -259,108 +248,134 @@ The contract part: `contract/shop-v1/`, vendored only into Gatbox and the Tech T
 
 - **Fix the drift first.** cabcrawl's v1 README has the 2026-10-26 additions; the Gatbox and
   Tech Tracker copies don't. Bring all three back to byte-identical.
-- **Write down what's built:** health `app` and `capabilities`, roster `model_key` (in the
-  example too, since cabcrawl's test checks the exact keys), orders `work_order` / `nte`, and
-  `phase`.
-- **Gatbox owns the contract from here.** The deck is the one client every hub serves, and the
-  Tech Tracker's PLAN already recommends the move. Each repo's test also diffs its copy against
-  sibling checkouts when they're present.
-- **Three parts, each vendored only where it's implemented:**
+- **Write down what's built:** health `app` and `capabilities`, roster `model_key` (in the example
+  too, since cabcrawl's test checks the exact keys), orders `work_order` / `nte`, `phase`, and
+  **the order priorities** (§9 item 3).
+- **Gatbox owns the contract from here.** Each repo's test also diffs its copy against sibling
+  checkouts when they're present.
+- **What goes where:**
 
   | part | contents | vendored into |
   |---|---|---|
-  | `contract/v1/` (core) | health and capabilities, the ingest framework and uid rules, `rail_session` / `order` / `session_tag`, roster, orders, **files**, **`rom_dump`**, **`burn`**, **`library`** | all three |
-  | `contract/floor-v1/` | work-order actions, parts and stock reads and actions, (later) meter readings | Gatbox + cabcrawl |
+  | `contract/v1/` (core) | health and capabilities, the ingest framework and uid rules, the action framework, `rail_session` / `order` / `session_tag`, roster, orders, **files**, **`rom_dump`**, **`burn`** | all three |
+  | `contract/floor-v1/` | order actions, parts and stock, coin counts | Gatbox + cabcrawl |
   | `contract/shop-v1/` | job actions, time, readings, parts | Gatbox + Tech Tracker |
+  | `docs/contract/library-v1/` | the library protocol (deck ↔ archive) | Gatbox only: both ends live there |
 
-  So neither app's repo describes the other's API.
-- **A shared action framework in core.** Every bench action is an ingest item with a uid minted
-  once on the deck, `at` and the clock source, and optionally the order or job it's for. The
-  hub records it in a device action ledger (uid unique, plus the result), applies it
-  all-or-nothing, and answers `created`, `duplicate` or `rejected` per item, as ingest does
-  today. The kinds differ per world (cabcrawl's orders and stock aren't the Tech Tracker's jobs
-  and lots), so they live in the world parts. The deck's WORK screen maps one set of buttons
-  onto each world's kinds.
-- **Everything is additive and capability-gated.** No existing request shape changes, and a hub
-  is sent only what its health lists: `library`, `rom_dumps`, `floor_work`, `floor_stock`,
-  `shop_work`… A v2 isn't needed.
+- **The action framework (core):** every bench action is an ingest item with a uid minted once
+  on the deck, `at` and the clock source, and optionally the order or job it's for. The hub
+  records it in a device action ledger and applies it all-or-nothing, answering `created`,
+  `duplicate` or `rejected` per item.
+- **Everything is additive and capability-gated.** No existing request shape changes; a hub is
+  sent only what its health lists. No v2 needed.
 
 ---
 
-## 9. Phases and order of work
+## 9. Fix now (in phase A)
+
+Found in the recon. **The owner: "these need fixed for sure."** Each fix gets a test that fails
+without it, in its repo's suite.
+
+1. **cabcrawl: work-order photos are public.**
+   - Today they're served from `static/maintenance_photos/` with no login.
+   - Fix: move them out of `static/` (beside its other uploads) and serve them only through a
+     `login_required` route.
+   - Old `/static/maintenance_photos/<file>` addresses redirect there, so nothing printed or
+     bookmarked breaks (its URL rule).
+   - Existing files move with a one-off script that the owner runs on the server (⏸).
+2. **cabcrawl: photos and `uploads/` aren't backed up.** The backup next to the `pg_dump` in
+   `deploy/` gains an archive of both, with a restore step in the RUNBOOK.
+3. **cabcrawl: the device API doesn't check an order's priority, and the two sides disagree.**
+   The deck offers Low, Medium, High, Critical and **Urgent**; cabcrawl's orders know only the
+   first four.
+   - Fix: cabcrawl accepts the contract's five and stores Urgent as Critical, rejects anything
+     else, and the contract says so.
+   - The owner checks whether any order already in the database carries "Urgent" (one query,
+     ⏸).
+4. **Tech Tracker: any enabled device can read every asset's jobs, and device writes show in the
+   audit log as "system".**
+   - Fix: per-device switches (jobs on for the deck, off by default for any new device).
+   - The device is linked to the person it acts as (decided: her), and device requests set
+     `shop.user_id` and a new `shop.device_id`, so the audit reads "the owner via GATBOX".
+   - This is the "acts as" groundwork phase F needs anyway.
+5. **Tech Tracker: the restore drill re-hashes PDFs and receipts but not photos.** It re-hashes
+   photos too.
+6. **cabcrawl has no pre-push privacy check at all,** in a public repo carrying the barcade's
+   work. It gets the shared hook (phase A's rules).
+
+---
+
+## 10. Phases and order of work
 
 | phase | what | repos | needs the owner for |
 |---|---|---|---|
-| **A. Groundwork** | the shared agent rules (vendored, checksummed) and the same privacy hook in all three (cabcrawl has none today); the contract drift fixed, ownership moved to Gatbox, Phase 8 extras written down, the three-part split; the realm rule and its test on the deck | all three | approving the rules; the pattern file in the cloud environment (§11) |
-| **A2. One look, four themes** | one design philosophy and one shared `design/themes.css` (Synthwave, Ledger, Graphite, Follow system) with a contrast test, vendored like the contract; each app on the shared roles, with a per-user (deck: per-screen) choice. Spec: `2026-10-28-one-look-four-themes.md` | all three | T1–T4 in that spec; the hard rule 11 change |
-| **B. The archive on the deck** | `library.sqlite`, seed, readers switched over; LIBRARY on the 7"; the offline title search and model suggestions; manual fetch on request; MISSING; the CHECK screen for hashes; known-good marking; `gatbox-backup` | Gatbox | the seed review; new units shown before install |
-| **C. Dumps and burns to their world** | `rom_dump`, `burn`, the file endpoints; the apps store and show them; a rebuilt deck pulls them back | all three | deploys |
-| **D. Knowledge in the apps** | library tables, sync per world, ADOPT, conflicts; read-only in cabcrawl, editable in the Tech Tracker | all three | deploys; switching library on per device |
-| **E. Barcade work on the deck** | the action ledger, "acts as", work-order actions, parts and stock with the scanner | Gatbox + cabcrawl | deploy; the device switches |
-| **F. Side work on the deck** | the same for jobs (after the Tech Tracker recon) | Gatbox + Tech Tracker | deploy |
+| **A. Groundwork and fixes** | the shared agent rules and the same privacy hook in all three; the contract drift fixed, ownership moved to Gatbox, Phase 8 extras and priorities written down; the realm rule and its test on the deck; **the fix list (§9)** | all three | plan approval; the privacy patterns variable (§12); the two ⏸ server steps in §9 |
+| **A2. One look, four themes** | the shared philosophy and `design/themes.css` (Synthwave, Ledger, Graphite, Follow system) with the contrast test; per-user choice in both apps (one setting for every width); the four colour fixes. **The deck stays Synthwave.** | the two apps (+ the shared file from Gatbox) | nothing more: T1–T4 decided |
+| **B. The library on the deck** | `library.sqlite`, seed, readers switched over; LIBRARY on the 7"; the title search; manual fetch on request; MISSING; the CHECK screen; known-good marks; space on SYSTEM | Gatbox | the seed review; new units shown before install |
+| **C. Dumps and burns to their world** | `rom_dump`, `burn`, the file endpoints; the apps store and show them | all three | deploys |
+| **D. The archive** | `archive/` (server, installer, RUNBOOK), the deck ↔ archive sync and conflicts, every image to the archive, the "open in the library" links in both apps, `Game.model_key` | Gatbox + small app changes | creating the LXC and the Cloudflare tunnel and Access (written out for her, ⏸) |
+| **E. Barcade work on the deck** | action ledger, "acts as", order actions, coin counts, parts and stock with the scanner | Gatbox + cabcrawl | deploy; the device switches |
+| **F. Side work on the deck** | the same for jobs, time, readings, parts | Gatbox + Tech Tracker | deploy |
 
-- **Why this order:** A unblocks everything and is small. B and C are what she asked for by name
-  (a PDF for every machine, hashes on the spot, images back to the source of truth), and B works
-  with no network or app change at all. D gives the partner the manuals on his phone. E and F
-  are the biggest and build on A's ledger and realm rules. E and F can swap if the side work is
-  busier.
-- **PRs:** one per repo per phase, never merged by an agent. Merge the apps first in C–F: each
-  advertises a capability only once deployed, and an older deck ignores it. Gatbox goes last.
-- **Every phase** is: short spec → the owner's OK → code and tests → PRs → the owner deploys and
-  installs (Gatbox through the bootstrap, system config shown first).
+- **Why this order:** A fixes what's broken and unblocks the rest. A2 is independent. B and C
+  are what she asked for by name: a PDF for every machine and hashes on the spot (B, with no
+  network or server needed), and images back to the source of truth (C). D gives the knowledge
+  its home and her partner his phone access. E and F are the biggest and build on A's rules
+  and "acts as". E and F can swap if the side work is busier.
+- **PRs:** one per repo per phase, never merged by an agent. Merge the apps first in C–F (each
+  advertises a capability only once deployed, and an older deck ignores it); Gatbox goes last.
+- **Every phase:** a short spec → **her one OK** (it covers the code and the push) → code and
+  tests → PRs → she merges, deploys and installs.
 
 ---
 
-## 10. Decisions for the owner
+## 11. Decisions
 
-| # | question | recommended |
+| # | question | answer |
 |---|---|---|
-| S | Where does knowledge (manuals, ROM hashes, limits, facts) live? Earlier you said "the apps are the source of truth"; with "never talk", neither app can hold all of it. | **The deck is the archive's home,** backed up off the deck; each app holds its own machines' models. Business data and bench records stay with the apps as before. |
-| K | Can knowledge typed in one app (the partner fixing a fuse value, say) reach the other app's copy? | **Only when you ADOPT it on the 7".** Business data never crosses, whatever the answer. |
-| A | Who the deck acts as in each app | **You:** each app's Devices page links the deck to your account, and the history shows "via GATBOX". |
-| P | Customers' personal details on the deck? | **None.** Jobs show the asset, tag, complaint and work; your phone has the rest. |
-| Q | A PIN for the side-work realm on the 7"? | **Not now** (it sits behind a cabinet door); revisit when the enclosure exists. |
-| B | Off-deck backup target | **A labelled USB drive first,** plus an rsync target you name if you want one. |
-| M | Linking a machine to its game from the deck (sets the app's `model_key`)? | **Later:** link in each app for now; the deck links THIS PI machines. |
-| R | The shared agent rules, and the push gate in them | **Yes; push to a branch once checks pass, with your gates at design and merge** (the rules draft). |
-| O | Contract ownership moves to Gatbox | **Yes.** |
-| T1–T4 | the themes (Tech Tracker's look on phones too; names; defaults; four colour corrections) | see the themes spec §6 |
-| L1–L5 | the library specifics (cabcrawl read-only; CONFIRM on the 7" only; key naming; per-device switch; no phone edits) | see the library spec §10 |
+| S | Where does knowledge live? | **Decided:** a container on her Proxmox node. Design: the archive (§4.1). |
+| K | Knowledge crossing between the apps | **Gone:** the apps hold no knowledge, only a link. |
+| P | Customer data on the deck | **Decided: none.** Plus coin totals to cabcrawl from the deck (phase E). |
+| A | Who the deck acts as | **Decided: her, "via GATBOX".** |
+| R | Rules and the push gate | **Decided: one shared set of rules; a single OK to push.** Her OK on a change's spec covers its code and its push; merging and deploying stay hers. |
+| T1–T4 | Themes | **Decided:** per user in the apps, one setting at every width; names kept; defaults as proposed; the four colour fixes in. **The deck: Synthwave only.** |
+| L1 | Where the archive's code lives | **Open, recommended: in the Gatbox repo (`archive/`).** |
+| L2 | Who can open the archive | **Open, recommended: her and her partner** (Cloudflare Access); barcade coworkers only if she adds them. |
+| L3–L5 | CONFIRM on the 7" only; the key naming; no library edits from a phone on the deck's Wi-Fi | **Recommended** (library spec §10). |
+| N | The privacy-patterns location in the rules draft (`~/.config/gatbox-family/`) | **Open:** any neutral name works. |
 
 ---
 
-## 11. What needs the owner before work can start
+## 12. What needs the owner before work can start
 
-1. **Approve this plan,** the decisions above, and the rules draft.
-2. **Privacy patterns in the cloud environment.** The Tech Tracker's rules forbid pushing
-   without its pattern file, and this environment doesn't have one. Add an environment variable
-   **`PRIVACY_PATTERNS`** holding the lines of your `patterns.local`, in the environment's
-   settings (never in chat or git). Phase A's setup script then writes it where all three hooks
-   read it.
-3. **Push access for cabcrawl and the Tech Tracker** in this session. It's read-only today; it's
-   attached when phase A starts and may ask you to confirm.
-4. **Sizes:** `gatbox-manuals list` (manuals total) and `du -sh /srv/gatbox/roms` on the Pi, so
-   the apps' storage and backups can be planned.
+1. **Approve this plan,** and the open decisions above (or "as recommended").
+2. **The privacy patterns, in the cloud environment** (never in chat or git):
+   - in the Claude app, open this session's environment (its name in the session's title bar)
+     → **Edit** → add an environment variable **`PRIVACY_PATTERNS`**;
+   - its value is her pattern lines joined into one line with `|`, so the hooks read it as one
+     extended regex. On the Pi, in her checkout:
+     `grep -v '^#' .githooks/patterns.local | grep -v '^$' | paste -sd'|' -`
+     prints that line;
+   - **a new session picks it up, this one doesn't.** Until then, pushes to the Tech Tracker
+     (whose rules require the check) wait for a new session.
+3. **GitHub:** done. cabcrawl and the Tech Tracker are attached to this session with push access
+   (2026-10-28).
+4. **Sizes:** done (§4.5).
 
 ---
 
-## 12. Risks
+## 13. Risks
 
-1. **Leaking between worlds.** Realm stamps, the sender's check, per-world scoping of knowledge,
-   ADOPT, and a test with two stub hubs. Customers' details and money stay off the deck.
-2. **The deck as the archive's home.** It's fragile hardware. Mitigated by the off-deck backup,
-   and by each world holding its own models and its machines' dumps.
-3. **Actions replayed or half-applied.** The ledger with uids, all-or-nothing device actions,
-   and explicit transitions. The recon found that cabcrawl's own forms are looser than this
-   (partial takes, reopen by save), so the device API is deliberately stricter than the web.
-4. **An open web server on someone else's network.** Side-work data is 7"-only; anything new on
-   the phone view is reviewed against that rule.
-5. **Size of the program.** Six phases over three repos. Each phase is useful alone, and A–C
-   deliver what was asked for by name first.
-6. **Findings outside this plan, for the owner** (from the recon; not fixed here):
-   - cabcrawl's work-order photos are served from `static/` with no login;
-   - nothing backs up cabcrawl's photos or `uploads/`;
-   - cabcrawl's device API doesn't validate an order's priority;
-   - in the Tech Tracker, any enabled device can read every asset's jobs, and device requests
-     reach the audit log as "system";
-   - the Tech Tracker's restore drill re-hashes PDFs and receipts but not photos.
+1. **Leaking between worlds:** realm stamps, the sender's check and a test with two stub hubs.
+   The apps hold no knowledge, there's no customer data on the deck, and money stays off it.
+2. **The archive on the internet** behind a tunnel: Cloudflare Access for people, a service
+   token plus a device token for the deck, and localhost only. Copyrighted files are never
+   public.
+3. **Actions replayed or half-applied:** the ledger with uids, all-or-nothing device actions,
+   and explicit transitions. Both apps' own forms are looser than this, so the device API is
+   deliberately stricter than the web.
+4. **An open web server on someone else's network:** side-work data is 7"-only, and anything new
+   on the phone view is reviewed against that rule.
+5. **Growth:** watched on the deck; the archive's mount grows in Proxmox.
+6. **Size of the program:** seven phases over three repos and one new container. Each phase is
+   useful alone, and A–C deliver what was asked for by name first.

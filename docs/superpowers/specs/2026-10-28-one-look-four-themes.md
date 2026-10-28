@@ -1,7 +1,9 @@
 # One look, four themes — design
 
-Status: **draft for the owner's approval, 2026-10-28. No code yet.** It hangs off the integration
-plan (`2026-10-28-gatbox-integration-plan.md`, phase A2).
+Status: **decided by the owner, 2026-10-28** (§6); no code yet. It hangs off the integration
+plan (`2026-10-28-gatbox-integration-plan.md`, phase A2). **The deck keeps Synthwave only:** the
+four themes are for cabcrawl and the Tech Tracker, per user. The deck rows below stay for
+reference, unused.
 
 The owner's ask: one design philosophy across the deck, cabcrawl and the Tech Tracker, with
 four themes: **cyberpunk, light professional, dark professional, and follow the system.**
@@ -116,7 +118,7 @@ the roles, so nothing breaks while the components move over.
 |---|---|---|---|
 | **Tech Tracker** | each user, Account → Look | `app_user.desk_theme` (exists) | Ledger (as now) |
 | **cabcrawl** | each user, Account → Look | `user.theme` (new column, Alembic) | Synthwave |
-| **the deck** | SYSTEM → LOOK on the 7": **one setting for the 7" and one for phones** | a one-line file in gatbox-web's state; gatbox-web writes `data-theme` into the page, so nothing is stored in the browser (hard rule 10) | the 7": Synthwave; phones: follow system |
+| **the deck** | nobody: **Synthwave only** (the owner, 2026-10-28) | — | Synthwave |
 
 - **The Tech Tracker on phones (decision T1).** In October the owner chose "phones always
   synthwave". A single philosophy suggests a user's look should apply at every width.
@@ -124,12 +126,8 @@ the roles, so nothing breaks while the components move over.
   anyone who picks synthwave.
 - **Pages with no login** (sign-in pages, cabcrawl's coin-door form, the Tech Tracker's `/d/`
   customer links) use the app's default. The `/d/` documents stay print-first.
-- **"Follow system" on the 7"** follows the Pi desktop's light/dark setting, as seen by
-  Chromium in the kiosk. That gets checked on the Pi before it's offered there (rule 12). If it
-  doesn't work, the 7" offers only the three fixed themes.
-- **Charts and plots:** the dashboard's charts read their colours from the roles. The rail
-  report's PNG gains its theme as part of its cache key: dark (Synthwave or Graphite colours)
-  or light (Ledger). Its PDF stays a light document.
+- **Charts:** each app's on-screen charts read their colours from the roles. The deck's charts
+  and rail plots stay as they are (Synthwave).
 
 ---
 
@@ -137,15 +135,8 @@ the roles, so nothing breaks while the components move over.
 
 - **All three:** `design/` vendored, the contrast test in each suite, and the rules' "shared
   design" section pointing at it.
-- **Gatbox:**
-  - `dash.css` and the phone view's CSS on roles;
-  - the theme blocks, SYSTEM → LOOK, and `data-theme` from gatbox-web;
-  - IBM Plex Sans/Mono fetched by the bootstrap like the current fonts (pinned google/fonts
-    commit, sha256), and served by gatbox-web;
-  - chart colours from CSS, plot palettes by theme;
-  - `test-dash.py` screenshots of the 7" and the phone view in all four themes;
-  - **hard rule 11 in CLAUDE.md changes** to "the shared roles and themes in `design/`" (her
-    OK, as a rules change).
+- **Gatbox: no change to the deck's look** (Synthwave only, hard rule 11 as it is). It owns
+  `design/` and its test, and the archive's pages (plan phase D) use the deck's Synthwave.
 - **cabcrawl:**
   - the theme blocks over its existing roles, and `user.theme` with a migration (registered in
     `check_schema.py`);
@@ -161,9 +152,11 @@ the roles, so nothing breaks while the components move over.
 
 ## 6. Decisions for the owner
 
-| # | question | recommended |
+All decided by the owner, 2026-10-28:
+
+| # | question | decided |
 |---|---|---|
 | T1 | Should the Tech Tracker's look apply on phones too (today phones are always synthwave)? | **Yes:** one setting per user, at every width. |
-| T2 | Theme names | **Keep the shipped ones:** Synthwave, Ledger, Graphite, Follow system. Or rename Synthwave to "Cyberpunk" everywhere: say which. |
-| T3 | Defaults | **Tech Tracker Ledger (as now), cabcrawl Synthwave, the 7" Synthwave, the deck's phone view follows the system.** |
-| T4 | The four colour corrections to Ledger and Graphite (§3.2) | **Yes:** each fixes an AA failure. |
+| T2 | Theme names | **The shipped ones:** Synthwave, Ledger, Graphite, Follow system. |
+| T3 | Defaults | **Tech Tracker Ledger, cabcrawl Synthwave.** The deck is Synthwave only. |
+| T4 | The four colour corrections to Ledger and Graphite (§3.2) | **Fix them.** |

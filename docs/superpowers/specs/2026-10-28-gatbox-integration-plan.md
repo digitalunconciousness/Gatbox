@@ -316,6 +316,7 @@ without it, in its repo's suite.
 | phase | what | repos | needs the owner for |
 |---|---|---|---|
 | **A. Groundwork and fixes** | the shared agent rules and the same privacy hook in all three; the contract drift fixed, ownership moved to Gatbox, Phase 8 extras and priorities written down; the realm rule and its test on the deck; **the fix list (§9)** | all three | plan approval; the privacy patterns variable (§12); the two ⏸ server steps in §9 |
+| **A3. Report a problem** | a "Report a problem" link on every page of both apps; reports kept privately in each app's own database with a page for her to triage; a reference on every error page; GitHub issue forms and a SECURITY.md for the repos. Spec: §17 | the two apps (+ issue forms in all three) | F1–F4 (§17) |
 | **A2. One look, four themes** | the shared philosophy and `design/themes.css` (Synthwave, Ledger, Graphite, Follow system) with the contrast test; per-user choice in both apps (one setting for every width); the four colour fixes. **The deck stays Synthwave.** | the two apps (+ the shared file from Gatbox) | nothing more: T1–T4 decided |
 | **B. The library on the deck** | `library.sqlite`, seed, readers switched over; LIBRARY on the 7"; the title search; manual fetch on request; MISSING; the CHECK screen; known-good marks; space on SYSTEM | Gatbox | the seed review; new units shown before install |
 | **C. Dumps and burns to their world** | `rom_dump`, `burn`, the file endpoints; the apps store and show them | all three | deploys |
@@ -548,3 +549,66 @@ own short spec in the phase that builds it:
 12. **Health at a glance:** one page in each app and on the deck with the last sync, last
     backup, disk space, queued and parked items. The same facts go to ntfy when something's
     wrong: a backup that didn't run, an archive disk 90% full, a parked item.
+
+---
+
+## 17. Report a problem (phase A3, both apps)
+
+The owner, 2026-10-28: cabcrawl and the Tech Tracker "need an easy place to report bugs and such
+for when they begin to get used." Small, and independent of the deck work, so it runs right after
+phase A, before cabcrawl goes into service.
+
+**For the people using the apps:**
+- **"Report a problem"** in every page's menu and footer, for any signed-in user, every role.
+- A short form:
+  - what happened (required);
+  - what you expected (optional);
+  - how much it matters: *it's in my way* / *it's annoying* / *an idea*;
+  - an optional photo (stored behind the login like other photos).
+- The page it was pressed on is filled in automatically, so nobody has to describe where they
+  were.
+- **Error pages say "Something went wrong · reference 7F3A2C · report it"**, with the reference
+  already in the form. The same reference is in the server's log beside the error, so a report
+  leads straight to the cause.
+
+**For the owner:**
+- **Reports stay private, in the app's own database:** a `feedback` table holding when, who,
+  their role, the page, the app's version (its git commit), the browser, how much it matters,
+  the text, a status (new / seen / fixed / won't fix) and her note.
+- **A Feedback page** lists them, filters by status and marks them done.
+  - cabcrawl: managers and admins.
+  - The Tech Tracker: owner.
+- **Being told:**
+  - **cabcrawl:** a new `feedback` event in its existing alerts (ntfy and Discord channels,
+    through the alert outbox), so a channel can send reports to her phone.
+  - **The Tech Tracker:** it has no notifications yet, so a "new reports" count on the
+    dashboard and in the menu. ntfy arrives with phase I.
+- **Never sent anywhere public automatically.** The repos are public, and a report can name a
+  customer, a machine or the barcade.
+  - The Feedback page has a **copy as issue** button. It produces the report's text with the
+    reporter, the ids in the page address and the photo left out, for her to check and paste
+    into GitHub.
+  - An agent turning a report into an issue strips names and business data the same way and
+    shows her the text first.
+
+**For the repos (all three, the deck included):**
+- **GitHub issue forms** (`.github/ISSUE_TEMPLATE/`) for a bug and for an idea, each warning not
+  to paste customer, business or personal data. They're for her, and for anyone else once the
+  projects go public (§14).
+- **`SECURITY.md`:** how to report a security problem privately, through GitHub's private
+  vulnerability reporting, not an issue.
+
+**Tests (each app):**
+- any role can file a report and can't see others' unless allowed;
+- the page and the app's version are recorded;
+- the error page's reference matches the logged one;
+- the Feedback page is limited to its roles;
+- "copy as issue" leaves out the reporter, ids and photo;
+- cabcrawl's `feedback` alert reaches the outbox.
+
+| # | question | recommended |
+|---|---|---|
+| F1 | Who can report? | **Any signed-in user, every role.** Not the public pages (the coin-door form, the Tech Tracker's `/d/` links): customers and guests already have their own ways in. |
+| F2 | Who reads and triages? | **cabcrawl: managers and admins** (so the boss sees them too). **The Tech Tracker: owner.** |
+| F3 | How she hears about a new one | **cabcrawl: its alert channels** (a `feedback` event, chosen per channel). **The Tech Tracker: a count on the dashboard now, ntfy with phase I.** |
+| F4 | GitHub issue forms and a SECURITY.md | **Yes, in all three repos,** with the privacy warning. Nothing is ever filed automatically. |

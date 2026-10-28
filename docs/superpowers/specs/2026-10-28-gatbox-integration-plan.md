@@ -1,8 +1,9 @@
 # The deck, the barcade and the side work — the integration plan
 
 Status: **draft for the owner's approval, 2026-10-28. No code yet.** This is the top-level plan.
-Detailed specs hang off it: the knowledge archive (`2026-10-28-shared-game-library-design.md`)
-and one set of agent rules (`2026-10-28-agent-rules-draft.md`). Each later phase gets its own
+Detailed specs hang off it: the knowledge archive (`2026-10-28-shared-game-library-design.md`),
+one set of agent rules (`2026-10-28-agent-rules-draft.md`) and one look with four themes
+(`2026-10-28-one-look-four-themes.md`). Each later phase gets its own
 short spec when it starts, as each repo's rules ask.
 
 ---
@@ -291,6 +292,7 @@ The contract part: `contract/shop-v1/`, vendored only into Gatbox and the Tech T
 | phase | what | repos | needs the owner for |
 |---|---|---|---|
 | **A. Groundwork** | the shared agent rules (vendored, checksummed) and the same privacy hook in all three (cabcrawl has none today); the contract drift fixed, ownership moved to Gatbox, Phase 8 extras written down, the three-part split; the realm rule and its test on the deck | all three | approving the rules; the pattern file in the cloud environment (§11) |
+| **A2. One look, four themes** | one design philosophy and one shared `design/themes.css` (Synthwave, Ledger, Graphite, Follow system) with a contrast test, vendored like the contract; each app on the shared roles, with a per-user (deck: per-screen) choice. Spec: `2026-10-28-one-look-four-themes.md` | all three | T1–T4 in that spec; the hard rule 11 change |
 | **B. The archive on the deck** | `library.sqlite`, seed, readers switched over; LIBRARY on the 7"; the offline title search and model suggestions; manual fetch on request; MISSING; the CHECK screen for hashes; known-good marking; `gatbox-backup` | Gatbox | the seed review; new units shown before install |
 | **C. Dumps and burns to their world** | `rom_dump`, `burn`, the file endpoints; the apps store and show them; a rebuilt deck pulls them back | all three | deploys |
 | **D. Knowledge in the apps** | library tables, sync per world, ADOPT, conflicts; read-only in cabcrawl, editable in the Tech Tracker | all three | deploys; switching library on per device |
@@ -322,6 +324,7 @@ The contract part: `contract/shop-v1/`, vendored only into Gatbox and the Tech T
 | M | Linking a machine to its game from the deck (sets the app's `model_key`)? | **Later:** link in each app for now; the deck links THIS PI machines. |
 | R | The shared agent rules, and the push gate in them | **Yes; push to a branch once checks pass, with your gates at design and merge** (the rules draft). |
 | O | Contract ownership moves to Gatbox | **Yes.** |
+| T1–T4 | the themes (Tech Tracker's look on phones too; names; defaults; four colour corrections) | see the themes spec §6 |
 | L1–L5 | the library specifics (cabcrawl read-only; CONFIRM on the 7" only; key naming; per-device switch; no phone edits) | see the library spec §10 |
 
 ---

@@ -79,11 +79,17 @@ never appear in the other world's repo.
 
 ### 5. Shared design
 
-Synthwave tokens, used by all three apps' UIs (customer documents in the tech tracker stay
-print-first): bg `#150a28`, bg2 `#1f0f3d`, panel `#1f1240`, border `#3d1e6b`, magenta `#ff2e9f`,
-cyan `#7dfaff`, lime `#5ef2b0`, red `#ff4d6d`, amber `#ffb74d`, text `#ece3ff`, dim `#9080b0`;
-Chakra Petch (display) and Share Tech Mono (body), served locally; no CDN; plain HTML/CSS/JS,
-no framework, no build step.
+- **One philosophy, four themes:** Synthwave, Ledger, Graphite and Follow system, in
+  `design/themes.css`. It's vendored like the contract, owned by Gatbox, and checked by
+  `design/check_contrast.py` (`docs/superpowers/specs/2026-10-28-one-look-four-themes.md` until
+  it lands).
+- **Components use the roles, never a raw colour:** surface, text, accent, ok / warn / fault /
+  info, and so on.
+- **Colour means status, and every status has a word.** Glow and scanlines are Synthwave only.
+  Numbers, tags and hashes are set in monospace.
+- **Touch targets:** at least 44 px on phones and 56 px on the 7".
+- **Printed labels and customer documents stay print-first.**
+- **Fonts are served by each app.** No CDN; plain HTML/CSS/JS, no framework, no build step.
 
 ### 6. The privacy check
 

@@ -24,7 +24,7 @@ import os
 import time
 import uuid
 
-from . import config, hubs, meter
+from . import config, hubs, meter, sessions
 
 OUTBOX = "orders.json"
 # What the tracker accepts; its own forms offer the same five.
@@ -126,7 +126,7 @@ def add(body):
 
     session_file = None
     if body.get("attach"):
-        session_file = _last_complete_session()
+        session_file = _last_complete_session(slug)
         if session_file is None:
             raise Bad(400, "nothing to attach: no finished session for this machine yet")
 
@@ -147,15 +147,25 @@ def tag(body):
     order = body.get("order")
     if not isinstance(order, int) or isinstance(order, bool) or order <= 0:
         raise Bad(400, "order: the hub's id for the record")
+    # The machine the order is on: an order id means something only to the hub that issued
+    # it, and with several hubs this is what gatbox-sync routes the tag by.
+    slug = meter.resolved()["machine"]
+    on_this = bool(slug) and any(o.get("id") == order for o in hub_open(slug))
     # Named, or "the last finished one" -- which is what the 7" means by ATTACH LAST TRACE,
-    # and it cannot name the file itself without listing every session to find it.
+    # and it cannot name the file itself without listing every session to find it. Either way
+    # a trace goes only on its own machine's order: with two hubs, another machine's trace can
+    # be the other world's.
     session_file = _text(body, "session_file", 120, required=False)
     if session_file is None:
-        session_file = _last_complete_session()
+        session_file = _last_complete_session(slug)
         if session_file is None:
-            raise Bad(400, "nothing to attach: no finished session on this Pi yet")
+            raise Bad(400, "nothing to attach: no finished session for this machine yet" if slug
+                      else "nothing to attach: no finished session on this Pi yet")
     elif session_file not in _complete_sessions():
         raise Bad(400, f"session_file: no finished session named {session_file!r}")
+    elif on_this and sessions.machine_of(session_file) not in (None, slug):
+        raise Bad(400, f"{session_file} was recorded on {sessions.machine_of(session_file)}, not {slug}: "
+                       "a trace goes only on its own machine's order")
     note = _text(body, "note", NOTE_MAX, required=False)
     phase = body.get("phase")
     if phase is not None and phase not in hubs.PHASES:
@@ -171,10 +181,7 @@ def tag(body):
     entry = {"uid": uuid.uuid4().hex, "kind": "session_tag",
              "created": round(time.time(), 3), "order": order,
              "session_file": session_file}
-    # The machine the order is on: an order id means something only to the hub that issued
-    # it, and with several hubs this is what gatbox-sync routes the tag by.
-    slug = meter.resolved()["machine"]
-    if slug and any(o.get("id") == order for o in hub_open(slug)):
+    if on_this:
         entry["machine"] = slug
     if note:
         entry["note"] = note
@@ -217,6 +224,10 @@ def _complete_sessions():
     return [n for n in sessions.names() if n != live]
 
 
-def _last_complete_session():
-    files = _complete_sessions()
-    return files[0] if files else None
+def _last_complete_session(slug=None):
+    """The newest finished session; given a machine, the newest recorded on that machine. "The last
+    trace" on a machine's order means that machine's, not whatever was metered last."""
+    for name in _complete_sessions():
+        if slug is None or sessions.machine_of(name) == slug:
+            return name
+    return None

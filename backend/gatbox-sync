@@ -574,16 +574,21 @@ def guard(h, hubs, batch, sessions, outbox):
     entries = {e.get("uid"): e for e in outbox if e.get("uid")}
     keep, stopped = [], []
     for item in batch:
+        e = entries.get(item.get("uid")) or {}
         if item.get("kind") == "session_tag":
-            e = entries.get(item.get("uid")) or {}
             slug = e.get("machine") or by_file.get(e.get("session_file"))
         else:
             slug = item.get("machine")
+        # An order or a tag carries a trace by reference: it must be this machine's own, or the
+        # reference would point into another machine's -- with two hubs, maybe the other world's.
+        traced = by_file.get(e.get("session_file")) if item.get("kind") != "rail_session" else None
         others = [x["label"] for x in hubs if x["name"] != h["name"] and slug in rosters[x["name"]]]
-        if slug and slug in rosters[h["name"]] and not others:
+        if slug and slug in rosters[h["name"]] and not others and traced in (None, slug):
             keep.append(item)
             continue
-        if not slug:
+        if traced not in (None, slug):
+            why = f"its trace was recorded on {traced}"
+        elif not slug:
             why = "no machine"
         elif slug in rosters[h["name"]]:
             why = f"also on {' and '.join(others)}'s roster"

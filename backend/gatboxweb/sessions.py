@@ -20,6 +20,24 @@ def names():
         return []
 
 
+def machine_of(name):
+    """The machine a session was recorded on (its `# machine=` header line), or None. Reads only the
+    header, so asking it of every session on the Pi stays cheap."""
+    try:
+        with open(config.log_path(name), errors="replace") as f:
+            for line in f:
+                if line.startswith("iso_time"):
+                    continue
+                if not line.startswith("#"):
+                    break                                   # the first reading: the header is over
+                k, _, v = line[1:].strip().partition("=")
+                if k == "machine":
+                    return v.strip() or None
+    except OSError:
+        pass
+    return None
+
+
 def summary(name, t0=None, t1=None):
     """First/last sample, the header's clock/profile/window, and per meter mode the sample count and cheap min/max
     in base units (V, Ω, ...), without running the full report. Optionally only the samples from t0 to t1."""

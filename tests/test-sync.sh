@@ -783,5 +783,28 @@ check "not recorded as sent, nor counted as a refusal" '[ "$(python3 -c "import 
 run2
 check "the next ordinary run has nothing blocked" '[ "$(cat "$T/rc")" = 0 ] && [ "$(st2 "d[\"blocked\"]")" = "[]" ] && ! grep -q BLOCKED "$T/out"'
 
+echo "  an order carrying another machine's trace:"
+# gatbox-web now attaches only the order's own machine's trace; this is the last line behind it. An order
+# on BRAVO's machine that names ALPHA's session would hand BRAVO a reference into the other world.
+python3 - "$W2" <<'PY'
+import json, sys
+p = f"{sys.argv[1]}/orders.json"; d = json.load(open(p))
+d["orders"].append({"uid": "9x".ljust(32, "0"), "kind": "order", "created": 1790501000.0,
+                    "machine": "s-0042-ms-pac-man", "issue": "wrong trace", "priority": "Medium",
+                    "session_file": "rail_20261011_010000.csv"})
+json.dump(d, open(p, "w"))
+PY
+rm -f "$W2"/posted*.json
+run2
+check "exits 0"                                '[ "$(cat "$T/rc")" = 0 ]'
+check "BRAVO never sees it"                    '[ "$(sweep bad)" = "[]" ] && ! cat "$W2"/posted*.json 2>/dev/null | grep -q "wrong trace"'
+check "it is blocked, saying whose trace it is" '[ "$(st2 "[(b[\"what\"], b[\"machine\"], b[\"why\"]) for b in d[\"blocked\"]]")" = "[('"'"'order'"'"', '"'"'s-0042-ms-pac-man'"'"', '"'"'its trace was recorded on widget-wars'"'"')]" ]'
+python3 - "$W2" <<'PY'
+import json, sys
+p = f"{sys.argv[1]}/orders.json"; d = json.load(open(p))
+d["orders"] = [o for o in d["orders"] if o["uid"] != "9x".ljust(32, "0")]
+json.dump(d, open(p, "w"))
+PY
+
 echo "sync: $pass passed, $fail failed"
 [ "$fail" = 0 ]

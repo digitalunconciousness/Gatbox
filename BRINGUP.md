@@ -555,6 +555,14 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   AS-LEFT, which becomes the session's `# phase=` line and a new file when it changes.
   - [x] Installed on the Pi 2026-10-26 (owner OK'd the gatbox-sync unit + tmpfiles diff; with #15). The new unit's
         first run, 14:49: conditions met, both credentials loaded, one hub, 0 queued, no conflicts or held
+  - [x] The last-line guard (2026-10-28), code + tests: with several hubs, `gatbox-sync` looks again at
+        each request just before it goes (a session by its machine, an order by its machine, a tag by
+        its order's machine or else its session's) and sends only what is on that hub's roster and no
+        other's. Anything else stays on the Pi: BLOCKED in the journal, `blocked` in status.json for
+        the SYSTEM tile. Routing should leave it nothing to do; it is there so a routing bug can't put
+        one hub's data in the other. One hub: no guard, status.json unchanged. `test-sync.sh` sweeps
+        every item both stub hubs received, then forces a leak past routing. sync 115 → 134.
+  - [ ] Installed (bootstrap: `/usr/local/bin/gatbox-sync` only, no unit or system config)
   - [ ] ⏸ Exit: one session each on the same Pi — a barcade trace lands in the tracker, a
         customer trace lands on its job at the second hub, neither shows up in the other
 - **The 7" box: a readability and touch pass (2026-10-26).** The owner: the on-screen keyboard

@@ -322,12 +322,18 @@ without it, in its repo's suite.
 | **D. The archive** | `archive/` (server, installer, RUNBOOK), the deck ↔ archive sync and conflicts, every image to the archive; **each app's read-only copy** (tables, pull job, reader token, the game section on machine / asset pages), `Game.model_key` | Gatbox + both apps | creating the LXC and the Cloudflare tunnel and Access (written out for her, ⏸) |
 | **E. Barcade work on the deck** | action ledger, "acts as", order actions, coin counts, parts and stock with the scanner | Gatbox + cabcrawl | deploy; the device switches |
 | **F. Side work on the deck** | the same for jobs, time, readings, parts | Gatbox + Tech Tracker | deploy |
+| **G. More floor data** | §16 ideas 8 and 9: cost to keep, downtime and lost plays, repeat faults, rail health beside each swap | cabcrawl | deploy |
+| **H. Shop extras** | §16 ideas 10 and 11: real repair times while estimating; a customer status link per job | Tech Tracker | deploy |
+| **I. Health and alerts** | §16 ideas 2 and 12: overnight alerts from the deck, health at a glance in all three, ntfy when something's wrong | all three | her ntfy server's address (site config, never in git) |
 
 - **Why this order:** A fixes what's broken and unblocks the rest. A2 is independent. B and C
   are what she asked for by name: a PDF for every machine and hashes on the spot (B, with no
   network or server needed), and images back to the source of truth (C). D gives the knowledge
   its home and her partner his phone access. E and F are the biggest and build on A's rules
-  and "acts as". E and F can swap if the side work is busier.
+  and "acts as". E and F can swap if the side work is busier. G and H touch one app each and
+  can run any time after A, alongside the deck's phases. G is worth doing early, since the
+  barcade is about to put cabcrawl into service. I comes once there's something worth
+  watching (after C).
 - **PRs:** one per repo per phase, never merged by an agent. Merge the apps first in C–F (each
   advertises a capability only once deployed, and an older deck ignores it); Gatbox goes last.
 - **Every phase:** a short spec → **her one OK** (it covers the code and the push) → code and
@@ -466,10 +472,20 @@ design without changing it:
 
 ---
 
-## 16. More ideas (not approved yet)
+## 16. More ideas (approved by the owner, 2026-10-28: "I like all of those")
 
-The owner asked for more improvements to the functionality. These are ordered by value for
-the effort, best first. Each would get its own short spec if she picks it.
+The owner asked for more improvements to the functionality and took all twelve. Each gets its
+own short spec in the phase that builds it:
+
+| idea | phase |
+|---|---|
+| 1 guided board dump; 3 machine timeline (the deck's own records); 4 manual search and chip-label search (on the deck) | **B** |
+| 4 search in the archive's pages; 7 fix notes as a library kind | **D** |
+| 6 blank chips as stock; 7 SAVE AS FIX on closing an order; 3 the timeline gains the order history | **E** |
+| 5 the job timer; 6 and 7 for jobs; 3 the timeline gains the job history | **F** |
+| 8 more data for cabcrawl's existing swap planner; 9 downtime cost and repeat faults | **G** (cabcrawl only) |
+| 10 real repair times for estimates; 11 the customer status link | **H** (Tech Tracker only) |
+| 2 overnight alerts; 12 health at a glance | **I** (all three; needs her ntfy server's address) |
 
 **At the bench (the deck):**
 
@@ -504,9 +520,17 @@ the effort, best first. Each would get its own short spec if she picks it.
 
 **In cabcrawl (the barcade):**
 
-8. **Swap suggestions from plays,** back to where the app started: the weakest floor earners
-   beside the warehouse games that have been off the floor longest, with their last earnings.
-   A manager confirms the swap (the rotation page exists).
+8. **More data for the swap planner.** cabcrawl already has one (`app/services/rotation.py`):
+   plays per *working* day (broken days don't count against a game), a settling period,
+   like-for-like pairing, fade detection, and a swap suggested only for a game doing 20% better.
+   The owner: "more data is always welcome". So each candidate gains, over the same window:
+   - **cost to keep:** repair hours and parts spent on its orders;
+   - **downtime:** days down and the plays lost to them (idea 9);
+   - **repeat faults;**
+   - **rail health** from the deck's traces (a +5V that sags or drifts).
+
+   The planner's choice stays the planner's: these sit beside each swap so a manager can see
+   why to keep or pull a game.
 9. **Downtime cost and repeat faults:** plays lost while a machine is down (its usual daily plays
    times the days down), to rank repairs; and a flag when the same machine gets a similar order
    three times in 60 days.

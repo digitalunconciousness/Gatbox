@@ -1,9 +1,13 @@
 # The game library: the deck and the archive — design
 
-Status: **draft for the owner's approval, 2026-10-28. No code yet.** Third revision, the same
+Status: **draft for the owner's approval, 2026-10-28. No code yet.** Fourth revision, the same
 day:
 1. cabcrawl and the Tech Tracker never talk, not even through the deck;
-2. **the knowledge gets its own home, a container on the owner's Proxmox node: the archive.**
+2. **the knowledge gets its own home, a container on the owner's Proxmox node: the archive;**
+3. **the apps still hold knowledge:** each keeps a read-only copy of its own machines' games,
+   because cabcrawl will have an unknown number of users who should use its own logins;
+4. **ROM images are kept** (the owner has permission). The full build guide (the "complete
+   picture") adds what the archive must be ready for later (§2.4).
 
 This is the detailed spec behind §4 of `2026-10-28-gatbox-integration-plan.md`, which comes
 first.
@@ -27,20 +31,27 @@ silently. Machines link to a game by `model_key`.
 ## 0. The design in one paragraph
 
 **The archive is the library's home:** a small always-on server in its own container on her
-Proxmox node, belonging to neither business. **The deck keeps a full copy**, PDFs included, so
-the bench works offline. The two stay in step through one two-way sync. Every write is
-compare-and-set, and same-entry conflicts wait on the 7" for her choice. Her partner uses the
-archive's own pages on his phone, behind a login. **The apps hold no library at all:** a
-machine page (cabcrawl) or an asset page (the Tech Tracker) shows the game's key and a link to
-the archive's page. The link opens in the person's browser, and nothing passes between an app
-and the archive. So the two worlds share nothing, and the archive is reached only by people
-and the deck.
+Proxmox node, belonging to neither business.
+
+- **The deck keeps a full copy**, PDFs included, so the bench works offline. The two stay in
+  step through one two-way sync. Every write is compare-and-set, and same-entry conflicts wait
+  on the 7" for her choice.
+- **Each app keeps a read-only copy of the games its own machines use.** It pulls them from the
+  archive on a timer, PDFs included, and shows them to its own users with its own logins and
+  roles. That works however many people the barcade gives cabcrawl accounts.
+- **Edits happen in two places only:** the 7", and the archive's own pages (her partner on his
+  phone). So an app copy never needs merging.
+- **Knowledge flows one way into each app, and nothing flows back.** An app only asks the
+  archive for its games, by key, and the archive takes nothing from an app. So the two worlds
+  still share nothing with each other.
 
 ```
-   cabcrawl (the barcade)       Tech Tracker (side work)       links only: a machine's game key
-   Game.model_key ─ link ─┐     Asset.model_key ─ link ─┐      opens the archive's page in the
-                          ▼                              ▼      person's browser; no app ever
-              THE ARCHIVE (an LXC on her Proxmox node)          sends it anything
+   cabcrawl (the barcade)                         Tech Tracker (side work)
+   read-only copy: its games' manuals,            read-only copy: its assets' games
+   limits, facts, ROM lists (+ its own logins)    (+ "edit in the library" for owner/tech)
+              ▲ pulls its games, by key                  ▲ pulls its games, by key
+              └───────────── read-only ──────────────────┘
+              THE ARCHIVE (an LXC on her Proxmox node)
               whole library + every PDF + every ROM image
               Cloudflare Access: her + partner (phone); the deck by token
                           ▲   │  library protocol (compare-and-set, changes feed, files)
@@ -121,7 +132,7 @@ cabinet.
 |---|---|---|
 | **the archive** (an LXC on her Proxmox node) | **everything**: every model she has seen from either world or neither, every PDF, every ROM image | **the source of truth.** Always on, backed up with her Proxmox backups, hers alone |
 | **the deck** | **everything**, a full copy | offline at the bench; the 7" is where she enters and fixes things |
-| cabcrawl, the Tech Tracker | **nothing**: a machine's or asset's `model_key`, and a link | they show the game and send people to the archive |
+| cabcrawl, the Tech Tracker | **a read-only copy of the games their own machines use:** game, documents and PDFs, MAME set and ROM list, rail limits, facts, and the known-good / bad verdicts and hashes (not the images) | their own users read it with their own logins; the archive stays the one place it's edited |
 
 ### 2.1 The archive
 
@@ -146,18 +157,38 @@ cabinet.
   and phone-first for her partner. They cover games, a game (documents and the PDF viewer, MAME
   and the ROM list, known images, limits, facts), search, upload a PDF, add a game, and edit.
   CONFIRM and conflicts stay on the 7" (§5.3, §5.4).
-- **Never talks to either app.** It's reached by people's browsers and by the deck, nothing
-  else.
+- **It never calls out.** It's reached by her and her partner (Access), by the deck (two-way),
+  and by each app's pull job (read-only reader tokens, for that app's own games). It accepts
+  writes only from the deck and from Access users.
 
-### 2.2 The apps: a link, nothing more
+### 2.2 The apps: a read-only copy of their own games
 
-- cabcrawl gains `Game.model_key` (nullable, set by a one-off script from the seed plan, and
-  editable by managers). The Tech Tracker already has `Asset.model_key`.
-- Each app has one setting, the archive's address. Its machine or asset page shows **"Game:
-  `<model_key>` → open in the library"**, linking to `<archive>/g/<model_key>`, and keeps
-  cabcrawl's KLOV link as it is. Who can open the library is decided by Cloudflare Access: her
-  and her partner, plus anyone else she adds later.
-- Nothing is stored in or sent from an app. **That is how "never talk" holds for knowledge.**
+- **Which games:** those its machines name. cabcrawl gains `Game.model_key` (nullable, set by a
+  one-off script from the seed plan, and editable by managers). The Tech Tracker already has
+  `Asset.model_key`.
+- **How the copy arrives:** each app runs a small pull job on a timer (a CLI under a systemd
+  timer, like their other jobs). It asks the archive for changes since its last cursor,
+  **for its own keys only** (`GET /api/v1/library/changes?since=…&models=…`), with a
+  **read-only reader token** the archive issues per app. It fetches new PDFs into its own
+  private file store.
+- **The network path:** recommended, the node's private network, since all three containers
+  share the Proxmox node. The archive answers reader tokens on its private address, for reads
+  only. The other option is through the tunnel with an Access service token per app.
+- **What its users see:** a machine (cabcrawl) or asset (Tech Tracker) page shows its game: the
+  manuals (opened from the app's own store, behind its own login), the rail limits with page
+  and quote, the facts, the MAME set and ROM list with known-good marks, and when the copy
+  last refreshed. cabcrawl keeps its KLOV link.
+  - The Tech Tracker adds **"edit in the library"** for owner and tech, which opens the archive
+    (Access login).
+  - cabcrawl's users only read: barcade staff can't change her archive.
+- **Read-only, so there's never a merge.** The pull job replaces its copy of an entry with the
+  archive's. A model a machine no longer names stops refreshing and is kept until a manager
+  clears it.
+- **"Never talk" still holds.** Each app reads from the archive, and the archive accepts nothing
+  from an app and keeps no record of what an app asked for. Nothing goes from one world to the
+  other.
+- **An app with no archive configured** (say, someone else's install) just has no library
+  section.
 
 ### 2.3 What is in the library, and what is not
 
@@ -171,9 +202,30 @@ cabinet.
 | facts read off a manual (fuses, monitor, PSU) | |
 
 **No library record names a machine, a customer, a site or a world.** A ROM image is stored by
-its hash, so a game's code is kept without who owned the board. That's why the archive gets
-every image: game code is the knowledge most at risk of being lost, and the barcade's copy
-isn't hers to keep.
+its hash, so a game's code is kept without who owned the board. The archive gets every image
+(the owner has permission to keep copies): game code is the knowledge most at risk of being
+lost. It's also what a known-good reburn, a MAME comparison or a desuicide needs at the bench.
+
+### 2.4 Ready for what the build guide adds (later, not built now)
+
+The guide is the deck's full plan (the CATBOX design, now GATBOX). Several of its features
+produce knowledge, and the archive's store and protocol are designed so each becomes **one new
+record kind, added without changing the others.** Most need hardware the deck doesn't have
+yet, so no code assumes them until it does (Gatbox CLAUDE.md, "Not owned").
+
+| from the guide | becomes | needs |
+|---|---|---|
+| boards across platforms (JAMMA, CPS1/2 with kick harness, Neo Geo MVS, Sega System 32, Atari raster), the per-system adapter pigtails, the pinout on the e-ink | **`platform`**: pinouts, harness and adapter notes, common faults, parts, test points. A game names its platform. It can be seeded from the roster's `meta.platforms` (read only; the roster's schema is untouched) | nothing new: a deck feature |
+| "signature capture & replay library … keyed to the boardset" (the Atari C.A.T. idea) | **`signature`**: a logic-analyzer capture at a named test point of a boardset, marked known good, diffed against a suspect board | the ADALM2000 (not owned) |
+| "MAME as known-good": dump → verify in MAME → probe the difference; desuicide work | `rom_image` (exists) plus **notes** on a game: watchpoints, decrypted / phoenix sets, what a pin should do | nothing new |
+| dump → verify → erase → reburn, without leaving the deck | `rom_image` as the source of a burn: DUMP → BURN already picks images from the archive folder, and can pick from the library | the UV drawer, later |
+| media bay: clone CF / SD / SATA / IDE ("CF → SSD") | **`disk_image`**: a game's CF card or drive image by hash, often several GB. The archive keeps it; **the deck keeps the record and the hash, and the file only when asked** (§6) | the card reader and drive dock |
+| thermal camera, USB microscope | **`photo`** on a game or platform: chip markings, a known-good thermal picture of a board | the sensors |
+| a board fault database | **`fix`**: symptom → cause → fix for a game or platform, in her words. A closed order or job can become one with one tap on the deck, with the machine and customer left out | nothing new |
+
+The guide's homelab features (crash cart, the Proxmox "war room" panel, alerts) don't belong
+in the library. If they're ever built, they're their own realm on the deck, apart from both
+worlds.
 
 ---
 
@@ -365,8 +417,11 @@ Record kinds (`data`):
   Both will grow:
   - manuals for a few hundred games is several GB;
   - a board's ROMs are typically 0.5–8 MB, so even hundreds of boards is a few GB.
-  - **Plan for about 20 GB over the next years.**
+  - **Plan for about 20 GB over the next years** for documents and ROM images.
   - The archive's mount point starts at about 50 GB and grows in Proxmox.
+  - **Disk images change the scale** once the media bay exists (§2.4): a CF card is 0.1–4 GB,
+    and a drive image tens of GB. They get their own, larger dataset on the Proxmox side when
+    that day comes, and the deck holds their records and hashes, not the files.
   - **The deck:** the SYSTEM tile shows the library's size and the free space on `/srv`, and
     warns when it's low. `df -h /srv` on the Pi says where it stands today. If the deck ever
     runs short, an option for later is to keep every record but only some PDFs on the deck,
@@ -438,12 +493,22 @@ and writes `rom_list` records back.
   - `test-contract.sh`: the library vectors;
   - the raillog tests: the window from `library-specs.json`, and today's behaviour without it.
 
-**cabcrawl:** `Game.model_key` (Alembic, registered in `check_schema.py`), the archive-address
-setting, the "Game: … → open in the library" line on the machine page, the link script, and
-screenshots.
+**cabcrawl:**
+- `Game.model_key` (Alembic, registered in `check_schema.py`) and the link script;
+- read-only library tables and a file folder outside `static/`;
+- the pull job (CLI + timer, a reader token in its environment) and the settings (archive
+  address, token);
+- the machine page's game section and a library list (any signed-in role);
+- screenshots at 390 and 1280.
 
-**Tech Tracker:** the archive-address setting and the same line on the asset page. The
-`model_key` column exists.
+**Tech Tracker:**
+- the same read-only tables (PostgreSQL, `grant_app()`, `EXPECTED_GRANTS`) and the pull job;
+- PDFs in its file store;
+- the asset page's game section, with "edit in the library" for owner and tech;
+- the `model_key` column exists already.
+
+**The archive:** a reader token per app (read-only, library reads only), and the
+`models=` filter on `changes`.
 
 ---
 
@@ -461,14 +526,17 @@ See plan §9:
 | # | question | decided / recommended |
 |---|---|---|
 | S | Where does knowledge live? | **Decided (the owner, 2026-10-28): a container on her Proxmox node.** This spec's answer to "the best way": the archive above, running the deck's own library code. |
-| L1 | Where does the archive's code live? | **Recommended: in the Gatbox repo (`archive/`),** since it's the deck's library made always-on. A fourth repo would mean a fourth copy of the rules and checks. |
-| L2 | Who can open the archive? | **Recommended: her and her partner** (Cloudflare Access, by email). Barcade coworkers only if she adds them. |
+| L1 | Where does the archive's code live? | **Recommended: in the Gatbox repo (`archive/`):** GATBOX is the deck plus its archive, one product. See plan §14 for what that means if the projects go public. |
+| L2 | Who can open the archive? | **Decided: her and her partner** (Cloudflare Access, by email). Everyone else reads their app's copy. |
+| L6 | Do the apps hold knowledge? | **Decided: yes, a read-only copy of their own machines' games** (the owner: cabcrawl will have an unknown number of users). Edits stay on the 7" and in the archive. |
+| L7 | How the apps reach the archive | **Recommended: the node's private network,** with a read-only reader token per app. |
+| L8 | ROM images in the apps | **Recommended: hashes and verdicts only.** The images live in the archive and on the deck; each app still gets its own machines' dump images through phase C. |
 | L3 | Who can CONFIRM a rail limit? | **The 7" only.** |
 | L4 | `model_key` naming | **Title slug** (`pin-` for pinball, maker/year suffix on a clash), permanent, seeded from the barcade slugs. |
 | L5 | Library edits from a phone on the deck's own Wi-Fi? | **No:** read access and PDF upload as today. Phone editing is what the archive is for. |
 
-Decision K from the earlier draft (ADOPT between the worlds) is gone: the apps hold no
-knowledge, so there's nothing to cross.
+Decision K from the earlier draft (ADOPT between the worlds) is gone: the apps' copies are
+read-only and come only from the archive, so nothing crosses.
 
 ---
 

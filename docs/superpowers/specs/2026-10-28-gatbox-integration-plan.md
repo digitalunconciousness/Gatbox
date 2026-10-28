@@ -1,6 +1,6 @@
 # The deck, the barcade, the side work and the archive — the integration plan
 
-Status: **draft for the owner's approval, 2026-10-28. No code yet.** Revised the same day with
+Status: **draft for the owner's approval, 2026-10-28. No code yet, apart from the fix list (§9).** Revised the same day with
 her decisions (§11). This is the top-level plan. The detailed specs hang off it:
 - the library and the archive (`2026-10-28-shared-game-library-design.md`);
 - one set of agent rules (`2026-10-28-agent-rules-draft.md`);
@@ -57,7 +57,7 @@ There are three kinds of data, and each has one rule:
 |---|---|---|---|---|
 | **business** | machines, work orders / jobs, customers, parts and stock, plays, rotation, money | the world's app | a working cache of that world, plus an outbox of **actions** | **never** |
 | **bench records** | meter sessions, dump and burn records, readings, coin counts | the app of the machine's world (the deck makes them, sends them, keeps its own copy) | everything it ever made | **never**: a record belongs to one machine |
-| **knowledge** | manuals and PDFs, MAME sets and hashes, ROM images (by hash), rail limits, facts | **the archive** | a full copy | **nothing to cross:** the apps hold none, only a link |
+| **knowledge** | manuals and PDFs, MAME sets and hashes, ROM images (by hash), rail limits, facts | **the archive** | a full copy | **never:** each app holds a read-only copy of its own machines' games, pulled from the archive; nothing flows back |
 
 - **Business data flows as actions, not as copies of state.** The deck sends "log 30 min on
   order 41", "used 2 × fuse from shelf A3 on order 41", "coin meter 48,213 on Widget Wars".
@@ -110,8 +110,13 @@ The full spec is `2026-10-28-shared-game-library-design.md`. In short:
   - the archive listens only on localhost.
 - **Her partner reads and fixes entries on his phone** in the archive's own pages (synthwave).
   CONFIRM of rail limits and conflict choices stay on the 7".
-- **The apps hold no knowledge.** A machine or asset page shows the game's key and a link to the
-  archive, and Access decides who gets in. Nothing passes between an app and the archive.
+- **Each app holds a read-only copy of its own machines' games** (decided: cabcrawl will have an
+  unknown number of users, who use its own logins).
+  - A pull job in each app fetches them from the archive by key, PDFs included, with a
+    read-only reader token over the node's private network.
+  - Its users read manuals, limits, facts and ROM lists on the machine or asset page.
+  - The Tech Tracker adds "edit in the library" for owner and tech.
+  - The archive takes nothing from an app.
 - **Backups:** the archive is in her Proxmox backups, and the deck holds a second full copy. A
   USB copy (`gatbox-backup`) is optional now.
 
@@ -174,7 +179,8 @@ CHECK screen per dump (and per chip in a game's ROM list):
 
 **A machine's dump and burn records belong to its world's app:** cabcrawl for a barcade
 machine, the Tech Tracker for a customer's asset. **The image itself also goes to the archive,
-by hash:** game code is knowledge, and the barcade's copy isn't hers to keep.
+by hash:** game code is knowledge, the owner has permission to keep copies, and it's what a
+known-good reburn, a MAME comparison or a desuicide needs at the bench.
 
 - **New core contract items** (both apps implement them):
   - `rom_dump`: machine, chip label, part, size, CRC32, SHA-1, SHA-256, the `mame -romident`
@@ -313,7 +319,7 @@ without it, in its repo's suite.
 | **A2. One look, four themes** | the shared philosophy and `design/themes.css` (Synthwave, Ledger, Graphite, Follow system) with the contrast test; per-user choice in both apps (one setting for every width); the four colour fixes. **The deck stays Synthwave.** | the two apps (+ the shared file from Gatbox) | nothing more: T1–T4 decided |
 | **B. The library on the deck** | `library.sqlite`, seed, readers switched over; LIBRARY on the 7"; the title search; manual fetch on request; MISSING; the CHECK screen; known-good marks; space on SYSTEM | Gatbox | the seed review; new units shown before install |
 | **C. Dumps and burns to their world** | `rom_dump`, `burn`, the file endpoints; the apps store and show them | all three | deploys |
-| **D. The archive** | `archive/` (server, installer, RUNBOOK), the deck ↔ archive sync and conflicts, every image to the archive, the "open in the library" links in both apps, `Game.model_key` | Gatbox + small app changes | creating the LXC and the Cloudflare tunnel and Access (written out for her, ⏸) |
+| **D. The archive** | `archive/` (server, installer, RUNBOOK), the deck ↔ archive sync and conflicts, every image to the archive; **each app's read-only copy** (tables, pull job, reader token, the game section on machine / asset pages), `Game.model_key` | Gatbox + both apps | creating the LXC and the Cloudflare tunnel and Access (written out for her, ⏸) |
 | **E. Barcade work on the deck** | action ledger, "acts as", order actions, coin counts, parts and stock with the scanner | Gatbox + cabcrawl | deploy; the device switches |
 | **F. Side work on the deck** | the same for jobs, time, readings, parts | Gatbox + Tech Tracker | deploy |
 
@@ -334,40 +340,38 @@ without it, in its repo's suite.
 | # | question | answer |
 |---|---|---|
 | S | Where does knowledge live? | **Decided:** a container on her Proxmox node. Design: the archive (§4.1). |
-| K | Knowledge crossing between the apps | **Gone:** the apps hold no knowledge, only a link. |
+| K | Knowledge crossing between the apps | **Gone:** the apps' copies are read-only and come only from the archive. |
+| L6 | Do the apps hold knowledge? | **Decided: yes, a read-only copy of their own machines' games.** |
 | P | Customer data on the deck | **Decided: none.** Plus coin totals to cabcrawl from the deck (phase E). |
 | A | Who the deck acts as | **Decided: her, "via GATBOX".** |
 | R | Rules and the push gate | **Decided: one shared set of rules; a single OK to push.** Her OK on a change's spec covers its code and its push; merging and deploying stay hers. |
 | T1–T4 | Themes | **Decided:** per user in the apps, one setting at every width; names kept; defaults as proposed; the four colour fixes in. **The deck: Synthwave only.** |
-| L1 | Where the archive's code lives | **Open, recommended: in the Gatbox repo (`archive/`).** |
-| L2 | Who can open the archive | **Open, recommended: her and her partner** (Cloudflare Access); barcade coworkers only if she adds them. |
-| L3–L5 | CONFIRM on the 7" only; the key naming; no library edits from a phone on the deck's Wi-Fi | **Recommended** (library spec §10). |
-| N | The privacy-patterns location in the rules draft (`~/.config/gatbox-family/`) | **Open:** any neutral name works. |
+| L1 | Where the archive's code lives | **Recommended: in the Gatbox repo (`archive/`).** It also fits going public (§14). |
+| L2 | Who can open the archive | **Decided: her and her partner.** Everyone else reads their app's copy. |
+| L3–L5, L7, L8 | CONFIRM on the 7" only; the key naming; no library edits from a phone on the deck's Wi-Fi; apps pull over the node's private network; apps get ROM hashes and verdicts, not the images | **Recommended** (library spec §10). |
+| N | The privacy-patterns location (`~/.config/gatbox-family/`) | **Decided.** |
+| ROMs | Keep ROM images | **Decided: yes, every image, in the archive and on the deck** (she has permission). |
 
 ---
 
 ## 12. What needs the owner before work can start
 
 1. **Approve this plan,** and the open decisions above (or "as recommended").
-2. **The privacy patterns, in the cloud environment** (never in chat or git):
-   - in the Claude app, open this session's environment (its name in the session's title bar)
-     → **Edit** → add an environment variable **`PRIVACY_PATTERNS`**;
-   - its value is her pattern lines joined into one line with `|`, so the hooks read it as one
-     extended regex. On the Pi, in her checkout:
-     `grep -v '^#' .githooks/patterns.local | grep -v '^$' | paste -sd'|' -`
-     prints that line;
-   - **a new session picks it up, this one doesn't.** Until then, pushes to the Tech Tracker
-     (whose rules require the check) wait for a new session.
-3. **GitHub:** done. cabcrawl and the Tech Tracker are attached to this session with push access
-   (2026-10-28).
-4. **Sizes:** done (§4.5).
+2. **The privacy patterns:** done. `PRIVACY_PATTERNS` is in the cloud environment, and each
+   session writes it where the hooks read it. Everything pushed so far was re-checked against
+   it, clean.
+3. **GitHub:** done. cabcrawl and the Tech Tracker are attached with push access.
+4. **The fix list (§9):** being built on branches (cabcrawl `claude/peaceful-cerf-9ukxgf`, Tech
+   Tracker `phase/10-gatbox-fixes`); the PRs carry the ⏸ server steps.
+5. **Sizes:** done (§4.5).
 
 ---
 
 ## 13. Risks
 
 1. **Leaking between worlds:** realm stamps, the sender's check and a test with two stub hubs.
-   The apps hold no knowledge, there's no customer data on the deck, and money stays off it.
+   The apps' library copies are read-only and come only from the archive, there's no customer
+   data on the deck, and money stays off it.
 2. **The archive on the internet** behind a tunnel: Cloudflare Access for people, a service
    token plus a device token for the deck, and localhost only. Copyrighted files are never
    public.
@@ -379,3 +383,78 @@ without it, in its repo's suite.
 5. **Growth:** watched on the deck; the archive's mount grows in Proxmox.
 6. **Size of the program:** seven phases over three repos and one new container. Each phase is
    useful alone, and A–C deliver what was asked for by name first.
+
+---
+
+## 14. Going public: other techs and arcades
+
+The owner asked what the best setup would be if the apps became public apps that other techs
+or arcades could use, or if others could see the GATBOX code.
+
+**Where things stand:**
+
+| repo | visible | licence | what that allows |
+|---|---|---|---|
+| Gatbox | public | **none** (so all rights reserved by default) | anyone can read it; nobody may legally reuse it |
+| cabcrawl | public | **AGPL-3.0** | anyone may use, change and host it; changes must be shared, including when it runs as a service |
+| Tech Tracker | public | **proprietary, view only** | read only |
+
+**Recommended:**
+
+1. **One product per repo, as they're split now.**
+   - **GATBOX = the deck plus its archive**, one repo (L1). A tech who builds a deck also runs
+     their own archive. Its public interfaces are the hub contract and the library protocol,
+     both owned here.
+   - **cabcrawl** is an arcade's floor app, and **the Tech Tracker** is a repair shop's app.
+   - Each is **self-hosted, one install per arcade or shop.** Not one shared server for many
+     businesses: that would mean holding other people's customers and money, with their
+     support and security on her.
+   - The contract is what lets anyone's shop app work with a deck.
+2. **Choose the licences on purpose; that's the real decision.**
+   - To let people use and improve the code while stopping a closed fork from being sold as a
+     service: **AGPL-3.0** (cabcrawl already is). It fits the deck and archive, and the Tech
+     Tracker if it's ever opened.
+   - For the most uptake with no duty to share back: MIT or Apache-2.0.
+   - The build guide and docs: Creative Commons (e.g. CC BY-SA 4.0). The enclosure's CAD
+     files: an open hardware licence (CERN-OHL-S).
+   - **To keep the option of selling later:** as the sole author, she can license her own code
+     twice (AGPL for everyone, plus a paid licence for anyone wanting closed use), provided
+     outside contributions come with permission to do that (a short contributor agreement, or
+     a sign-off on each commit).
+   - The Tech Tracker can stay view-only until she decides.
+3. **Check who owns cabcrawl before treating it as hers to license.** It was built for the
+   barcade where she works. Whether code made for an employer belongs to the author or the
+   employer depends on the arrangement and local law, so get it in writing. (This plan isn't
+   legal advice.) The barcade's data never goes in any repo either way.
+4. **What makes the projects usable by others** (mostly true already):
+   - no site data in code (a rule in all three);
+   - everything site-specific in configuration (hub labels, names, branding);
+   - a first-run path (create the owner account, mint a device token);
+   - install paths: the Pi bootstrap, cabcrawl's Docker files, an LXC script for the Tech
+     Tracker and the archive;
+   - tagged releases with a changelog, the wikis, and a versioned contract.
+5. **Sharing knowledge with other techs (later).** Manuals and ROM images can't be published,
+   but facts can: rail limits with page citations, fuse values, pinouts she wrote, ROM hashes
+   with verdicts, fix notes. The archive could one day export a public subset (facts, hashes
+   and links to public archive pages, never files) that other decks import. Nothing now.
+6. **Before publicizing:** the build guide names parts of her home network. It isn't in any repo
+   today; scrub it first if it's ever published.
+
+---
+
+## 15. What the build guide adds, for later
+
+The full guide (the CATBOX design, now GATBOX) is the deck's long-term plan. It fits this
+design without changing it:
+
+- **Knowledge it produces** (platforms and pinouts, logic-analyzer signatures, MAME notes, disk
+  images, photos, fix notes) becomes new record kinds in the archive (library spec §2.4). The
+  store and protocol are built so each is added without touching the others.
+- **New instruments** (ADALM2000, INA226 trip, adjustable rail, thermal camera, microscope,
+  media bay, UV drawer) are deck features. They produce bench records for the machine at hand,
+  sent to its world like a meter session today. **None of them is owned yet, so no code assumes
+  them** (Gatbox CLAUDE.md).
+- **Burning from known-good images** comes free with C and D: the archive holds every image,
+  and DUMP → BURN already burns from the archive folder.
+- **The homelab "crash cart" and Proxmox panel** stay out of both worlds and out of the
+  library. If built, they're a realm of their own on the deck.

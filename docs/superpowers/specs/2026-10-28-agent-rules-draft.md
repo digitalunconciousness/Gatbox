@@ -124,4 +124,4 @@ matters.
 | Gatbox | its hook reads `.githooks/patterns.local` | the shared location (the old path still works) |
 
 **Decided by the owner, 2026-10-28:** one shared set of rules, and a single OK to push (§3).
-**Still open:** the patterns directory name above; any neutral name that isn't personal works.
+The patterns location `~/.config/gatbox-family/` is decided too.

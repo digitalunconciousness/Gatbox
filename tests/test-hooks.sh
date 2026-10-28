@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# .githooks/pre-push on a throwaway repo: UTC timestamps, forbidden paths, generic secret shapes and the
-# owner's own patterns from a patterns.local the test supplies via GATBOX_HOOK_PATTERNS. Never touches the
-# real repo, never pushes anywhere: the hook is fed the stdin git would give it.
+# .githooks/pre-push (and scripts/privacy_check.sh, the shared check it runs) on a throwaway repo: noreply
+# emails, UTC timestamps, forbidden paths, private addresses, generic secret shapes and the owner's own
+# patterns from a patterns.local the test supplies via GATBOX_HOOK_PATTERNS. Never touches the real repo,
+# never pushes anywhere: the hook is fed the stdin git would give it.
 #   bash tests/test-hooks.sh
 set -u
 HOOK=$(readlink -f "${1:-$(dirname "$0")/../.githooks/pre-push}")
@@ -29,13 +30,18 @@ base=$(git rev-parse HEAD)
 run_hook() { printf 'refs/heads/main %s refs/heads/main %s\n' "$(git rev-parse HEAD)" "${1:-$base}" | bash "$HOOK" 2>&1; }
 
 out=$(run_hook); rc=$?
-check "a clean range passes"                      '[ $rc = 0 ] && [[ $out == *clean* ]]'
-check "it reports the loaded pattern count"       '[[ $out == *"loaded 2 local pattern(s)"* ]]'
+check "nothing new to push passes"                '[ $rc = 0 ] && [[ $out == *"nothing to check"* ]]'
+echo "Widget Wars needs a belt" > notes.txt; git add notes.txt; commit -m "a clean note"
+out=$(run_hook); rc=$?
+check "a clean range passes"                      '[ $rc = 0 ] && [[ $out == *"privacy check: clean"* ]]'
+check "it reports the loaded pattern count"       '[[ $out == *"(2 pattern(s) loaded)"* ]]'
+git reset -q --hard "$base"
 
 echo "the ssid is MySSID3.0" > notes.txt; git add notes.txt; commit -m "leak the ssid"
 out=$(run_hook); rc=$?
-check "an added line matching patterns.local is refused" '[ $rc = 1 ] && [[ $out == *"local site pattern"* ]]'
+check "an added line matching patterns.local is refused" '[ $rc = 1 ] && [[ $out == *"pattern #1 in notes.txt:1"* ]]'
 check "the refusal never prints the secret itself"       '[[ $out != *MySSID3.0* ]]'
+check "nor the pattern that matched it"                  '[[ $out != *MySSID* ]]'
 git reset -q --hard "$base"
 
 printf '{"machines":[]}' > roster.json; mkdir -p data; git mv roster.json data/gatbox-barcade-roster.json 2>/dev/null || mv roster.json data/gatbox-barcade-roster.json
@@ -63,7 +69,7 @@ git reset -q --hard "$base"
 # (it is pushed through the very hook it is testing).
 printf 'api%skey = "%s"\n' _ A1b2C3d4E5f6G7h8 > cfg.py; git add cfg.py; commit -m "add a key"
 out=$(run_hook); rc=$?
-check "a key-shaped added line is refused"        '[ $rc = 1 ] && [[ $out == *"forbidden content"* ]]'
+check "a key-shaped added line is refused"        '[ $rc = 1 ] && [[ $out == *"cfg.py:1"* ]] && [[ $out != *A1b2C3d4* ]]'
 git reset -q --hard "$base"
 
 # A literal is a secret; an expression is code. A module about Wi-Fi assigns a variable called
@@ -77,22 +83,38 @@ VALUE=Sup3rSecretValue
   printf '# nmcli necessarily receives it, as password <psk>\n'; } > code.py
 git add code.py; commit -m "code that handles a key"
 out=$(run_hook); rc=$?
-check "an expression assigned to psk is not a secret" '[ $rc = 0 ] && [[ $out == *clean* ]]'
+check "an expression assigned to psk is not a secret" '[ $rc = 0 ] && [[ $out == *"privacy check: clean"* ]]'
 git reset -q --hard "$base"
 
 printf 'psk=%s\n' "$VALUE" > wifi.conf; git add wifi.conf; commit -m "a keyfile"
 out=$(run_hook); rc=$?
-check "a bare psk= literal is refused"            '[ $rc = 1 ] && [[ $out == *"forbidden content"* ]]'
+check "a bare psk= literal is refused"            '[ $rc = 1 ] && [[ $out == *"wifi.conf:1"* ]]'
 git reset -q --hard "$base"
 
 printf '{"ssid": "Somewhere", "psk": "%s"}\n' "$VALUE" > req.json; git add req.json; commit -m "a request"
 out=$(run_hook); rc=$?
-check "a quoted psk literal is refused"           '[ $rc = 1 ] && [[ $out == *"forbidden content"* ]]'
+check "a quoted psk literal is refused"           '[ $rc = 1 ] && [[ $out == *"req.json:1"* ]]'
 git reset -q --hard "$base"
 
 printf 'password: %s   # the bench box\n' "$VALUE" > notes.md; git add notes.md; commit -m "a note"
 out=$(run_hook); rc=$?
-check "a trailing comment does not hide one"      '[ $rc = 1 ] && [[ $out == *"forbidden content"* ]]'
+check "a trailing comment does not hide one"      '[ $rc = 1 ] && [[ $out == *"notes.md:1"* ]] && [[ $out != *Sup3r* ]]'
+git reset -q --hard "$base"
+
+# The hotspot's address is NetworkManager's default, the same on every Pi (.githooks/privacy.conf
+# allow_address); any other private address is site data. Built at runtime, like the keys above.
+printf 'the hotspot is %s.%s.0.1\n' 10 42 > net.md; git add net.md; commit -m "the hotspot"
+out=$(run_hook); rc=$?
+check "the hotspot's documented address is allowed" '[ $rc = 0 ]'
+printf 'the bench is at %s.%s.7.20\n' 192 168 > net.md; git add net.md; commit -m "a LAN address"
+out=$(run_hook); rc=$?
+check "a LAN address is refused"                  '[ $rc = 1 ] && [[ $out == *"net.md:1"* ]]'
+git reset -q --hard "$base"
+
+echo ok > who.txt; git add who.txt
+GIT_AUTHOR_EMAIL="pat.someone@elsewhere-mail$(printf .net)" commit -m "a personal address"
+out=$(run_hook); rc=$?
+check "a commit by a non-noreply address is refused" '[ $rc = 1 ] && [[ $out == *"email pat.someone"* ]]'
 git reset -q --hard "$base"
 
 echo ok > tz.txt; git add tz.txt
@@ -106,18 +128,27 @@ git reset -q --hard "$base"
 git checkout -q -b leaky
 echo "visit secretplace today" > x.txt; git add x.txt; commit -m "new branch leak"
 out=$(printf 'refs/heads/leaky %s refs/heads/leaky %s\n' "$(git rev-parse HEAD)" "$ZERO" | bash "$HOOK" 2>&1); rc=$?
-check "a brand-new branch is still inspected"     '[ $rc = 1 ] && [[ $out == *"local site pattern"* ]]'
+check "a brand-new branch is still inspected"     '[ $rc = 1 ] && [[ $out == *"pattern #2 in x.txt:1"* ]]'
 
 out=$(printf 'refs/heads/leaky %s refs/heads/leaky %s\n' "$ZERO" "$(git rev-parse HEAD)" | bash "$HOOK" 2>&1); rc=$?
 check "a branch deletion is allowed"              '[ $rc = 0 ]'
 git checkout -q main; git reset -q --hard "$base"
 
-# Without patterns.local the generic checks must still run, with a warning.
-GATBOX_HOOK_PATTERNS="$T/nope" bash -c ':' 
-echo "the ssid is MySSID3.0" > notes.txt; git add notes.txt; commit -m "leak again"
+# Without a patterns file nothing is pushed (the shared rule since 2026-10-28; until then this hook
+# only warned and ran the generic checks).
+echo "Widget Wars needs a belt" > notes.txt; git add notes.txt; commit -m "a clean note"
 out=$(GATBOX_HOOK_PATTERNS="$T/nope" run_hook); rc=$?
-check "no patterns.local: warns, does not refuse the site value" '[ $rc = 0 ] && [[ $out == *"site values are NOT being checked"* ]]'
+check "no patterns file: the push is refused"     '[ $rc = 1 ] && [[ $out == *MISSING* ]] && [[ $out == *REFUSED* ]]'
 git reset -q --hard "$base"
+
+# The same script, byte for byte, in the hubs' sibling checkouts when they're here.
+R=$(cd "$(dirname "$HOOK")/.." && pwd)
+P=$(dirname "$R")
+for sib in "$P/cabcrawl" "$P/arcadetech-tracker" "$P/ArcadeTech-Tracker" "$P/shop-hub" "$P/arcade-tracker"; do
+  [ -f "$sib/scripts/privacy_check.sh" ] && [ -f "$sib/.githooks/pre-push" ] || continue
+  check "$sib has the same check and hook" \
+    'cmp -s "$sib/scripts/privacy_check.sh" "$R/scripts/privacy_check.sh" && cmp -s "$sib/.githooks/pre-push" "$HOOK"'
+done
 
 echo "hooks: $pass passed, $fail failed"
 [ "$fail" = 0 ]

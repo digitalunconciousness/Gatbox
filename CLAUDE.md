@@ -1,5 +1,10 @@
 # GATBOX (GDD-GAT/01) — context for Claude sessions
 
+**Read `docs/agents/RULES.md` first.** It is the one set of agent rules for GATBOX, cabcrawl and the tech
+tracker (GATBOX owns it; the other two vendor it), and it wins where this file disagrees, except on this
+repository's own facts and the hard rules below. The integration plan it serves is
+`docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md`.
+
 Portable arcade-board diagnostic box (Greybard Diagnostics and Design). This Raspberry Pi 5 (4 GB + Active Cooler,
 Raspberry Pi OS Trixie 64-bit **Desktop**, labwc, hostname `gatbox`, user `<user>`) is a self-starting **rail
 logger** that gets left inside an arcade cabinet overnight, and is becoming the bench brain: 7" touch dashboard,
@@ -105,9 +110,10 @@ uhubctl, INA226, relays, MAK Strike, GBS-Control, RP2350B bus driver, InfiRay P2
     this Pi, or ask. Machine-spec numbers come only from a manual the owner cites.
 13. **Secrets never go in git:** AP PSK, Wi-Fi credentials, SSH keys, API tokens.
     The GitHub repo is **public**: no personal info either (names, emails, username, home network, timezone,
-    workplace data). Site values live in `SITE.local.md` and the roster in `data/`, both git-ignored; a local
-    `.git/hooks/pre-push` refuses pushes that carry them. Commit as digitalunconciousness (noreply email) and
-    with `TZ=UTC git commit …` (a local timestamp gives away the timezone; the hook refuses those too).
+    workplace data). Site values live in `SITE.local.md` and the roster in `data/`, both git-ignored;
+    `.githooks/pre-push` (the shared `scripts/privacy_check.sh`) refuses pushes that carry them. Commit as
+    digitalunconciousness (noreply email) and with `TZ=UTC git commit …` (a local timestamp gives away the
+    timezone; the hook refuses those too).
 14. **Backward-compatible, always.** Every existing CSV keeps loading (the 09-25 fixture
     `rail_20260925_021402.csv` is never modified), and every existing gatbox-web URL keeps working: `/`, `/s/…`,
     `/png/…`, `/pdf/…`, `/csv/…`, `/font/…`, `POST /control`.

@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016,SC2034,SC2119,SC2120
+# (Each check's test is a single-quoted string that check() evals, so its $ expand then rather
+# than here (SC2016), a variable used only inside one looks unused (SC2034), and run/run2 get
+# their arguments only from inside one (SC2119, SC2120).)
+#
 # gatbox-sync against a stub hub and a stub gatbox-web, both stdlib http.server on spare
 # ports. No tracker and no Flask here: the hub's own repository tests the contract: this
 # tests the sync's behaviour -- URL fallback, the ledger, the session cap, what counts as
@@ -646,6 +651,160 @@ run2
 check "the one hub there takes everything, unrouted" 'grep -q "both-sides" "$W2/posted-hub2.json" && [ "$(st2 "d[\"held\"] + d[\"conflicts\"]")" = "[]" ]'
 check "and its state is under hubs/"           '[ -f "$S2/hubs/bravo/sent.json" ] && [ ! -f "$S2/sent.json" ]'
 check "an empty hub.conf is not an error there" '! grep -q "both required" "$T/out"'
+check "with one hub there is no guard, and status.json has no new key" '[ "$(st2 "\"blocked\" in d")" = False ] && ! grep -q "\"blocked\"" "$T/state/status.json"'
+
+echo "  nothing crosses between the hubs:"
+# The owner's rule: the barcade and the side work never get each other's data. Every kind of item,
+# for a machine of each hub, the conflict and the held one; then every request each stub received
+# is swept item by item -- a tag by the entry it came from, anything naming a session by that
+# session's uid -- so a leak shows up whatever caused it.
+cat > "$T/a.conf" <<CONF
+HUB_URLS=http://127.0.0.1:$PORT_A
+HUB_TOKEN=$BEARER
+HUB_LABEL=ALPHA
+CONF
+rm -rf "$S2"; mkdir -p "$S2"; rm -f "$W2"/posted*.json "$W2"/seen*.json
+python3 - "$W2" <<'PY'
+import json, sys
+w = sys.argv[1]
+names = {"rail_20261011_010000.csv": "widget-wars",        # ALPHA's
+         "rail_20261012_010000.csv": "s-0042-ms-pac-man",  # BRAVO's
+         "rail_20261013_010000.csv": "both-sides",         # on both rosters: a conflict
+         "rail_20261014_010000.csv": "nobody-has"}         # on neither: held
+json.dump([{"file": n, "live": False, "machine": m, "error": None} for n, m in names.items()],
+          open(f"{w}/sessions.json", "w"))
+orders = []
+for i, (n, m) in enumerate(names.items()):
+    json.dump({"session": {"duration_s": 2.0, "samples": 2, "rate": 1.0, "timebase": "monotonic"},
+               "clock": {"source": "ntp"}, "profile": {"id": "rail-5v"}, "machine": m,
+               "mode_key": "VDC", "window": None, "alarm_hi": None, "powered": None,
+               "verdict": None}, open(f"{w}/report-{n}.json", "w"))
+    json.dump({"fields": ["epoch", "up", "raw", "unit", "v", "mode", "alarm"],
+               "rows": [[1790500000.0 + i * 100 + k, 10.0 + k, "5.0", "V", 5.0, "VDC", "ok"]
+                        for k in range(2)]}, open(f"{w}/samples-{n}.json", "w"))
+    # Per machine: an order with its trace, a tag that names the machine, and an old tag that does not.
+    orders += [{"uid": f"{i}a".ljust(32, "0"), "kind": "order", "created": 1790500900.0,
+                "machine": m, "issue": "rail low", "priority": "Medium", "session_file": n},
+               {"uid": f"{i}b".ljust(32, "0"), "kind": "session_tag", "created": 1790500901.0,
+                "order": 100 + i, "machine": m, "session_file": n},
+               {"uid": f"{i}c".ljust(32, "0"), "kind": "session_tag", "created": 1790500902.0,
+                "order": 200 + i, "session_file": n}]
+json.dump({"orders": orders}, open(f"{w}/orders.json", "w"))
+json.dump([{"slug": "widget-wars", "name": "Widget Wars"},
+           {"slug": "both-sides", "name": "Both"}], open(f"{w}/roster-hub.json", "w"))
+json.dump([{"slug": "s-0042-ms-pac-man", "name": "Ms. Pac-Man", "model_key": "mspacman"},
+           {"slug": "s-0099-other", "name": "Other", "model_key": None},
+           {"slug": "both-sides", "name": "Both"}], open(f"{w}/roster-hub2.json", "w"))
+PY
+cat > "$T/sweep.py" <<'PY'
+"""Every item of every request each stub hub received, and every machine it names.
+bad: items naming anything but their own hub's machines; counts: kinds per hub; reached: machines."""
+import hashlib, json, os, sys
+w, expr = sys.argv[1], sys.argv[2]
+HUBS = {"": ("hub", sys.argv[3]), "-hub2": ("hub2", sys.argv[4])}  # ALPHA, BRAVO: role, device id
+by_file = {s["file"]: s["machine"] for s in json.load(open(f"{w}/sessions.json"))}
+entries = {e["uid"]: e for e in json.load(open(f"{w}/orders.json"))["orders"]}
+rosters = {k: {m["slug"] for m in json.load(open(f"{w}/roster-{role}.json"))}
+           for k, (role, _) in HUBS.items()}
+bad, counts, reached = [], {}, {}
+for k, (role, dev) in HUBS.items():
+    alone = rosters[k] - set().union(*(r for o, r in rosters.items() if o != k))
+    # A session's uid is salted with the hub's own id, so this also catches one salted for the other.
+    by_uid = {hashlib.sha256(f"{dev}|rail_session|{f}".encode()).hexdigest()[:32]: m
+              for f, m in by_file.items()}
+    counts[k], reached[k] = {}, set()
+    p = f"{w}/posted{k}.json"
+    for line in open(p) if os.path.exists(p) else []:
+        for it in json.loads(line).get("items") or []:
+            kind = it["kind"]
+            counts[k][kind] = counts[k].get(kind, 0) + 1
+            names = []
+            if kind in ("rail_session", "order"):
+                names.append(it.get("machine"))
+            if kind == "session_tag":
+                e = entries.get(it["uid"]) or {}
+                names.append(e.get("machine") or by_file.get(e.get("session_file")))
+            if kind == "rail_session" or "rail_session" in it:
+                names.append(by_uid.get(it["uid"] if kind == "rail_session" else it["rail_session"]))
+            reached[k].update(names)
+            if not all(n in alone for n in names):
+                bad.append((role, kind, it["uid"], names))
+print(eval(expr))
+PY
+sweep() { python3 "$T/sweep.py" "$W2" "$1" "$DEV_ID" "$DEV_B"; }
+EACH='{"rail_session": 1, "order": 1, "session_tag": 2}'
+run2
+check "exits 0"                                '[ "$(cat "$T/rc")" = 0 ]'
+check "every item of every request names only its own hub's machines" '[ "$(sweep bad)" = "[]" ]'
+check "each hub got its session, its order and both kinds of tag" '[ "$(sweep "counts[\"\"] == counts[\"-hub2\"] == $EACH")" = True ]'
+check "ALPHA's machine reached ALPHA alone, BRAVO's BRAVO alone" '[ "$(sweep "reached == {\"\": {\"widget-wars\"}, \"-hub2\": {\"s-0042-ms-pac-man\"}}")" = True ]'
+check "the conflict and the held machine reached neither" '[ "$(sweep "bool({\"both-sides\", \"nobody-has\"} & (reached[\"\"] | reached[\"-hub2\"]))")" = False ] && ! grep -q "both-sides\|nobody-has" "$W2"/posted*.json'
+check "they are held and a conflict, not lost"  '[ "$(st2 "{x[\"machine\"] for x in d[\"held\"]} == {\"nobody-has\"} and [c[\"machine\"] for c in d[\"conflicts\"]] == [\"both-sides\"]")" = True ]'
+check "and the guard found nothing to stop"    '[ "$(st2 "d[\"blocked\"]")" = "[]" ] && ! grep -q BLOCKED "$T/out"'
+
+echo "  the guard, with routing broken on purpose:"
+# A routing bug, simulated without touching the script: it is imported as a module and run_hub() is
+# wrapped so BRAVO's share also gets ALPHA's machine, the conflict and the held one -- what a wrong
+# route() would hand it. GATBOX_SYNC_ONCE so the rest goes again too, and can be seen still going.
+cat > "$T/leaky.py" <<'PY'
+import importlib.machinery, importlib.util, sys
+loader = importlib.machinery.SourceFileLoader("gatbox_sync", sys.argv[1])
+sync = importlib.util.module_from_spec(importlib.util.spec_from_loader("gatbox_sync", loader))
+loader.exec_module(sync)
+real, NOT_BRAVOS = sync.run_hub, {"widget-wars", "both-sides", "nobody-has"}
+
+def leaky(h, sessions, mine, outbox, *rest):
+    if h["label"] == "BRAVO":
+        by_file = {s["file"]: s["machine"] for s in sessions}
+        mine = {"sessions": mine["sessions"] + [s for s in sessions if s["machine"] in NOT_BRAVOS],
+                "outbox": mine["outbox"] + [
+                    e for e in outbox
+                    if (e.get("machine") or by_file.get(e.get("session_file"))) in NOT_BRAVOS]}
+    return real(h, sessions, mine, outbox, *rest)
+
+sync.run_hub = leaky
+sys.exit(sync.main())
+PY
+rm -f "$W2"/posted*.json
+env GATBOX_SYNC_CONF="$T/a.conf" GATBOX_SYNC_CONF_DIR="$D2" GATBOX_SYNC_WEB="http://127.0.0.1:$PORT_WEB2" \
+    STATE_DIRECTORY="$S2" GATBOX_SYNC_ONCE=1 python3 -B "$T/leaky.py" "$SYNC" >"$T/out" 2>&1
+echo $? > "$T/rc"
+WHY="both-sides: also on ALPHA's roster | nobody-has: not on BRAVO's roster | widget-wars: not on BRAVO's roster but ALPHA's"
+check "exits 0"                                '[ "$(cat "$T/rc")" = 0 ]'
+check "the leak was offered to BRAVO"          'grep -q "BRAVO:" "$T/out" && grep -q "4 sessions on the Pi, 4 to send" "$T/out"'
+check "and none of it reached BRAVO"           '[ "$(sweep bad)" = "[]" ] && [ "$(sweep "reached[\"-hub2\"]")" = "{'"'"'s-0042-ms-pac-man'"'"'}" ]'
+check "the rest of BRAVO's request still went" '[ "$(sweep "counts[\"-hub2\"] == $EACH")" = True ]'
+check "ALPHA's run is untouched"               '[ "$(sweep "counts[\"\"] == $EACH and reached[\"\"] == {\"widget-wars\"}")" = True ]'
+check "all twelve are listed in status.json, against BRAVO" '[ "$(st2 "len(d[\"blocked\"]) == 12 and {b[\"hub\"] for b in d[\"blocked\"]} == {\"BRAVO\"}")" = True ]'
+check "each with what it was and its machine"  '[ "$(st2 "sorted(b[\"what\"] for b in d[\"blocked\"] if b[\"machine\"] == \"widget-wars\") == [\"order\", \"rail_20261011_010000.csv\", \"session_tag\", \"session_tag\"]")" = True ]'
+check "and why"                                '[ "$(st2 "\" | \".join(sorted({b[\"machine\"] + \": \" + b[\"why\"] for b in d[\"blocked\"]}))")" = "$WHY" ]'
+check "each one is logged, loudly"             '[ "$(grep -c "BLOCKED .*, not sent to BRAVO: " "$T/out")" = 12 ] && grep -q "BLOCKED rail_20261011_010000.csv (widget-wars), not sent to BRAVO: not on BRAVO.s roster but ALPHA.s. Routing should never" "$T/out"'
+check "not recorded as sent, nor counted as a refusal" '[ "$(python3 -c "import json; d = json.load(open(\"$S2/hubs/bravo/sent.json\")); print(\"rail_20261011_010000.csv\" in d[\"files\"], d[\"tries\"], d[\"parked\"])")" = "False {} {}" ]'
+run2
+check "the next ordinary run has nothing blocked" '[ "$(cat "$T/rc")" = 0 ] && [ "$(st2 "d[\"blocked\"]")" = "[]" ] && ! grep -q BLOCKED "$T/out"'
+
+echo "  an order carrying another machine's trace:"
+# gatbox-web now attaches only the order's own machine's trace; this is the last line behind it. An order
+# on BRAVO's machine that names ALPHA's session would hand BRAVO a reference into the other world.
+python3 - "$W2" <<'PY'
+import json, sys
+p = f"{sys.argv[1]}/orders.json"; d = json.load(open(p))
+d["orders"].append({"uid": "9x".ljust(32, "0"), "kind": "order", "created": 1790501000.0,
+                    "machine": "s-0042-ms-pac-man", "issue": "wrong trace", "priority": "Medium",
+                    "session_file": "rail_20261011_010000.csv"})
+json.dump(d, open(p, "w"))
+PY
+rm -f "$W2"/posted*.json
+run2
+check "exits 0"                                '[ "$(cat "$T/rc")" = 0 ]'
+check "BRAVO never sees it"                    '[ "$(sweep bad)" = "[]" ] && ! cat "$W2"/posted*.json 2>/dev/null | grep -q "wrong trace"'
+check "it is blocked, saying whose trace it is" '[ "$(st2 "[(b[\"what\"], b[\"machine\"], b[\"why\"]) for b in d[\"blocked\"]]")" = "[('"'"'order'"'"', '"'"'s-0042-ms-pac-man'"'"', '"'"'its trace was recorded on widget-wars'"'"')]" ]'
+python3 - "$W2" <<'PY'
+import json, sys
+p = f"{sys.argv[1]}/orders.json"; d = json.load(open(p))
+d["orders"] = [o for o in d["orders"] if o["uid"] != "9x".ljust(32, "0")]
+json.dump(d, open(p, "w"))
+PY
 
 echo "sync: $pass passed, $fail failed"
 [ "$fail" = 0 ]

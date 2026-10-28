@@ -43,9 +43,13 @@ cp .githooks/patterns.local.example .githooks/patterns.local
 $EDITOR .githooks/patterns.local           # your own values; git-ignored, never committed
 ```
 
-`.githooks/pre-push` refuses the roster and list files by name, `*.local` / `*.local.md`, PDFs, `.bin` dumps,
-key-shaped lines, and anything matching `patterns.local`. Without that file the generic checks still run and the
-hook says so. It never prints a match, only which pattern tripped.
+`.githooks/pre-push` runs `scripts/privacy_check.sh`, the check shared byte-for-byte with the two hubs, over each
+commit a push would publish: noreply emails and UTC timestamps; `*.local` / `*.local.md`, PDFs, `.bin` dumps, keys
+and databases, plus this repo's own list in `.githooks/privacy.conf` (the roster and list files by name); private
+addresses, key-shaped lines and bare Wi-Fi keys; and anything matching your patterns file
+(`.githooks/patterns.local`, or `~/.config/gatbox-family/patterns.local`, the one place for all three repos).
+**Without a patterns file the push is refused.** It never prints a match, or the pattern, only where it is.
+Run it by hand with `scripts/privacy_check.sh origin/main..HEAD`.
 
 The tests want **Python 3.13**, to match Trixie:
 

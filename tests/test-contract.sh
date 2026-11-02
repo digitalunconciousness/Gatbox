@@ -3,9 +3,10 @@
 # reproducible here, every field a rail_session carries has a source in the report JSON, and
 # report.verdict gives one answer for every state.
 #
-# The contract is owned by the hub (arcade-tracker/contract/v1) and vendored to
-# docs/contract/v1. Two copies of anything drift, so each repository checks its own against
-# the shared CHECKSUMS.
+# GATBOX owns the contract (docs/contract/v1, since 2026-10-28) and each hub vendors it at
+# contract/v1. Copies drift, so every repository checks its own against the shared CHECKSUMS,
+# and against the copies in any sibling checkouts it finds (CONTRACT_SIBLINGS, a space-separated
+# list of repo directories, overrides where it looks).
 #   bash tests/test-contract.sh
 set -u
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -19,10 +20,30 @@ py() { PYTHONPATH="$REPO/backend" python3 -c "$1"; }
 echo "the vendored contract:"
 check "docs/contract/v1 exists with its examples" \
   '[ -f "$C/README.md" ] && [ -f "$C/CHECKSUMS" ] && [ -d "$C/examples" ]'
-check "every file matches CHECKSUMS (no drift from the hub's copy)" \
+check "every file matches CHECKSUMS" \
   'cd "$C" && grep -v "^#" CHECKSUMS | grep -v "^$" | sha256sum -c --quiet -'
 check "CHECKSUMS covers every file present" \
   '[ "$(cd "$C" && find . -type f ! -name CHECKSUMS | wc -l)" = "$(grep -cv "^#\|^$" "$C/CHECKSUMS")" ]'
+check "docs/contract/checksums.sh agrees" 'bash "$REPO/docs/contract/checksums.sh" >/dev/null'
+check "a regenerated CHECKSUMS is the one committed" '
+  cp -r "$C" "$T/v1" && bash "$REPO/docs/contract/checksums.sh" --write "$T/v1" >/dev/null &&
+  cmp -s "$C/CHECKSUMS" "$T/v1/CHECKSUMS"'
+check "every roster machine has a model_key, a string or null" 'py "
+import json
+for m in json.load(open(\"$C/examples/roster-response.json\"))[\"machines\"]:
+    assert \"model_key\" in m and (m[\"model_key\"] is None or isinstance(m[\"model_key\"], str)), m
+"'
+
+echo "the hubs' copies, in sibling checkouts (each found one must be byte-identical):"
+P=$(cd "$REPO/.." && pwd)
+siblings=${CONTRACT_SIBLINGS:-"$P/cabcrawl $P/arcade-tracker $P/arcadetech-tracker $P/ArcadeTech-Tracker $P/shop-hub /opt/refs/arcade-tracker /opt/refs/shop-hub"}
+found=0
+for sib in $siblings; do
+  [ -f "$sib/contract/v1/CHECKSUMS" ] || continue
+  found=$((found + 1))
+  check "$sib/contract/v1 is the same as docs/contract/v1" 'diff -r "$C" "$sib/contract/v1" >/dev/null'
+done
+[ "$found" = 0 ] && echo "  skip  no sibling checkout found"
 
 echo "the uid rules, computed here and compared with the hub's examples:"
 # If these disagree, every item GATBOX sends is a row the hub cannot match again.

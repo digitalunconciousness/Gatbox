@@ -66,6 +66,12 @@ once a roster gains it -- and a machine two rosters claim is a *conflict*, sent 
 of them lets go. Both are listed in status.json for the SYSTEM panel. Every uid is salted with the
 destination hub's device id, as the contract says, because each hub issues its own token.
 
+**The hubs never get each other's data**, and with several of them that is checked twice: routing
+decides, then guard() looks again at exactly what is about to be posted, from the cached rosters
+and the items themselves, and keeps back anything whose machine is not on that hub's roster
+alone. It should never find anything. When it does, routing has a bug: the item is not sent, the
+journal says BLOCKED, and status.json lists it under "blocked".
+
 State. The default hub keeps the top level of the state directory, exactly where a single hub has
 always kept it (sent.json, roster.json, orders.json), so nothing moves when a second hub is
 added. Each hubs.d hub has hubs/<name>/ with the same files. hub.json beside them holds what the
@@ -554,6 +560,49 @@ def roster_slugs(h):
     return {m["slug"] for m in machines if isinstance(m, dict) and m.get("slug")}
 
 
+def guard(h, hubs, batch, sessions, outbox):
+    """(what may go to h, what may not): the last check before an ingest POST, several hubs only.
+
+    Deliberately not route() a second time. It reads the rosters again, and takes each machine
+    from what is actually going out: a session by the item's own machine (the report's, not the
+    listing's), an order by its machine, a tag -- which does not carry one -- by the entry it came
+    from, or for an old entry by its session's. An item goes only if that machine is on h's roster
+    and on no other hub's. Anything else stays here and is retried next run, to be stopped again
+    until the bug is fixed: never counted as a refusal, never parked."""
+    rosters = {x["name"]: roster_slugs(x) for x in hubs}
+    by_file = {s.get("file"): s.get("machine") for s in sessions if s.get("file")}
+    entries = {e.get("uid"): e for e in outbox if e.get("uid")}
+    keep, stopped = [], []
+    for item in batch:
+        e = entries.get(item.get("uid")) or {}
+        if item.get("kind") == "session_tag":
+            slug = e.get("machine") or by_file.get(e.get("session_file"))
+        else:
+            slug = item.get("machine")
+        # An order or a tag carries a trace by reference: it must be this machine's own, or the
+        # reference would point into another machine's -- with two hubs, maybe the other world's.
+        traced = by_file.get(e.get("session_file")) if item.get("kind") != "rail_session" else None
+        others = [x["label"] for x in hubs if x["name"] != h["name"] and slug in rosters[x["name"]]]
+        if slug and slug in rosters[h["name"]] and not others and traced in (None, slug):
+            keep.append(item)
+            continue
+        if traced not in (None, slug):
+            why = f"its trace was recorded on {traced}"
+        elif not slug:
+            why = "no machine"
+        elif slug in rosters[h["name"]]:
+            why = f"also on {' and '.join(others)}'s roster"
+        else:
+            why = f"not on {h['label']}'s roster"
+            if others:
+                why += f" but {' and '.join(others)}'s"
+        what = item.get("file") or item.get("kind") or "item"
+        log(f"  BLOCKED {what} ({slug}), not sent to {h['label']}: {why}. "
+            "Routing should never let this through; it is a bug in gatbox-sync")
+        stopped.append({"what": what, "machine": slug, "hub": h["label"], "why": why})
+    return keep, stopped
+
+
 def main():
     started = time.monotonic()
     hubs, refused = read_conf()
@@ -649,21 +698,21 @@ def main():
     for slug, labels in conflicts.items():
         log(f"  conflict: {slug} is on {' and '.join(labels)}; sent to neither")
 
-    statuses = []
+    statuses, blocked = [], []
     for h in hubs:
         if multi:
             log(f"  {h['label']}:")
-        st, h_rc = run_hub(h, sessions, mine[h["name"]], outbox, current, started, multi)
+        st, h_rc = run_hub(h, sessions, mine[h["name"]], outbox, current, started, hubs, blocked)
         rc = max(rc, h_rc)
         if st is not None:
             statuses.append(st)
     if DRYRUN:
         return rc
-    save("status.json", combine(hubs, statuses, held, conflicts, refused, waiting))
+    save("status.json", combine(hubs, statuses, held, conflicts, refused, waiting, blocked))
     return rc
 
 
-def combine(hubs, statuses, held, conflicts, refused, waiting=()):
+def combine(hubs, statuses, held, conflicts, refused, waiting=(), blocked=()):
     """status.json. With one hub, that hub's own keys as they always were; with several, the
     sums the old tile can show, plus "hubs" for the tile per hub."""
     if len(statuses) == 1:
@@ -687,12 +736,18 @@ def combine(hubs, statuses, held, conflicts, refused, waiting=()):
     out["conflicts"] = [{"machine": k, "hubs": v} for k, v in sorted(conflicts.items())]
     out["refused"] = refused
     out["waiting"] = list(waiting)
+    if len(hubs) > 1:
+        out["blocked"] = list(blocked)    # guard()'s; with one hub there is no guard, and no key
     return out
 
 
-def run_hub(h, sessions, mine, outbox, current, started, multi):
-    """One hub's share of the run: what it always was for the only hub. Returns (status, rc)."""
+def run_hub(h, sessions, mine, outbox, current, started, hubs, blocked):
+    """One hub's share of the run: what it always was for the only hub. Returns (status, rc).
+
+    With several hubs, what it is about to post goes through guard() first, and whatever that
+    keeps back is added to `blocked`."""
     dev, token, where = h["dev"], h["token"], h["dir"]
+    multi = len(hubs) > 1
     base = {"name": h["name"], "label": h["label"], "app": h["info"].get("app"),
             "capabilities": h["info"].get("capabilities") or []}
     sent = ledger({} if IGNORE_LEDGER else load("sent.json", {}, where))
@@ -771,6 +826,11 @@ def run_hub(h, sessions, mine, outbox, current, started, multi):
     # rejected, so putting both in one request is what lets a session and the order attached
     # to it land together instead of the order waiting a run.
     batch.extend(pending)
+    # The last line, and the last thing before the POST: whatever routing decided, nothing goes
+    # to this hub unless its machine is on this hub's roster and no other's.
+    if multi:
+        batch, stopped = guard(h, hubs, batch, sessions, outbox)
+        blocked.extend(stopped)
 
     if not batch:
         log("  nothing could be built from the queue; see the lines above")

@@ -559,6 +559,14 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         the second hub added in `hubs.d` (its own device token; health lists `jobs`), rosters 98 and 4 with no
         machine on both. One session each: the customer machine's went only to the second hub, the barcade
         machine's only to the tracker (each hub's sent ledger), and the owner saw each land on its own site
+  - [x] The last-line guard (2026-10-28), code + tests: with several hubs, `gatbox-sync` looks again at
+        each request just before it goes (a session by its machine, an order by its machine, a tag by
+        its order's machine or else its session's) and sends only what is on that hub's roster and no
+        other's. Anything else stays on the Pi: BLOCKED in the journal, `blocked` in status.json for
+        the SYSTEM tile. Routing should leave it nothing to do; it is there so a routing bug can't put
+        one hub's data in the other. One hub: no guard, status.json unchanged. `test-sync.sh` sweeps
+        every item both stub hubs received, then forces a leak past routing. sync 115 → 137.
+  - [ ] Installed (bootstrap: `/usr/local/bin/gatbox-sync` only, no unit or system config)
 - **The 7" box: a readability and touch pass (2026-10-26).** The owner: the on-screen keyboard
   crushed (PICK MACHINE), hard to read and to hit on the touch screen, taps landing above the
   buttons, and a 3D-printed box with a wide bezel coming. Plan and findings:
@@ -577,6 +585,17 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         (−7, 0) and (+6, +11) px, spread ±6–9 px — the two disagree, so no calibration; re-run once the panel
         is in its box (the viewing angle changes). A steady offset → a libinput calibration
         matrix for the WS170120 (a udev rule: shown first, rule 5); scatter only → nothing more.
+- **The integration plan, phase A (2026-10-28):** `docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md`,
+  approved by the owner. Repo-only on this side (nothing installed changes except the guard above).
+  - [x] Contract v1 is GATBOX's now: the README takes the hub's 10-26 additions and writes down the Phase 8 extras
+        and the five order priorities; the roster example carries `model_key`; `docs/contract/checksums.sh`
+        checks and regenerates CHECKSUMS; `test-contract.sh` compares each sibling hub checkout's copy. 15 → 20.
+  - [x] One set of agent rules for the three repos, `docs/agents/RULES.md` (vendored into the hubs;
+        `test-rules.sh`), and CLAUDE.md points at it.
+  - [x] One privacy check: `scripts/privacy_check.sh` and `.githooks/pre-push`, byte-identical in all three; this
+        repo's own paths in `.githooks/privacy.conf`. New here: emails are checked, a missing patterns file refuses
+        the push, and a refusal never prints the pattern. `test-hooks.sh` 17 → 24.
+  - [ ] ⏸ Owner: merge the three PRs together (the contract, the rules and the check must match in all three)
 - In a cabinet with no known Wi-Fi, the hotspot comes up ~90 s after boot: join **GATBOX**,
   Pi at `10.42.0.1` / `gatbox.local`. Since 2026-10-05 it also drops again by itself when a
   saved network comes back into range, and there are three ways to join a new one — see

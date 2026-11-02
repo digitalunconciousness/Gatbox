@@ -430,6 +430,19 @@ check "the meter state carries it, and jobs"     '[ "$(api GET /api/meter/profil
 check "during is not offered on the 7\""         '[ "$(api PUT /api/phase "{\"phase\":\"during\"}")" = 400 ]'
 check "a tag can carry a phase"                  '[ "$(api POST /api/orders/tag "{\"order\":7,\"session_file\":\"'"$O"'\",\"phase\":\"as_left\"}")" = 201 ] && [ "$(js "(d[\"phase\"], d[\"machine\"])")" = "('"'"'as_left'"'"', '"'"'s-0042-ms-pac-man'"'"')" ]'
 check "but not a made-up one"                    '[ "$(api POST /api/orders/tag "{\"order\":7,\"session_file\":\"'"$O"'\",\"phase\":\"sideways\"}")" = 400 ]'
+# "The last trace" on a machine's order is that machine's, never whatever was metered last: with two
+# hubs, another machine's trace can be the other world's. Two finished sessions, the newer one on
+# another machine.
+mkhdr() { printf '# clock=ntp\n# mode=VDC\n# machine=%s\niso_time,epoch,value,unit,flags,uptime_s\n' "$2" > "$T/log/$1"
+          printf '2099-12-31T00:00:0%s,4102358400.0,5.01,V,DC AUTO,1.0\n' 0 1 >> "$T/log/$1"; }
+mkhdr rail_20991231_000000.csv s-0042-ms-pac-man
+mkhdr rail_20991231_000001.csv gauntlet-legends
+check "the last trace is this machine one, not the newest" '[ "$(api POST /api/orders/tag "{\"order\":7}")" = 201 ] && [ "$(js "d[\"session_file\"]")" = rail_20991231_000000.csv ]'
+api DELETE "/api/orders/$(js 'd["uid"]')" >/dev/null
+check "a trace from another machine is refused on this order" '[ "$(api POST /api/orders/tag "{\"order\":7,\"session_file\":\"rail_20991231_000001.csv\"}")" = 400 ] && grep -q "recorded on gauntlet-legends" "$T/body"'
+check "an order with its trace takes this machine one too" '[ "$(api POST /api/orders "{\"issue\":\"Dead\",\"attach\":true}")" = 201 ] && [ "$(js "d[\"session_file\"]")" = rail_20991231_000000.csv ]'
+api DELETE "/api/orders/$(js 'd["uid"]')" >/dev/null
+rm -f "$T/log/rail_20991231_000000.csv" "$T/log/rail_20991231_000001.csv"
 check "MANUALS go to the model library"         '[ "$(api GET /api/manuals/s-0042-ms-pac-man)" = 200 ] && [ "$(js "(d[\"slug\"], d[\"library\"])")" = "('"'"'s-0042-ms-pac-man'"'"', '"'"'gauntlet'"'"')" ]'
 check "with no model, MANUALS say why"           '[ "$(api GET /api/manuals/s-0099-other)" = 404 ] && grep -q "model_key" "$T/body"'
 check "and the ROM list is unmapped, saying why" '[ "$(api GET /api/mame/s-0099-other)" = 200 ] && [ "$(js "d[\"status\"]")" = unmapped ]'

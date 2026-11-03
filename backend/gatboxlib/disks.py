@@ -122,17 +122,23 @@ def describe(ident):
 
 
 def images():
+    """The store's images, from their sidecars (never their bytes): the newest first. Only a .img with a sidecar,
+    inside the store, counts; a read still in progress (<label>.read.json) doesn't."""
     store = os.path.realpath(DISKS)
     out = []
-    for side in sorted(glob.glob(os.path.join(store, "*", "*.json"))):
-        if side.endswith(".read.json") or not os.path.isfile(side[:-5] + ".img"):
+    for side in glob.glob(os.path.join(store, "*", "*.json")):
+        img = side[:-5] + ".img"
+        if side.endswith(".read.json") or not os.path.isfile(img) or not os.path.realpath(img).startswith(store + os.sep):
             continue
         try:
             with open(side) as f:
                 j = json.load(f)
         except (OSError, ValueError):
             continue
-        out.append({"image": os.path.relpath(side[:-5] + ".img", store), "machine": j.get("machine"),
-                    "bytes": j.get("bytes"), "sha1": j.get("sha1"), "media": j.get("media"),
-                    "archive": (j.get("archive") or {}).get("state")})
-    return out
+        src = j.get("source") or {}
+        out.append({"image": os.path.relpath(img, store), "machine": j.get("machine"), "label": j.get("label"),
+                    "bytes": j.get("bytes"), "sha1": j.get("sha1"), "media": j.get("media"), "realm": j.get("realm"),
+                    "started": j.get("started"), "source": f"{src.get('vendor', '')} {src.get('model', '')}".strip(),
+                    "reads": j.get("reads"), "also_read": len(j.get("also_read") or []),
+                    "mame": (j.get("mame") or {}).get("state"), "archive": (j.get("archive") or {}).get("state")})
+    return sorted(out, key=lambda i: i.get("started") or 0, reverse=True)

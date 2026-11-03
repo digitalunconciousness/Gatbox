@@ -20,7 +20,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from . import (captures, config, devices, dump, mame, manuals, meter, orders, phone, report,
+from . import (captures, config, devices, disk, dump, mame, manuals, meter, orders, phone, report,
                roster, sessions, system, wifi)
 from .live import LIVE
 from .meter import Bad
@@ -507,6 +507,49 @@ def api_burn(h, m, q):
     h.json(202, req)
 
 
+def api_disk_get(h, m, q):
+    h.json(200, disk.status())
+
+
+def api_disk_images(h, m, q):
+    h.json(200, {"images": disk.images()})
+
+
+def _disk_queued(h, req, what):
+    h.log_line(f"disk: {what}")
+    LIVE.emit("disk", disk.status())
+    h.json(202, req)
+
+
+def api_disk_read(h, m, q):
+    req = disk.read_request(h.body())
+    _disk_queued(h, req, f"read {req['device']} as {req['label']} -> {req['machine']} ({req['media']})")
+
+
+def api_disk_retry(h, m, q):
+    req = disk.retry_request(h.body())
+    _disk_queued(h, req, f"retry {req['machine']}/{req['label']}")
+
+
+def api_disk_check(h, m, q):
+    req = disk.check_request(h.body())
+    _disk_queued(h, req, f"check {req['device']} for {os.path.basename(req['image'])}")
+
+
+def api_disk_write(h, m, q):
+    """POST /api/disk/write: the Pi's own screen only (h.is_local()): the hold there is the arm."""
+    req = disk.write_request(h.body(), h.is_local())
+    _disk_queued(h, req, f"WRITE ARMED {os.path.basename(req['image'])} -> {req['device']} ({req['armed']['by']})")
+
+
+def api_disk_checklist_get(h, m, q):
+    h.json(200, disk.checklist(q1(q, "write")))
+
+
+def api_disk_checklist_post(h, m, q):
+    h.json(200, disk.tick(h.body()))
+
+
 def api_dump_parts(h, m, q):
     h.json(200, dump.search(q1(q, "q"), q1(q, "family")))
 
@@ -692,6 +735,7 @@ def api_live(h, m, q):
         alarm      an over-voltage event opened (spike), escalated (alarm) or closed
         mark / capture / state   something done through the API (by any client)
         roster     a machine added or edited on the dashboard
+        dump / disk   the T48 job's and the disk job's progress and results (GET /api/dump, GET /api/disk)
         manuals    a document uploaded; specs: a limit confirmed or an actual value changed (the machine's slug)
         heartbeat  every 15 s, even while samples flow: {"t", "logging", "age_s"}
     Event ids are sequence numbers: a client reconnecting with Last-Event-ID gets what it missed, if still kept."""
@@ -803,6 +847,14 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("GET", r"/api/dump/parts", api_dump_parts),
     ("GET", r"/api/dumps", api_dumps),
     ("GET", r"/api/burn/images", api_burn_images),
+    ("GET", r"/api/disk", api_disk_get),
+    ("GET", r"/api/disk/images", api_disk_images),
+    ("POST", r"/api/disk/read", api_disk_read),
+    ("POST", r"/api/disk/retry", api_disk_retry),
+    ("POST", r"/api/disk/check", api_disk_check),
+    ("POST", r"/api/disk/write", api_disk_write),
+    ("GET", r"/api/disk/checklist", api_disk_checklist_get),
+    ("POST", r"/api/disk/checklist", api_disk_checklist_post),
     ("POST", r"/api/burn/blank", api_burn_blank),
     ("POST", r"/api/burn", api_burn),
     ("GET", r"/api/roster", api_roster),
@@ -948,6 +1000,7 @@ def main():
         pass
     LIVE.start()
     dump.watch()
+    disk.watch()
     threading.Thread(target=_warm, name="warm", daemon=True).start()
     ThreadingHTTPServer.allow_reuse_address = True
     ThreadingHTTPServer.daemon_threads = True

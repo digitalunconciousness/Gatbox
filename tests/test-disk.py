@@ -490,9 +490,201 @@ def main():
     code, st, gone = job({"op": "format"})
     check("an unknown job: stopped, saying so", st["state"] == "stopped" and "unknown job" in st["error"] and gone)
 
+    web_side(image)
+
     print(f"\ndisk: {passed} passed, {failed} failed")
     shutil.rmtree(T, ignore_errors=True)
     return 0 if failed == 0 else 1
+
+
+def _lan_addrs():
+    try:
+        return subprocess.run(["hostname", "-I"], capture_output=True, text=True, check=False).stdout.split()
+    except (FileNotFoundError, OSError):
+        pass
+    try:
+        out = subprocess.run(["ip", "-4", "-o", "addr", "show", "scope", "global"], capture_output=True, text=True,
+                             check=False).stdout
+        return [ln.split()[3].split("/")[0] for ln in out.splitlines() if len(ln.split()) > 3]
+    except (FileNotFoundError, OSError, IndexError):
+        return []
+
+
+def web_side(image):
+    """gatbox-web's DISK API, with a runner thread standing in for gatbox-disk.path + .service."""
+    import socket
+    import threading
+    import urllib.error
+    import urllib.request
+    print("gatbox-web's DISK API:")
+    port, B = 8098, "http://127.0.0.1:8098"
+    with socket.socket() as so:
+        if so.connect_ex(("127.0.0.1", port)) == 0:
+            raise SystemExit(f"port {port} is in use")
+    w = f"{T}/web"
+    for d in ("log", "run", "ctrl", "cache", "data", "spool", "sync"):
+        os.makedirs(f"{w}/{d}")
+    for f in ("profiles.json", "gatbox-machine-specs.json", "eproms.json"):
+        shutil.copy(os.path.join(REPO, "data", f), f"{w}/data/")
+    json.dump({"meta": {}, "video_games": [{"slug": "widget-wars", "name": "Widget Wars", "platform": "x"}],
+               "pinball": []}, open(f"{w}/data/gatbox-barcade-roster.json", "w"))
+    # one hub, whose roster has the machine: its realm is that hub's name
+    json.dump({"hubs": [{"name": "default", "label": "WIDGET HUB"}]}, open(f"{w}/sync/status.json", "w"))
+    json.dump({"machines": [{"slug": "widget-wars", "name": "Widget Wars"}]}, open(f"{w}/sync/roster.json", "w"))
+    wenv = dict(env(), GATBOX_WEB_PORT=str(port), STATE_DIRECTORY=f"{w}/ctrl", CACHE_DIRECTORY=f"{w}/cache",
+                GATBOX_LOGDIR=f"{w}/log", GATBOX_RUNDIR=f"{w}/run", GATBOX_DATA=f"{w}/data",
+                GATBOX_SYNC_STATE=f"{w}/sync", GATBOX_DISK_SPOOL=f"{w}/spool", GATBOX_DUMP_SPOOL=f"{w}/nodump",
+                MPLCONFIGDIR=f"{w}/cache/mpl")
+    web = subprocess.Popen(["python3", os.path.join(REPO, "backend/gatbox-web")], env=wenv,
+                           stdout=open(f"{w}/web.log", "w"), stderr=subprocess.STDOUT)
+    stop = threading.Event()
+
+    def runner():                                   # gatbox-disk.path: a request appears -> gatbox-disk --job
+        while not stop.is_set():
+            if os.path.exists(f"{w}/spool/request.json"):
+                bad = {"FAKE_DDRESCUE_BAD": "0:512"} if os.path.exists(f"{w}/bad") else {}
+                heal = {"FAKE_DDRESCUE_HEAL": "1"} if os.path.exists(f"{w}/heal") else {}
+                subprocess.run(["python3", TOOL, "--job", f"{w}/spool/request.json", "--status", f"{w}/spool/status.json"],
+                               env=env(GATBOX_API=B, **bad, **heal), capture_output=True, timeout=120, check=False)
+            time.sleep(0.2)
+    threading.Thread(target=runner, daemon=True).start()
+
+    def call(method, path, body=None, base=B):
+        req = urllib.request.Request(base + path, method=method,
+                                     data=json.dumps(body).encode() if body is not None else None,
+                                     headers={"Content-Type": "application/json"} if body is not None else {})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            raw = e.read()
+            try:
+                return e.code, json.loads(raw or b"null")
+            except ValueError:
+                return e.code, None
+
+    def done():
+        for _ in range(300):
+            _, st = call("GET", "/api/disk")
+            if not st["busy"] and st["status"] and st["status"].get("state") in ("done", "stopped"):
+                return st["status"]
+            time.sleep(0.2)
+        return {}
+
+    def disk_of(name):
+        return next(d for d in call("GET", "/api/disk")[1]["disks"] if d["name"] == name)
+
+    try:
+        for _ in range(50):
+            try:
+                call("GET", "/kiosk/state")
+                break
+            except OSError:
+                time.sleep(0.1)
+        code, st = call("GET", "/api/disk")
+        names = {d["name"]: d["role"] for d in st["disks"]}
+        check("GET /api/disk: the USB disks with their roles, the store mounted with its space, the spool there",
+              code == 200 and names.get("sdc") == "store" and names.get("sdd") == "empty" and "mmcblk0" not in names
+              and st["store"]["mounted"] and st["store"]["total"] > 0 and st["spool"] and not st["busy"])
+        code, r = call("GET", "/api/disk/images")
+        check("GET /api/disk/images: the store's images from their sidecars, with label and source drive",
+              code == 200 and any(i["image"] == image and i["label"] == "WW-HDD" and i["source"] == "WIDGET WIDGETDRIVE 1000"
+                                  for i in r["images"]))
+        card = os.urandom(MiB)
+        usb_disk("sdb", len(card), "Generic", "Card Reader SD", port=4, devnum="8:16", data=card)
+        sdb = disk_of("sdb")
+        good = {"device": "sdb", "identity": sdb["identity"], "machine": "widget-wars", "label": "WEB-SD", "media": "sd"}
+        bad = [call("POST", "/api/disk/read", dict(good, **b))[0] for b in (
+            {"label": "../x"}, {"media": "floppy"}, {"machine": "nope"}, {"device": "sdq"}, {"device": "sdd"},
+            {"device": "sdc"}, {"identity": dict(sdb["identity"], model="OTHER")})]
+        check("READ: bad label / media / machine / no such disk / empty slot / the store / not the picked drive "
+              "-> 400 / 400 / 404 / 404 / 409 / 409 / 409", bad == [400, 400, 404, 404, 409, 409, 409])
+        mount_table(store=False)
+        code, r = call("POST", "/api/disk/read", good)
+        check("READ with the store unplugged -> 409, IMAGE STORE NOT CONNECTED", code == 409
+              and "IMAGE STORE NOT CONNECTED" in r["error"])
+        mount_table()
+        code, r = call("POST", "/api/disk/read", good)
+        st = done()
+        side = json.load(open(st["stored"]["path"][:-4] + ".json")) if st.get("stored") else {}
+        check("READ -> 202, queued with the machine's realm; the job reads and stores it", code == 202
+              and r["realm"] == "default" and st.get("state") == "done" and side.get("realm") == "default")
+        open(f"{w}/spool/running.json", "w").write("{}")
+        code, r = call("POST", "/api/disk/read", dict(good, label="WEB-SD2"))
+        os.remove(f"{w}/spool/running.json")
+        check("one disk job at a time: 409 while one runs", code == 409)
+        usb_disk("sdh", 8 * MiB, "WIDGET", "WIDGET SSD 64G C", port=8, devnum="8:112", data=fat_card(8 * MiB))
+        sdh = disk_of("sdh")
+        target = {"image": image, "device": "sdh"}
+        lan = next((a for a in _lan_addrs() if "." in a and not a.startswith("127.")), None)
+        if lan:
+            code, r = call("POST", "/api/disk/write", target, base=B.replace("127.0.0.1", lan))
+            check("WRITE from the network (a phone) -> 403: only the Pi's own screen arms", code == 403)
+        code, r = call("POST", "/api/disk/write", target)
+        check("WRITE with no CHECK first -> 409", code == 409 and "CHECK this image and drive first" in r["error"])
+        code, r = call("POST", "/api/disk/check", dict(target, image="../../etc/passwd", identity=sdh["identity"]))
+        check("CHECK an image that isn't in the store -> 400", code == 400)
+        code, r = call("POST", "/api/disk/check", dict(target, identity=sdh["identity"]))
+        st = done()
+        check("CHECK -> 202; the job finds a FAT32 card: target_ok, needs an acknowledgement", code == 202
+              and st.get("op") == "check" and st.get("target_ok") and st.get("needs_ack"))
+        code, r = call("POST", "/api/disk/write", target)
+        check("WRITE a non-blank target without ack -> 409", code == 409 and "isn't blank" in r["error"])
+        code, r = call("POST", "/api/disk/write", dict(target, device="sdb", ack=True))
+        check("WRITE another drive than the checked one -> 409", code == 409)
+        t0 = time.time()
+        code, r = call("POST", "/api/disk/write", dict(target, ack=True))
+        check("WRITE after the CHECK, on the Pi -> 202, armed by the screen for 30 s, the check inside the request",
+              code == 202 and r["armed"]["by"] == "screen" and abs(r["armed"]["until"] - (t0 + 30)) < 3
+              and r["check"]["target_ok"] and r["check"]["device"] == "sdh")
+        st = done()
+        src = open(f"{STORE}/{image}", "rb").read()
+        check("... the job writes and verifies: the drive holds the image", st.get("op") == "write"
+              and st.get("state") == "done" and st.get("verified") and open(f"{DEV}/sdh", "rb").read(len(src)) == src)
+        write_id = st.get("job")
+        code, r = call("POST", "/api/disk/write", dict(target, ack=True))
+        check("WRITE again without a new CHECK -> 409 (the last job was the write)", code == 409)
+        code, r = call("POST", "/api/disk/check", dict(target, identity=sdh["identity"]))
+        st = done()
+        sp = f"{w}/spool/status.json"
+        j = json.load(open(sp))
+        j["at"] -= 301
+        json.dump(j, open(sp, "w"))
+        code, r = call("POST", "/api/disk/write", dict(target, verify_only=True))
+        check("a CHECK more than 5 minutes old -> 409", code == 409)
+        code, r = call("GET", f"/api/disk/checklist?write={write_id}")
+        check("the swap checklist: its ten items, none ticked", code == 200 and len(r["items"]) == 10
+              and not any(i["done"] for i in r["items"]))
+        code, r = call("POST", "/api/disk/checklist", {"write": write_id, "item": "five_volts", "done": True})
+        ticked = [i for i in r["items"] if i["done"]] if code == 200 else []
+        check("... a tick is kept, with its time", code == 200 and [i["item"] for i in ticked] == ["five_volts"]
+              and ticked[0]["at"] > 0)
+        bad = [call("POST", "/api/disk/checklist", b)[0] for b in (
+            {"write": write_id, "item": "nope", "done": True}, {"write": "../x", "item": "games", "done": True},
+            {"write": write_id, "item": "games", "done": "yes"})]
+        check("... a bad item, write id or done -> 400 each", bad == [400, 400, 400])
+        code, r = call("POST", "/api/disk/retry", {"machine": "widget-wars", "label": "NOPE"})
+        check("RETRY with no read in progress -> 404", code == 404)
+        usb_disk("sde", MiB, "WIDGET", "OLDSPINNER 40", port=5, devnum="8:64", data=os.urandom(MiB))
+        open(f"{w}/bad", "w").close()
+        code, r = call("POST", "/api/disk/read", {"device": "sde", "identity": disk_of("sde")["identity"],
+                                                  "machine": "widget-wars", "label": "WEB-OLD", "media": "hdd"})
+        st = done()
+        check("a READ on bad areas: stopped with needs_retry", st.get("state") == "stopped" and st.get("needs_retry"))
+        open(f"{w}/heal", "w").close()
+        code, r = call("POST", "/api/disk/retry", {"machine": "widget-wars", "label": "WEB-OLD"})
+        st = done()
+        check("RETRY -> 202; the job reads the bad areas after all and stores it", code == 202 and st.get("state") == "done")
+        os.remove(f"{w}/bad")
+        os.remove(f"{w}/heal")
+        codes = [call("GET", p)[0] for p in (f"/api/disk/images/{image}", f"/disks/{image}", f"/srv/gatbox/disks/{image}",
+                                             f"/dash/../../{image}")]
+        check("no route serves the store's bytes: 404 everywhere", all(c == 404 for c in codes))
+        check("server log: no errors", "Traceback" not in open(f"{w}/web.log").read())
+    finally:
+        stop.set()
+        web.terminate()
+        web.wait(10)
 
 
 if __name__ == "__main__":

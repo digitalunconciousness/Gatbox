@@ -91,6 +91,7 @@ backend/gatboxweb/roster.py                     /usr/local/lib/gatbox/gatboxweb/
 backend/gatboxweb/system.py                     /usr/local/lib/gatbox/gatboxweb/system.py             644
 backend/gatboxweb/devices.py                    /usr/local/lib/gatbox/gatboxweb/devices.py            644
 backend/gatboxweb/dump.py                       /usr/local/lib/gatbox/gatboxweb/dump.py               644
+backend/gatboxweb/disk.py                       /usr/local/lib/gatbox/gatboxweb/disk.py               644
 backend/gatboxweb/mame.py                       /usr/local/lib/gatbox/gatboxweb/mame.py               644
 backend/gatboxweb/manuals.py                    /usr/local/lib/gatbox/gatboxweb/manuals.py            644
 backend/gatboxweb/wifi.py                       /usr/local/lib/gatbox/gatboxweb/wifi.py               644

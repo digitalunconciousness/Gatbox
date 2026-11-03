@@ -163,3 +163,11 @@ the work queue with its trace attached.
 beside `hub.conf`, routing by roster, per-hub state under `/var/lib/gatbox-sync/hubs/<name>/`,
 `model_key`, the capability-gated JOB card and `phase`. Design: `docs/plans/2026-10-13-phase8-multi-hub.md`.
 A second hub is live in `hubs.d`; one session each went to its own hub only.
+
+**Phase B (the library on the deck), built 2026-11-03 on `phase-b-library`, not installed:** one SQLite file of games,
+documents, MAME sets, ROM lists, ROM images and rail limits (`backend/gatboxlib/library.py`, format and vectors in
+`docs/contract/library-v1/`), seeded from the roster and manuals by `gatbox-library seed --plan|--apply` (the plan is
+read by the owner first). The logger never opens it: gatbox-web exports the confirmed limits to `library-specs.json`.
+LIBRARY replaces MANUALS on the 7" (games, MISSING, ADD/EDIT, title search over MAME's list, CHECK with known-good marks,
+FIND A MANUAL through a spool job). An unseeded deck behaves as before. Spec `docs/plans/2026-11-03-phase-b-library.md`;
+the install diff she has not seen yet is in BRINGUP.md.

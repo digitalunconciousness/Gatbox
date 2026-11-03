@@ -1,7 +1,7 @@
 # Phase B: the library on the deck — short spec
 
-Status: **draft for the owner's OK, 2026-11-03.** No code yet. Her OK covers the code and the push
-(integration plan §10); merging and installing stay hers.
+Status: **approved by the owner, 2026-11-03,** with P1 as proposed (LIBRARY replaces MANUALS). Her OK covers the
+code and the push (integration plan §10); merging and installing stay hers.
 
 This is the build plan for phase B of `docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md`.
 The design behind it is `2026-10-28-shared-game-library-design.md` (its §3 keys, §4 records, §5.4 limits,
@@ -80,7 +80,7 @@ Installed by the bootstrap, as a diff she sees before it runs:
 
 | # | question | proposed |
 |---|---|---|
-| P1 | **Where does LIBRARY go on the 7"?** Eight tabs at 56 px fill the nav; a ninth makes it scroll and cuts tabs off. DISK (its own branch) is the eighth, so LIBRARY would be the ninth. | **LIBRARY replaces MANUALS.** MANUALS' documents, viewer and spec sheet are library content, so they move inside a game: DOCUMENTS and LIMITS & FACTS. Its API and URLs stay. The alternative is a ninth tab with the nav scrolling. |
+| P1 | **Decided (owner, 2026-11-03): LIBRARY replaces MANUALS.** The question was: where does LIBRARY go on the 7"? Eight tabs at 56 px fill the nav; a ninth makes it scroll and cuts tabs off. DISK (its own branch) is the eighth, so LIBRARY would be the ninth. | **LIBRARY replaces MANUALS.** MANUALS' documents, viewer and spec sheet are library content, so they move inside a game: DOCUMENTS and LIMITS & FACTS. Its API and URLs stay. The alternative is a ninth tab with the nav scrolling. |
 | P2 | Where the store module lives. | `gatboxlib/library.py`, not `gatboxweb/library.py` as the design says: the CLIs (`gatbox-library`, `gatbox-manuals`, `gatbox-mame-roms`) and the archive's server all import it, and `gatboxlib` is where shared code lives. The HTTP side stays in `gatboxweb`. |
 | P3 | Where the database lives. | `/srv/gatbox/library/library.sqlite`, next to the manuals. |
 | L3-L5 | Who confirms a limit, key naming, phone editing. | As recommended in the library design §10: the 7" only; title slugs; read-only on a phone. |

@@ -586,6 +586,15 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         (−7, 0) and (+6, +11) px, spread ±6–9 px — the two disagree, so no calibration; re-run once the panel
         is in its box (the viewing angle changes). A steady offset → a libinput calibration
         matrix for the WS170120 (a udev rule: shown first, rule 5); scatter only → nothing more.
+- **Phase B, the library on the deck (branch `phase-b-library`, from 2026-11-03):** spec
+  `docs/plans/2026-11-03-phase-b-library.md`, approved by the owner (LIBRARY replaces MANUALS on the 7"). Repo-only
+  until she says: nothing installed changes.
+  - [x] B1, the store: `backend/gatboxlib/library.py` (SQLite, revisions, canonical hashes, compare-and-set, the
+        feed and the digest, `model_key`, the confirmed rule) and `docs/contract/library-v1/` (README + vectors).
+        `test-library.sh` 51; each of 17 guards broken on purpose fails a test (the 18th is equivalent)
+  - [ ] B2, the seed (`gatbox-library seed --plan / --apply`, `import`) · B3, the readers · B4–B8, LIBRARY, the
+        title search, CHECK + marks, the SYSTEM tile, manuals on request (⏸ a path unit, shown first)
+  - [ ] ⏸ Owner: review the seed plan after B2; see the install diff before anything is installed
 - **The integration plan, phase A (2026-10-28):** `docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md`,
   approved by the owner. Repo-only on this side (nothing installed changes except the guard above).
   - [x] Contract v1 is GATBOX's now: the README takes the hub's 10-26 additions and writes down the Phase 8 extras

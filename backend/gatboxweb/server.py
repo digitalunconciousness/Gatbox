@@ -550,6 +550,14 @@ def api_disk_checklist_post(h, m, q):
     h.json(200, disk.tick(h.body()))
 
 
+def api_disk_checklist_new(h, m, q):
+    h.json(200, disk.new_checklist())
+
+
+def api_disk_checklists(h, m, q):
+    h.json(200, disk.checklists())
+
+
 def api_dump_parts(h, m, q):
     h.json(200, dump.search(q1(q, "q"), q1(q, "family")))
 
@@ -855,6 +863,8 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("POST", r"/api/disk/write", api_disk_write),
     ("GET", r"/api/disk/checklist", api_disk_checklist_get),
     ("POST", r"/api/disk/checklist", api_disk_checklist_post),
+    ("POST", r"/api/disk/checklist/new", api_disk_checklist_new),
+    ("GET", r"/api/disk/checklists", api_disk_checklists),
     ("POST", r"/api/burn/blank", api_burn_blank),
     ("POST", r"/api/burn", api_burn),
     ("GET", r"/api/roster", api_roster),

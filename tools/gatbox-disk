@@ -546,8 +546,10 @@ class Write(Work):
                 if e.errno == errno.EBUSY:
                     raise Stop(f"{d['name']} is busy: something has it mounted or open", "nothing was written") from None
                 raise
+            self.info["verify_only"] = verify_only
             try:
                 if not verify_only:
+                    self.info["written"] = True     # from here on a stop leaves the drive partly written
                     self.step("write", f"{size:,} bytes to {d['name']}", progress=0.05)
                     with open(img, "rb") as src:
                         done = 0
@@ -589,7 +591,8 @@ class Write(Work):
                 "image": i.get("image"), "sha1": i.get("sha1"), "bytes": i.get("bytes"), "target": i.get("target"),
                 "device": i.get("device"), "machine": i.get("machine"), "realm": i.get("realm"), "ack": i.get("ack"),
                 "armed": i.get("armed"), "contents": i.get("contents"), "untouched_bytes": i.get("untouched_bytes"),
-                "error": i.get("error"), "tool": "gatbox-disk"}
+                "written": bool(i.get("written")), "verify_only": bool(i.get("verify_only")), "error": i.get("error"),
+                "tool": "gatbox-disk"}
         with open(os.path.join(os.path.realpath(DISKS), "writes.jsonl"), "a") as f:
             f.write(json.dumps(line) + "\n")
 

@@ -21,11 +21,13 @@ import tempfile
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO, "tests"))
+from fakedisk import MiB, FakeDisks, fat_card  # noqa: E402
+
 TOOL = os.path.join(REPO, "tools/gatbox-disk")
 T = tempfile.mkdtemp(prefix="gatbox-disk-test-")
 SYS, DEV, STORE, MOUNTINFO = f"{T}/sys", f"{T}/dev", f"{T}/store", f"{T}/mountinfo"
 LOG = f"{T}/ddrescue.log"
-MiB = 1 << 20
 passed = failed = 0
 
 
@@ -35,86 +37,11 @@ def check(name, ok):
     print(f"  {'ok  ' if ok else 'FAIL'}  {name}")
 
 
-# --- the fake machine: sysfs, devices, mounts -------------------------------------------------------------------------
+# --- the fake machine: sysfs, devices, mounts (tests/fakedisk.py) -----------------------------------------------------
 
-DISKS = {}          # name -> its sysfs block directory
-
-
-def usb_disk(name, nbytes, vendor, model, port, vid="1234", pid="5678", logical=512, devnum="8:0", parts=(),
-             data=None, driver="uas"):
-    """A whole disk behind a USB bridge, as the kernel lays it out, and a plain file of NBYTES standing in for it."""
-    usb = f"{SYS}/devices/platform/axi/1000120000.pcie/xhci-hcd.0/usb2/2-{port}"
-    os.makedirs(f"{usb}/2-{port}:1.0", exist_ok=True)
-    for f, v in (("idVendor", vid), ("idProduct", pid), ("serial", "WIDGETDOCK0001")):
-        open(f"{usb}/{f}", "w").write(v + "\n")
-    drv = f"{SYS}/bus/usb/drivers/{driver}"
-    os.makedirs(drv, exist_ok=True)
-    link = f"{usb}/2-{port}:1.0/driver"
-    if not os.path.lexists(link):
-        os.symlink(drv, link)
-    scsi = f"{usb}/2-{port}:1.0/host{port}/target{port}:0:0/{port}:0:0:0"
-    blk = f"{scsi}/block/{name}"
-    shutil.rmtree(blk, ignore_errors=True)
-    os.makedirs(f"{blk}/queue")
-    for f, v in (("vendor", vendor), ("model", model), ("rev", "1.0")):
-        open(f"{scsi}/{f}", "w").write(v + "\n")
-    os.symlink(scsi, f"{blk}/device")
-    open(f"{blk}/size", "w").write(f"{nbytes // 512}\n")
-    open(f"{blk}/dev", "w").write(devnum + "\n")
-    open(f"{blk}/removable", "w").write("0\n")
-    open(f"{blk}/queue/logical_block_size", "w").write(f"{logical}\n")
-    open(f"{blk}/queue/rotational", "w").write("1\n")
-    major, minor = devnum.split(":")
-    for i, _ in enumerate(parts, 1):
-        os.makedirs(f"{blk}/{name}{i}")
-        open(f"{blk}/{name}{i}/partition", "w").write(f"{i}\n")
-        open(f"{blk}/{name}{i}/dev", "w").write(f"{major}:{int(minor) + i}\n")
-    os.makedirs(f"{SYS}/block", exist_ok=True)
-    if os.path.lexists(f"{SYS}/block/{name}"):
-        os.remove(f"{SYS}/block/{name}")
-    os.symlink(blk, f"{SYS}/block/{name}")
-    with open(f"{DEV}/{name}", "wb") as f:
-        if data is not None:
-            f.write(data)
-        f.truncate(nbytes)
-    DISKS[name] = blk
-
-
-def other_disk(name, kind):
-    """An SD card, NVMe drive or SATA disk on the Pi itself (not USB): sysfs has it, and gatbox-disk must never list
-    or open it. A SATA disk on a PCIe HAT is still called sdX: only its place in sysfs says it isn't on USB."""
-    where = {"mmc": "mmc_host/mmc0/mmc0:0001", "nvme": "1000110000.pcie/nvme/nvme0",
-             "sata": "1000110000.pcie/0000:01:00.0/ata1/host0/target0:0:0/0:0:0:0"}[kind]
-    blk = f"{SYS}/devices/platform/axi/{where}/block/{name}"
-    os.makedirs(f"{blk}/queue", exist_ok=True)
-    open(f"{blk}/size", "w").write("1000\n")
-    open(f"{blk}/dev", "w").write("179:0\n")
-    os.symlink(blk, f"{SYS}/block/{name}")
-
-
-def by_id(name, link):
-    os.makedirs(f"{DEV}/disk/by-id", exist_ok=True)
-    p = f"{DEV}/disk/by-id/{link}"
-    if os.path.lexists(p):
-        os.remove(p)
-    os.symlink(f"../../{name}", p)
-
-
-def mount_table(store=True, extra=()):
-    lines = ["22 1 179:2 / / rw,noatime shared:1 - ext4 /dev/mmcblk0p2 rw",
-             "23 22 179:1 / /boot/firmware rw shared:2 - vfat /dev/mmcblk0p1 rw"]
-    if store:
-        lines.append(f"40 22 8:33 / {STORE} rw,noatime shared:9 - ext4 /dev/sdc1 rw")
-    lines += list(extra)
-    open(MOUNTINFO, "w").write("\n".join(lines) + "\n")
-
-
-def env(**extra):
-    e = dict(os.environ, GATBOX_SYSFS=SYS, GATBOX_DEV=DEV, GATBOX_MOUNTINFO=MOUNTINFO, GATBOX_DISKS=STORE,
-             GATBOX_DDRESCUE=os.path.join(REPO, "tests/fake-ddrescue"), GATBOX_API="http://127.0.0.1:9",
-             FAKE_DDRESCUE_LOG=LOG)
-    e.update({k: str(v) for k, v in extra.items()})
-    return e
+F = FakeDisks(T)
+DISKS = F.blocks
+usb_disk, other_disk, by_id, mount_table, env = F.usb_disk, F.other_disk, F.by_id, F.mount_table, F.env
 
 
 def disk(*args, stdin="", **extra):
@@ -144,16 +71,6 @@ def load_tool():
     return mod
 
 
-def fat_card(nbytes, label=b"WIDGETCARD "):
-    """A FAT32 boot sector at the start of a whole card (no partition table), as a camera formats one."""
-    b = bytearray(nbytes)
-    b[3:11] = b"MSDOS5.0"
-    b[71:82] = label
-    b[82:90] = b"FAT32   "
-    b[510:512] = b"\x55\xaa"
-    return bytes(b)
-
-
 def iso_card(nbytes):
     """An ISO 9660 image on a card, like an installer written to it (the 11-02 near miss)."""
     b = bytearray(nbytes)
@@ -176,9 +93,6 @@ def dos_table(nbytes):
 
 
 def main():
-    for d in (SYS, DEV, STORE):
-        os.makedirs(d)
-    open(f"{STORE}/.gatbox-image-store", "w").write("GATBOX image store\n")
     mount_table()
     src = os.urandom(3 * MiB)
     sha = hashlib.sha1(src).hexdigest()
@@ -403,8 +317,9 @@ def main():
         held = "busy" in s.what
     finally:
         g.os.open = real_open
-    check("the O_EXCL claim refused (EBUSY: mounted or open elsewhere): stopped, nothing written",
-          held and open(f"{DEV}/sdg", "rb").read(len(src)) == bytes(len(src)))
+    check("the O_EXCL claim refused (EBUSY: mounted or open elsewhere): stopped, nothing written, and the log says so",
+          held and open(f"{DEV}/sdg", "rb").read(len(src)) == bytes(len(src))
+          and json.loads(open(f"{STORE}/writes.jsonl").readlines()[-1])["written"] is False)
     c = g.check(image, "sdg", say=quiet)
     real_read = g.hashed_read
     g.hashed_read = lambda path, length, sha256=False: "0" * 40 if path.endswith("/sdg") else real_read(path, length, sha256)
@@ -419,6 +334,7 @@ def main():
     check("a verify mismatch: stopped, with a stopped line in writes.jsonl", mismatch and last["state"] == "stopped"
           and "verify 1" in last["error"])
     check("... the realm it was given is in that line", last["realm"] == "widget-hub")
+    check("... and that the drive was written (so it's partly written now)", last["written"] is True)
     r = g.Read("sdb", "widget-wars", "WW-REALM", "ssd", realm="widget-hub", say=quiet)
     usb_disk("sdb", MiB, "Generic", "Card Reader SD", port=4, devnum="8:16", data=os.urandom(MiB))
     info = r.go()
@@ -653,8 +569,11 @@ def web_side(image):
         code, r = call("POST", "/api/disk/write", dict(target, verify_only=True))
         check("a CHECK more than 5 minutes old -> 409", code == 409)
         code, r = call("GET", f"/api/disk/checklist?write={write_id}")
-        check("the swap checklist: its ten items, none ticked", code == 200 and len(r["items"]) == 10
-              and not any(i["done"] for i in r["items"]))
+        check("the swap checklist: one per write, made when it's queued: its ten items, none ticked, the image and "
+              "the target named", code == 200 and len(r["items"]) == 10 and not any(i["done"] for i in r["items"])
+              and r["image"] == image and r["device"] == "sdh" and r["target"] == "WIDGET WIDGET SSD 64G C")
+        code, r = call("GET", "/api/disk/checklist")
+        check("... without a write id: the newest one", code == 200 and r["write"] == write_id)
         code, r = call("POST", "/api/disk/checklist", {"write": write_id, "item": "five_volts", "done": True})
         ticked = [i for i in r["items"] if i["done"]] if code == 200 else []
         check("... a tick is kept, with its time", code == 200 and [i["item"] for i in ticked] == ["five_volts"]
@@ -663,6 +582,21 @@ def web_side(image):
             {"write": write_id, "item": "nope", "done": True}, {"write": "../x", "item": "games", "done": True},
             {"write": write_id, "item": "games", "done": "yes"})]
         check("... a bad item, write id or done -> 400 each", bad == [400, 400, 400])
+        code, r = call("POST", "/api/disk/checklist", {"write": "0123456789ab", "item": "games", "done": True})
+        code2, _ = call("GET", "/api/disk/checklist?write=0123456789ab")
+        check("... a write with no checklist -> 404, for a tick and a read", code == 404 and code2 == 404)
+        code, r = call("POST", "/api/disk/checklist/new", {})
+        own = r.get("write") if code == 200 else None
+        code2, _ = call("POST", "/api/disk/checklist", {"write": own, "item": "attract", "done": True})
+        code3, r3 = call("GET", "/api/disk/checklist")
+        check("... a checklist on its own: no image, ticks kept; it's now the newest", code == 200 and r["image"] is None
+              and code2 == 200 and code3 == 200 and r3["write"] == own and r3["write"] != write_id
+              and [i["item"] for i in r3["items"] if i["done"]] == ["attract"])
+        code, r = call("GET", f"/api/disk/checklist?write={write_id}")
+        check("... the write's own ticks are still its own", [i["item"] for i in r["items"] if i["done"]] == ["five_volts"])
+        code, r = call("GET", "/api/disk/checklists")
+        check("... both kept, newest first, with their ticks counted", code == 200
+              and [(x["write"], x["done"], x["of"]) for x in r["checklists"]] == [(own, 1, 10), (write_id, 1, 10)])
         code, r = call("POST", "/api/disk/retry", {"machine": "widget-wars", "label": "NOPE"})
         check("RETRY with no read in progress -> 404", code == 404)
         usb_disk("sde", MiB, "WIDGET", "OLDSPINNER 40", port=5, devnum="8:64", data=os.urandom(MiB))

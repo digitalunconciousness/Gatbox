@@ -9,8 +9,8 @@ bytes: it lists disks from sysfs (gatboxlib.disks), reads the store's sidecars, 
 One disk job at a time; a T48 job doesn't block it. A WRITE is accepted from the Pi's own screen only (the hold there
 is the arm, as for a burn), after a passing TARGET CHECK of the same image and drive in the last 5 minutes, and is
 armed for 30 seconds. The job checks all of that again before it writes. The spool is group gatbox-disk-queue, which
-gatbox-web joins; the devices' group is the job's alone (§9.3). The swap checklist's ticks are kept here, in
-gatbox-web's state, keyed by the write's job id: the store is the job's to write.
+gatbox-web joins; the devices' group is the job's alone (§9.3). The swap checklist is kept here, in gatbox-web's
+state, one record per write (keyed by its job id) or per checklist started on its own: the store is the job's to write.
 """
 import json
 import os
@@ -209,43 +209,96 @@ def write_request(body, local):
             raise Bad(409, f"{device} isn't the drive that was checked: check it again")
         return {"check": last}                      # the job re-validates it before it writes
     now = round(time.time(), 3)
-    return _queue({"op": "write", "image": path, "device": device, "ack": ack, "verify_only": verify_only,
-                   "machine": img.get("machine"), "realm": img.get("realm"),
-                   "armed": {"by": "screen", "at": now, "until": now + ARM_S}}, check=check_first)
+    req = _queue({"op": "write", "image": path, "device": device, "ack": ack, "verify_only": verify_only,
+                  "machine": img.get("machine"), "realm": img.get("realm"),
+                  "armed": {"by": "screen", "at": now, "until": now + ARM_S}}, check=check_first)
+    ident = req["check"].get("identity") or {}
+    _record(req["id"], image=img["image"], device=device, machine=img.get("machine"),
+            target=f"{ident.get('vendor', '')} {ident.get('model', '')}".strip() or None)
+    return req
 
 
 # --- the swap checklist ------------------------------------------------------------------------------------------------
+# One record per write, made when the write is queued, and one per checklist started on its own (a drive written
+# somewhere else, an original put back). Kept in gatbox-web's state (the store is the job's to write), the newest 50.
+BOOK_KEEP = 50
+WRITE_ID = re.compile(r"^[0-9a-f]{12}$")
 
-def _ticks():
+
+def _book_path():
+    return os.path.join(config.CTRL, "disk-checklists.json")
+
+
+def _book():
     try:
-        with open(os.path.join(config.CTRL, "disk-checklists.json"), encoding="utf-8") as f:
-            return json.load(f)
+        with open(_book_path(), encoding="utf-8") as f:
+            b = json.load(f)
     except (OSError, ValueError):
         return {}
+    return b if isinstance(b, dict) else {}
 
 
-def checklist(write_id):
-    """GET /api/disk/checklist?write=ID: the items, and the ticks for that write."""
-    t = _ticks().get(write_id or "", {})
-    return {"write": write_id, "items": [{"when": w, "item": k, "text": text, "done": bool((t.get(k) or {}).get("done")),
-                                          "at": (t.get(k) or {}).get("at")} for w, k, text in CHECKLIST]}
+def _save(book):
+    keep = dict(sorted(book.items(), key=lambda kv: (kv[1] or {}).get("at") or 0, reverse=True)[:BOOK_KEEP])
+    tmp = _book_path() + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(keep, f)
+    os.replace(tmp, _book_path())
+
+
+def _record(write_id, **what):
+    with _lock:
+        b = _book()
+        b[write_id] = dict(what, at=round(time.time(), 3), items={})
+        _save(b)
+
+
+def new_checklist():
+    """POST /api/disk/checklist/new: a checklist on its own."""
+    write_id = uuid.uuid4().hex[:12]
+    _record(write_id, image=None, device=None, target=None)
+    return checklist(write_id)
+
+
+def checklists():
+    """GET /api/disk/checklists: the kept checklists, newest first, with how many lines are ticked."""
+    b = _book()
+    rows = sorted(b.items(), key=lambda kv: (kv[1] or {}).get("at") or 0, reverse=True)
+    return {"checklists": [{"write": k, "image": v.get("image"), "device": v.get("device"), "target": v.get("target"),
+                            "at": v.get("at"), "of": len(CHECKLIST),
+                            "done": sum(1 for t in (v.get("items") or {}).values() if (t or {}).get("done"))}
+                           for k, v in rows]}
+
+
+def checklist(write_id=None):
+    """GET /api/disk/checklist[?write=ID]: that write's checklist, or the newest one; its items and their ticks."""
+    b = _book()
+    if write_id is None:
+        write_id = max(b, key=lambda k: (b[k] or {}).get("at") or 0, default=None)
+    elif write_id not in b:
+        raise Bad(404, f"no checklist for write {write_id!r}")
+    rec = b.get(write_id) or {}
+    ticks = rec.get("items") or {}
+    return {"write": write_id, "image": rec.get("image"), "device": rec.get("device"), "target": rec.get("target"),
+            "at": rec.get("at"),
+            "items": [{"when": w, "item": k, "text": text, "done": bool((ticks.get(k) or {}).get("done")),
+                       "at": (ticks.get(k) or {}).get("at")} for w, k, text in CHECKLIST]}
 
 
 def tick(body):
     """POST /api/disk/checklist {write, item, done}: tick or untick one item. It blocks nothing."""
     body = _obj(body)
     write_id, item, done = body.get("write"), body.get("item"), body.get("done")
-    if not isinstance(write_id, str) or not re.match(r"^[0-9a-f]{12}$", write_id):
+    if not isinstance(write_id, str) or not WRITE_ID.match(write_id):
         raise Bad(400, "write: the write's job id")
     if item not in {k for _, k, _ in CHECKLIST} or not isinstance(done, bool):
         raise Bad(400, "item: one of the checklist's, done: true or false")
     with _lock:
-        t = _ticks()
-        t.setdefault(write_id, {})[item] = {"done": done, "at": round(time.time(), 3)}
-        path = os.path.join(config.CTRL, "disk-checklists.json")
-        with open(path + ".tmp", "w", encoding="utf-8") as f:
-            json.dump(t, f)
-        os.replace(path + ".tmp", path)
+        b = _book()
+        if write_id not in b:
+            raise Bad(404, f"no checklist for write {write_id!r}")
+        b[write_id].setdefault("items", {})[item] = {"done": done, "at": round(time.time(), 3)}
+        _save(b)
     return checklist(write_id)
 
 

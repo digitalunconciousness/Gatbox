@@ -1375,6 +1375,15 @@
       ...(n.interfaces || []).map(i => [i.name, i.ipv4.length ? i.ipv4.join(", ") : (i.up ? "up, no address" : "down")])]);
     tile("Storage", Object.entries(d.disk || {}).map(([k, v]) =>
       [k, v ? `${v.used_pct}% used · ${(v.free / 1e9).toFixed(1)} GB free` : "not there yet (M7)", v && v.used_pct > 90 ? "bad" : null]));
+    const lb = d.library || {}, sz = n => n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : n >= 1e3 ? `${Math.round(n / 1e3)} KB` : `${n || 0} B`;
+    tile("Library", [
+      ["games", lb.seeded ? `${lb.games}${lb.missing ? ` · ${lb.missing} missing a manual` : ""}` : "not set up yet", lb.seeded ? null : "mut"],
+      ...(lb.seeded ? [["documents", `${lb.fetched} on the Pi of ${lb.documents} listed`], ["limits", `${lb.confirmed} confirmed of ${lb.limits}`],
+                       ["ROM images", String(lb.images)]] : []),
+      ["size on the Pi", `${sz((lb.manuals_bytes || 0) + (lb.roms_bytes || 0) + (lb.db_bytes || 0))} · manuals ${sz(lb.manuals_bytes)}, ROM images ${sz(lb.roms_bytes)}`
+                         + (lb.seeded ? `, library ${sz(lb.db_bytes)}` : "")],
+      ["room on /srv", lb.free == null ? "not there yet" : `${(lb.free / 1e9).toFixed(1)} GB free${lb.low ? " · LOW: make room before the next manual or dump" : ""}`,
+       lb.low ? "bad" : null]]);
     const lg = d.logger || {};
     const lt = tile("Logger", [
       ["service", lg.running ? "running" : "NOT RUNNING", lg.running ? "ok" : "bad"],

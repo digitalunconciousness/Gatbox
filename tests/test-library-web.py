@@ -169,6 +169,10 @@ def main():
           not os.path.exists(EXPORT) and wins0["widget-wars"] == {"+5V": [4.75, 5.25]} and wins0["gizmo-racer"] == {"+5V": [4.9, 5.1]})
     check("the manuals tab's answer for a machine names its documents and its note", before["manuals widget-wars"]["docs"]
           and before["specs widget-wars"]["rails"])
+    sysl = get("/api/system")["library"]
+    check("SYSTEM's library numbers before the seed: not set up, but the manuals' size and the room on /srv are there",
+          sysl["seeded"] is False and sysl["manuals_bytes"] > 0 and sysl["roms_bytes"] > 0 and sysl["db_bytes"] == 0 and "games" not in sysl
+          and "low" in sysl)
     check("the games API says the library isn't set up, and refuses to add a game to one",
           get("/api/library") == {"seeded": False}
           and call("POST", "/api/library/games", {"title": "Sprocket Wars", "kind": "video"})[0] == 409)
@@ -268,6 +272,20 @@ def main():
           and get("/api/mame/widget-wars")["versions"][0]["desc"] == "Widget Wars (edited in the library)")
     check("... and the other cabinet that became the same game shows it too",
           get("/api/manuals/widget-wars-cocktail")["note"] == "A note from the library")
+
+    print("SYSTEM's library numbers:")
+    sysl = get("/api/system")["library"]
+    check("seeded: games, documents on the Pi of those listed, limits confirmed of all, ROM images, the database's size",
+          sysl["seeded"] and sysl["games"] == 4 and sysl["documents"] == 4 and sysl["fetched"] == 3 and sysl["limits"] == 3
+          and sysl["confirmed"] == 2 and sysl["images"] == 2 and sysl["db_bytes"] > 0 and sysl["missing"] == 3)
+    from gatboxweb import games as gw_games
+    GB = 1000 ** 3
+    check("running short: under 2 GB free, or 90% used, warns; room to spare doesn't",
+          gw_games.is_low(1 * GB, 60 * GB)              # 1 GB free of 60
+          and gw_games.is_low(5 * GB, 52 * GB)          # 5 GB free of 52: 90.4% used
+          and gw_games.is_low(1.9 * 1024 ** 3, 500 * GB)
+          and not gw_games.is_low(8 * GB, 64 * GB)      # 8 GB free of 64: 87.5% used
+          and not gw_games.is_low(50 * GB, 100 * GB))
 
     print("the games API (the LIBRARY view's):")
     lst = get("/api/library")

@@ -996,6 +996,11 @@ def main():
         hubcard = ("[...document.querySelectorAll('#sy-grid .card')]"
                    ".find(c => (c.querySelector('h2') || {}).textContent === 'Hub')")
         check("system: a Hub tile", q(f"!!({hubcard})"))
+        libcard = ("[...document.querySelectorAll('#sy-grid .card')]"
+                   ".find(c => (c.querySelector('h2') || {}).textContent === 'Library')")
+        check("system: a Library tile, before the library is set up: it says so, with the manuals' size and the room on /srv",
+              settles(c, f"!!({libcard}) && {libcard}.textContent.includes('not set up yet')", 15)
+              and "size on the Pi" in q(f"{libcard}.textContent") and "room on /srv" in q(f"{libcard}.textContent"))
         # Wi-Fi: joining a network nobody coded in, from the Pi's own screen. The card is
         # here and not on a phone, because a join asked for over the hotspot would cut the
         # connection making the request.

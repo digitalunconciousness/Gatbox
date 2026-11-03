@@ -621,8 +621,12 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         no library the tab is each machine's manuals as before and says the library isn't set up. `test-library-web.sh`
         44, `test-dash.sh` 137 (LIBRARY seeded: 11; screenshots 25a–25e, 26); 18 of 21 new guards broken on purpose
         fail a test (two of the three that didn't got tests, the third is equivalent)
-  - [ ] B5–B8, the title search and linking a machine to a game, CHECK + marks, the SYSTEM tile, manuals on request
-        (⏸ a path unit, shown first)
+  - [x] B7, SYSTEM's Library tile: games and how many are missing a manual, documents on the Pi of those listed,
+        limits confirmed of all, ROM images, the size on the Pi (manuals, ROM images, the database) and the room on
+        /srv, with LOW (under 2 GB free, or 90% used) in red. It's there before the library is set up too: the manuals'
+        size and the room are true either way. `/api/system` carries `library`
+  - [ ] B5, the title search and linking a machine to a game · B6, CHECK + marks · B8, manuals on request (⏸ a path
+        unit, shown first)
   - [ ] ⏸ Install diff, shown first (not made yet): `gatbox-web.service` gets `ReadWritePaths=-/srv/gatbox/library` (it
         already has the `gatbox-manuals` group), tmpfiles `d /srv/gatbox/library 2775 root gatbox-manuals -`, and the
         MANIFEST lines already in the bootstrap (`library.py`, `libview.py`, `seed.py`, `libsource.py`, `gatbox-library`)

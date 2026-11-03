@@ -9,11 +9,21 @@ A game's key is its title as a slug and is permanent, so the view shows the prop
 the Pi's own screen only (decision L5: no library edits from a phone on the deck's Wi-Fi). Every write is compare-and-set:
 an edit names the revision it started from, and a game changed meanwhile is a 409, never a silent overwrite.
 """
+import os
+import shutil
+import threading
+import time
+
 from gatboxlib import library as L
 from gatboxlib import libview
 
-from . import libsource, meter, roster
+from . import config, libsource, meter, roster
 from .live import LIVE
+
+LOW_FREE = 2 * 1024 ** 3        # SYSTEM warns below 2 GB free on /srv, or at 90% used
+LOW_USED_PCT = 90
+_sizes = {"at": 0.0, "value": None}
+_sizes_lock = threading.Lock()
 
 
 def _view():
@@ -52,6 +62,51 @@ def status():
     games = sorted((_summary(v, k, names) for k in v.live()), key=lambda g: g["title"].lower())
     return {"seeded": True, "games": games, "count": len(games), "missing": sum(1 for g in games if g["missing"]),
             "bytes": v.lib.size()}
+
+
+def is_low(free, total):
+    """Whether /srv is running short: under 2 GB free, or 90% used."""
+    return free < LOW_FREE or (total > 0 and 100 * (total - free) / total >= LOW_USED_PCT)
+
+
+def _tree_bytes(root):
+    n = 0
+    for dp, _, fs in os.walk(root):
+        for f in fs:
+            try:
+                n += os.path.getsize(os.path.join(dp, f))
+            except OSError:
+                pass
+    return n
+
+
+def _file_sizes():
+    """The manuals and the dump archive, in bytes. A walk of every file, so kept for a minute."""
+    with _sizes_lock:
+        if _sizes["value"] is None or time.monotonic() - _sizes["at"] > 60:
+            _sizes.update(at=time.monotonic(), value={"manuals_bytes": _tree_bytes(config.MANUALS),
+                                                      "roms_bytes": _tree_bytes(config.ROMS)})
+        return _sizes["value"]
+
+
+def storage():
+    """SYSTEM's Library tile: what the library holds, what it takes on the Pi, and whether /srv is running short. The
+    sizes are there before the library is set up too: the manuals are on the Pi either way."""
+    v = libsource.current()
+    out = dict(_file_sizes(), seeded=v is not None, db_bytes=v.lib.size() if v else 0)
+    if v:
+        limits = [r for k in v.live() for r in v.recs("rail_limit", k)]
+        docs = [r for k in v.live() for r in v.recs("document", k)]
+        out.update(games=len(v.live()), documents=len(docs), fetched=sum(1 for r in docs if r["data"]["sha256"]),
+                   limits=len(limits), confirmed=sum(1 for r in limits if r["data"]["confirmed"]),
+                   images=v.lib.counts().get("rom_image", 0),
+                   missing=sum(1 for k in v.live() if not any(r["data"]["sha256"] for r in v.recs("document", k))))
+    try:
+        u = shutil.disk_usage(config.SRV)
+        out.update(free=u.free, total=u.total, low=is_low(u.free, u.total))
+    except OSError:
+        out.update(free=None, total=None, low=False)
+    return out
 
 
 def detail(key):

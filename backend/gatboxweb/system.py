@@ -23,7 +23,7 @@ import subprocess
 import threading
 import time
 
-from . import config, hubs
+from . import config, games, hubs
 from .live import LIVE
 
 CACHE_S = 2.0
@@ -283,7 +283,7 @@ def snapshot():
             "undervoltage_now": (_read(os.path.join(vm, "in0_lcrit_alarm")) == "1") if vm else None,
             "ext5v_v": _vc_volts("EXT5V_V"),
             "disk": disk(), "network": network(), "clock": clock(), "kiosk": kiosk(procs),
-            "logger": logger(procs), "versions": versions(), "hub": hub(),
+            "logger": logger(procs), "versions": versions(), "hub": hub(), "library": games.storage(),
         }
         out["errors"] = dict(_errors)
         _cache[:] = [time.monotonic(), out]

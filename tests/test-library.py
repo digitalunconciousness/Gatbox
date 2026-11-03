@@ -143,7 +143,6 @@ def main():
           and lib.resolve("widget-wars-dupe")["id"] == "widget-wars" and lib.resolve("nope") is None)
     check("... and the survivor can't be pointed back at the retired one (a loop)",
           lib.put("game", "widget-wars", dict(GAME, replaced_by="widget-wars-dupe"), 1)["result"] == "rejected")
-    r = lib.put("rom_image", "b" * 64, {"size": 4, "crc32": "0" * 8, "sha1": "c" * 40, "model_key": "widget-wars"}, 0)
     ver = {"name": "widgetw", "parent": True, "description": "Widget Wars (version 1.2)", "year": "1983", "mfr": "Widgetco",
            "roms": [{"name": "ww1.u10", "size": 524288, "crc": "deadbeef", "sha1": "d" * 40, "region": "user1", "bios": "bios0"}],
            "disks": [{"name": "widgetw", "sha1": "e" * 40, "region": "ide:0:hdd"}]}
@@ -156,8 +155,35 @@ def main():
           and got["disks"][0]["status"] is None)
     check("a ROM with a field nobody defined: rejected",
           lib.put("rom_list", "widget-wars", {"model_key": "widget-wars", "versions": [dict(ver, roms=[{"name": "a", "colour": 1}])]}, 1)["result"] == "rejected")
+    img = lib.put("rom_image", "b" * 64, {"size": 4, "crc32": "0" * 8, "sha1": "c" * 40, "model_key": "widget-wars"}, 0)
     check("a ROM image of a known game is stored by its hash; a missing optional field takes its default",
-          r["result"] == "created" and r["record"]["data"]["verdict"] == "unknown" and r["record"]["data"]["chip"] == "")
+          img["result"] == "created" and img["record"]["data"]["verdict"] == "unknown" and img["record"]["data"]["chip"] == "")
+
+    print("a bulk write (the seed's one transaction):")
+    lib = fresh()
+    g2 = dict(GAME, title="Gizmo Racer")
+    r = lib.bulk([("document", "gizmo/m", {"model_key": "gizmo", "doc_id": "m", "title": "M", "kind": "manual"}),
+                  ("game", "gizmo", g2), ("game", "widget-wars", GAME)], by="seed", create_only=True)
+    check("bulk: games go first, so a game and its document can come in one batch; everything is created",
+          r["created"] == 3 and not r["rejected"] and lib.get("document", "gizmo/m"))
+    r = lib.bulk([("game", "gizmo", dict(g2, notes="changed")), ("game", "widget-wars", GAME)], by="seed", create_only=True)
+    check("create_only: a record already there is kept as it is, never changed", r["kept"] == 2 and r["created"] == 0
+          and lib.get("game", "gizmo")["data"]["notes"] == "")
+    r = lib.bulk([("game", "gizmo", dict(g2, notes="changed"))], by="import")
+    check("an import's bulk updates what differs and keeps what doesn't",
+          r["updated"] == 1 and lib.get("game", "gizmo")["rev"] == 2
+          and lib.bulk([("game", "gizmo", dict(g2, notes="changed"))], by="import")["kept"] == 1)
+    lib.put("document", "gizmo/m", None, 1, deleted=True)
+    r = lib.bulk([("document", "gizmo/m", {"model_key": "gizmo", "doc_id": "m", "title": "M", "kind": "manual"})], by="import")
+    check("a deleted record stays deleted: a bulk write doesn't bring it back", r["kept"] == 1 and lib.get("document", "gizmo/m") is None)
+    before = lib.digest()
+    r = lib.bulk([("game", "fresh-game", dict(GAME, title="Fresh")),
+                  ("document", "nope/m", {"model_key": "nope", "doc_id": "m", "title": "M", "kind": "manual"})], by="seed")
+    check("one record the store refuses in the transaction (a document of a game that isn't there): nothing at all is written",
+          len(r["rejected"]) == 1 and r["created"] == 0 and lib.digest() == before and not lib.get("game", "fresh-game"))
+    r = lib.bulk([("game", "another", dict(GAME, title="Another")), ("game", "Bad Key", GAME)], by="seed")
+    check("one record that isn't valid at all: all refused up front, with its reason",
+          r["rejected"][0]["id"] == "Bad Key" and r["created"] == 0 and not lib.get("game", "another"))
 
     print("the confirmed rule (hard rule 12):")
     lib = seeded()

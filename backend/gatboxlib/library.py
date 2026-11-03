@@ -442,6 +442,52 @@ class Library:
                 raise
         return out
 
+    def bulk(self, writes, by="gatbox", create_only=False, at=None):
+        """Many records in ONE transaction: writes is [(kind, id, data)], games first. A record that isn't there is
+        created. One that is there is kept as it is (create_only: the seed), or updated to this data (an import). A
+        deleted one stays deleted. If any record is refused, nothing at all is written.
+        -> {"created": n, "updated": n, "kept": n, "rejected": [{"kind", "id", "reason"}]}"""
+        out = {"created": 0, "updated": 0, "kept": 0, "rejected": []}
+        checked = []
+        for kind, rid, data in writes:
+            try:
+                if kind not in KINDS:
+                    raise Reject(f"unknown kind {kind!r}")
+                data = validate(kind, data)
+                check_id(kind, rid, data)
+                checked.append((kind, rid, data))
+            except Reject as e:
+                out["rejected"].append({"kind": kind, "id": rid, "reason": str(e)})
+        if out["rejected"]:
+            return out
+        order = {k: i for i, k in enumerate(KINDS)}                  # a game before its documents, limits and facts
+        checked.sort(key=lambda w: order[w[0]])
+        at = at if at is not None else time.time()
+        with closing(self._conn()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            try:
+                for kind, rid, data in checked:
+                    row = c.execute("SELECT * FROM records WHERE kind=? AND id=?", (kind, rid)).fetchone()
+                    cur = self._rec(row) if row else None
+                    if cur and (cur["deleted"] or create_only):
+                        out["kept"] += 1
+                        continue
+                    res = self._put(c, kind, rid, data, cur["rev"] if cur else 0, uuid.uuid4().hex, by, at, False)
+                    if res["result"] in ("created", "updated"):
+                        out[res["result"]] += 1
+                    elif res["result"] == "duplicate":
+                        out["kept"] += 1
+                    else:
+                        out["rejected"].append({"kind": kind, "id": rid, "reason": res.get("reason") or res["result"]})
+                        break
+                c.execute("COMMIT" if not out["rejected"] else "ROLLBACK")
+            except BaseException:
+                c.execute("ROLLBACK")
+                raise
+        if out["rejected"]:
+            out["created"] = out["updated"] = 0
+        return out
+
     def _put(self, c, kind, rid, data, if_rev, uid, by, at, deleted):
         row = c.execute("SELECT * FROM records WHERE kind=? AND id=?", (kind, rid)).fetchone()
         cur = self._rec(row) if row else None

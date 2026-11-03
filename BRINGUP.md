@@ -591,9 +591,16 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   until she says: nothing installed changes.
   - [x] B1, the store: `backend/gatboxlib/library.py` (SQLite, revisions, canonical hashes, compare-and-set, the
         feed and the digest, `model_key`, the confirmed rule) and `docs/contract/library-v1/` (README + vectors).
-        `test-library.sh` 51; each of 17 guards broken on purpose fails a test (the 18th is equivalent)
-  - [ ] B2, the seed (`gatbox-library seed --plan / --apply`, `import`) · B3, the readers · B4–B8, LIBRARY, the
-        title search, CHECK + marks, the SYSTEM tile, manuals on request (⏸ a path unit, shown first)
+        `test-library.sh` 59; each of 17 guards broken on purpose fails a test (the 18th is equivalent). The ROM list
+        keeps year, maker, regions, BIOS and disks (what the chip list shows), and `bulk` writes many records in one
+        transaction
+  - [x] B2, the seed: `tools/gatbox-library seed --plan` (read-only; a plan to your home, never git; it flags slugs that
+        look like one game, ids it had to change, an http address, a confirmed limit nothing matches), `seed --apply`
+        (one transaction; what's there is kept, a deleted record stays deleted, so a second run changes nothing),
+        `import --kind manuals|mame-sets|specs FILE` (edits; never confirms or unconfirms a limit), `status`.
+        `test-seed.sh` 38 on an invented deck; 19 of 20 guards broken on purpose fail a test (the 20th is equivalent)
+  - [ ] B3, the readers · B4–B8, LIBRARY, the title search, CHECK + marks, the SYSTEM tile, manuals on request
+        (⏸ a path unit, shown first)
   - [ ] ⏸ Owner: review the seed plan after B2; see the install diff before anything is installed
 - **The integration plan, phase A (2026-10-28):** `docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md`,
   approved by the owner. Repo-only on this side (nothing installed changes except the guard above).

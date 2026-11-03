@@ -425,6 +425,71 @@ def main():
     check("a read's realm is kept in its sidecar",
           json.load(open(info["stored"]["path"][:-4] + ".json"))["realm"] == "widget-hub")
 
+    print("the dashboard's job (gatbox-disk --job):")
+    spool = f"{T}/spool"
+    os.makedirs(spool)
+
+    def job(req, **extra):
+        if os.path.exists(LOG):
+            os.remove(LOG)
+        with open(f"{spool}/request.json", "w") as f:
+            json.dump(dict(req, id="job1", at=time.time()), f)
+        r = subprocess.run(["python3", TOOL, "--job", f"{spool}/request.json", "--status", f"{spool}/status.json"],
+                           capture_output=True, text=True, env=env(**extra), timeout=120)
+        gone = not os.path.exists(f"{spool}/request.json") and not os.path.exists(f"{spool}/running.json")
+        return r.returncode, json.load(open(f"{spool}/status.json")), gone
+
+    card2 = os.urandom(MiB)
+    usb_disk("sdb", len(card2), "Generic", "Card Reader SD", port=4, devnum="8:16", data=card2)
+    ident = next(d for d in json.loads(disk("list", "--json")[1])["disks"] if d["name"] == "sdb")["identity"]
+    code, st, gone = job({"op": "read", "device": "sdb", "identity": ident, "machine": "widget-wars", "label": "WW-JOB",
+                          "media": "sd", "realm": "widget-hub", "note": "from the 7\""})
+    side = json.load(open(st["stored"]["path"][:-4] + ".json")) if st.get("stored") else {}
+    check("a READ job: claimed, done, stored, status written, the spool emptied", code == 0 and gone
+          and st["state"] == "done" and st["op"] == "read" and st["job"] == "job1" and st["stored"]["new"])
+    check("... the realm and note gatbox-web sent are in the sidecar", side.get("realm") == "widget-hub"
+          and side.get("note") == "from the 7\"")
+    other = dict(ident, model="SOMETHING ELSE")
+    code, st, gone = job({"op": "read", "device": "sdb", "identity": other, "machine": "widget-wars", "label": "WW-JOB2",
+                          "media": "sd"})
+    check("a READ job for a drive swapped since it was picked: stopped, nothing read", st["state"] == "stopped"
+          and "different drive from the one picked" in st["error"] and calls() == [] and gone)
+    usb_disk("sdh", 8 * MiB, "WIDGET", "WIDGET SSD 64G C", port=8, devnum="8:112")
+    tident = next(d for d in json.loads(disk("list", "--json")[1])["disks"] if d["name"] == "sdh")["identity"]
+    code, st, gone = job({"op": "check", "image": image, "device": "sdh", "identity": tident})
+    check("a CHECK job: target_ok, blank, the time it passed", st["state"] == "done" and st["op"] == "check"
+          and st["target_ok"] and st["contents"]["blank"] and not st["needs_ack"] and st["at"] > 0)
+    checked = st
+    now = time.time()
+    code, st, gone = job({"op": "write", "check": checked, "ack": False, "machine": "widget-wars", "realm": "widget-hub",
+                          "armed": {"by": "screen", "at": now, "until": now - 1}})
+    check("a WRITE job whose 30-second arm ran out: stopped, nothing written", st["state"] == "stopped"
+          and "arm ran out" in st["error"] and open(f"{DEV}/sdh", "rb").read(len(src)) == bytes(len(src)))
+    stale = dict(checked, at=checked["at"] - 301)
+    code, st, gone = job({"op": "write", "check": stale, "ack": False,
+                          "armed": {"by": "screen", "at": now, "until": time.time() + 30}})
+    check("a WRITE job with a check more than 5 minutes old: stopped", st["state"] == "stopped"
+          and "more than 5 minutes old" in st["error"])
+    code, st, gone = job({"op": "write", "check": checked, "ack": False, "machine": "widget-wars", "realm": "widget-hub",
+                          "armed": {"by": "screen", "at": time.time(), "until": time.time() + 30}})
+    last = [json.loads(l) for l in open(f"{STORE}/writes.jsonl")][-1]
+    check("an armed WRITE job: written, verified twice, logged with the arm and the realm", st["state"] == "done"
+          and st["verified"] and open(f"{DEV}/sdh", "rb").read(len(src)) == src and last["state"] == "verified"
+          and last["armed"]["by"] == "screen" and last["realm"] == "widget-hub")
+    old2 = os.urandom(MiB)
+    usb_disk("sde", len(old2), "WIDGET", "OLDSPINNER 40", port=5, devnum="8:64", data=old2)
+    ident = next(d for d in json.loads(disk("list", "--json")[1])["disks"] if d["name"] == "sde")["identity"]
+    code, st, gone = job({"op": "read", "device": "sde", "identity": ident, "machine": "widget-wars", "label": "WW-OLD2",
+                          "media": "hdd"}, FAKE_DDRESCUE_BAD="0:512")
+    check("a READ job on bad areas: stopped with needs_retry, so the 7\" offers RETRY", st["state"] == "stopped"
+          and st.get("needs_retry") is True and st["ddrescue"]["bad_areas"] == 1)
+    code, st, gone = job({"op": "retry", "machine": "widget-wars", "label": "WW-OLD2"},
+                         FAKE_DDRESCUE_BAD="0:512", FAKE_DDRESCUE_HEAL=1)
+    check("a RETRY job: -r3 on the same map, then stored", st["state"] == "done" and calls()[0].startswith("-r3 ")
+          and st["stored"]["new"])
+    code, st, gone = job({"op": "format"})
+    check("an unknown job: stopped, saying so", st["state"] == "stopped" and "unknown job" in st["error"] and gone)
+
     print(f"\ndisk: {passed} passed, {failed} failed")
     shutil.rmtree(T, ignore_errors=True)
     return 0 if failed == 0 else 1

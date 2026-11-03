@@ -598,7 +598,19 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         `writes.jsonl`). `test-disk.sh`: 53, and each of 11 guards broken on purpose fails at least one of them.
         Still to come once Task 0 shows them: the drive's own serial and CHS, the HDD health line
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
-  - [ ] Tasks 4–7: job mode and install (⏸ system config first), gatbox-web, the DISK tab, docs
+  - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
+        to §5 and **not installed**: not in the MANIFEST until Task 4
+  - [ ] Task 4 ⏸: the units, the udev rule, sysusers (two groups), tmpfiles, the store's mount unit from
+        `/etc/gatbox/disks.conf`, `gddrescue` + `mame-tools`; the owner sees the system-config diff first (hard rule 5)
+  - [x] Task 5, gatbox-web: `/api/disk` (+ images, read, retry, check, write, checklist, checklists, checklist/new),
+        SSE `disk`, a write from the Pi's own screen only, after a passing check ≤ 5 min old; one checklist record per
+        write. In the MANIFEST (`gatboxweb/disk.py`) and harmless before Task 4: the tab lists the USB drives and says
+        IMAGE STORE NOT CONNECTED and that the disk service isn't installed; READ and WRITE are refused
+  - [x] Task 6, the DISK tab: READ (source → what it is → machine + label → READ → STORED / BAD AREAS + RETRY),
+        WRITE (image → target → TARGET CHECK → OVERWRITE IT for a non-blank drive → HOLD 3 S → VERIFIED), the swap
+        checklist, the store's line, the images; a phone sees the state only. `test-disk.sh` 93, `test-dash.sh` 145
+        (DISK: 18, against `tests/fakedisk.py`; screenshots 23a–23i, 24)
+  - [ ] Task 7: CLAUDE.md (hard rule 6 as §5 words it, Owned, installed list), a journal entry
 - **The integration plan, phase A (2026-10-28):** `docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md`,
   approved by the owner. Repo-only on this side (nothing installed changes except the guard above).
   - [x] Contract v1 is GATBOX's now: the README takes the hub's 10-26 additions and writes down the Phase 8 extras

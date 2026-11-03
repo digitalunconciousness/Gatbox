@@ -1,0 +1,11 @@
+# NOT INSTALLED YET. Task 4 of docs/plans/2026-11-02-disk-imaging.md adds this to the bootstrap's MANIFEST, with the
+# udev rule, sysusers, tmpfiles and the image store's mount unit, after Task 0 and the owner's OK (hard rule 5).
+[Unit]
+Description=GATBOX: run a disk job when the dashboard asks for one (a request in /var/spool/gatbox-disk)
+
+[Path]
+PathExists=/var/spool/gatbox-disk/request.json
+Unit=gatbox-disk.service
+
+[Install]
+WantedBy=multi-user.target

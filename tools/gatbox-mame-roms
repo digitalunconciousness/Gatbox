@@ -12,6 +12,9 @@ version MAME knows (the parent and its clones: revisions, regions) comes along, 
   gatbox-mame-roms --build OUT     write the checklist (JSON) from `mame -listxml`: a minute or two on the Pi, so the
                                    bootstrap runs it at install, only when MAME or the list changed
   gatbox-mame-roms --check OUT     exit 0 if OUT is up to date with this MAME and this list, 1 if not
+  gatbox-mame-roms --titles OUT    write MAME's title list (set, description, year, maker, parent for every game: no devices,
+                                   no BIOS sets) for the LIBRARY's title search; built once per MAME version
+  gatbox-mame-roms --titles-check OUT   exit 0 if OUT was built from this MAME
   gatbox-mame-roms SLUG            print one machine's checklist, ticked from the dump archive
 
 No ROM files are involved anywhere: MAME carries each chip's size, CRC32 and SHA-1 in its own driver list.
@@ -117,6 +120,46 @@ def build(out):
           f"with a MAME set ({n} versions) -> {out}")
 
 
+def titles_key():
+    try:
+        return mame_version()
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def build_titles(out):
+    """Every game MAME knows, one row each: [set, description, year, manufacturer, parent set or ""]. A device or a BIOS set
+    isn't a game anyone owns, so they're left out. Hashes and ROM names aren't here: those stay in the game's own chip list."""
+    rows = []
+    p = subprocess.Popen([MAME, "-listxml"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    for _, el in ET.iterparse(p.stdout, events=("end",)):
+        if el.tag != "machine":
+            continue
+        if el.get("isdevice") != "yes" and el.get("isbios") != "yes" and el.get("runnable") != "no":
+            rows.append([el.get("name"), el.findtext("description") or "", el.findtext("year") or "",
+                         el.findtext("manufacturer") or "", el.get("cloneof") or ""])
+        el.clear()
+    if p.wait() != 0 and not rows:
+        sys.exit(f"{MAME} -listxml failed")
+    doc = {"meta": {"mame": titles_key(), "built": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "count": len(rows)}, "titles": rows}
+    tmp = out + ".tmp"
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(doc, f, separators=(",", ":"), ensure_ascii=False)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, out)
+    print(f"gatbox-mame-roms: {len(rows)} titles -> {out}")
+
+
+def titles_up_to_date(out):
+    try:
+        with open(out, encoding="utf-8") as f:
+            built = json.load(f)["meta"]["mame"]
+    except (OSError, ValueError, KeyError):
+        return False
+    return built is not None and built == titles_key()
+
+
 def up_to_date(out):
     try:
         with open(out, encoding="utf-8") as f:
@@ -169,11 +212,17 @@ def main():
     ap.add_argument("slug", nargs="?", help="print this machine's checklist")
     ap.add_argument("--build", metavar="OUT", help="build the checklist JSON")
     ap.add_argument("--check", metavar="OUT", help="exit 0 if OUT is up to date")
+    ap.add_argument("--titles", metavar="OUT", help="build MAME's title list JSON")
+    ap.add_argument("--titles-check", metavar="OUT", help="exit 0 if OUT was built from this MAME")
     ap.add_argument("--from", dest="src", default="/usr/local/share/gatbox/mame-roms.json",
                     help="the checklist to print from (default: the installed one)")
     a = ap.parse_args()
     if a.check:
         sys.exit(0 if up_to_date(a.check) else 1)
+    if a.titles_check:
+        sys.exit(0 if titles_up_to_date(a.titles_check) else 1)
+    if a.titles:
+        return build_titles(a.titles)
     if a.build:
         return build(a.build)
     if a.slug:

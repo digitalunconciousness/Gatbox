@@ -47,7 +47,7 @@ def env(**extra):
     e = dict(os.environ, GATBOX_DATA=f"{T}/data", GATBOX_STATE=STATE, STATE_DIRECTORY=STATE, CACHE_DIRECTORY=f"{T}/cache",
              GATBOX_MANUALS=f"{T}/manuals", GATBOX_ROMS=f"{T}/roms", GATBOX_MAME_ROMS=f"{T}/mame-roms.json",
              GATBOX_LIBRARY=LIB, GATBOX_LOGDIR=f"{T}/log", GATBOX_RUNDIR=f"{T}/run", GATBOX_WEB_PORT=str(PORT),
-             GATBOX_SYNC_STATE=f"{T}/sync", MPLCONFIGDIR=f"{T}/cache/mpl")
+             GATBOX_SYNC_STATE=f"{T}/sync", MPLCONFIGDIR=f"{T}/cache/mpl", GATBOX_MAME_TITLES=f"{T}/mame-titles.json")
     e.update(extra)
     return e
 
@@ -178,6 +178,8 @@ def drop_library():
 
 def main():
     build_deck(T, stale=False)
+    subprocess.run([sys.executable, os.path.join(REPO, "tools/gatbox-mame-roms"), "--titles", f"{T}/mame-titles.json"], check=True,
+                   capture_output=True, env=dict(os.environ, GATBOX_MAME=os.path.join(REPO, "tests/fake-mame")))
     # a PDF in the cocktail cabinet's own folder, for the merge at the end
     pdf = b"%PDF-1.4 cocktail notes"
     write(f"{T}/manuals/widget-wars-cocktail/cocktail-notes.pdf", pdf, True)
@@ -446,6 +448,68 @@ def main():
         check("a mark from a phone on the network: 403; the check itself reads",
               call("POST", f"/api/library/images/{sha_a}/mark", {"verdict": "good"}, base=B.replace("127.0.0.1", lan))[0] == 403
               and call("GET", f"/api/library/check?image=widget-wars/{first_img}", base=B.replace("127.0.0.1", lan))[0] == 200)
+
+    print("the title search (MAME's own list, offline):")
+    mame_env = dict(os.environ, GATBOX_MAME=os.path.join(REPO, "tests/fake-mame"))
+    tool = [sys.executable, os.path.join(REPO, "tools/gatbox-mame-roms")]
+    built = json.load(open(f"{T}/mame-titles.json"))
+    check("gatbox-mame-roms --titles: every game MAME lists, and no device or BIOS set",
+          [r[0] for r in built["titles"]] == ["sonic", "sonicp", "area51", "area51t", "pacman"] and built["meta"]["count"] == 5
+          and built["meta"]["mame"] == "0.276 (mame0276)")
+    check("--titles-check: up to date for this MAME, out of date for a newer one",
+          subprocess.run(tool + ["--titles-check", f"{T}/mame-titles.json"], env=mame_env, check=False).returncode == 0
+          and subprocess.run(tool + ["--titles-check", f"{T}/mame-titles.json"], env=dict(mame_env, FAKE_MAME_VERSION="0.277"),
+                             check=False).returncode == 1)
+    t = get("/api/library/titles?q=pac+man")
+    check("search 'pac man': the game, its title without the maker's parenthesis, the key it would get, and its MAME set",
+          t["built"] and t["mame"] == "0.276 (mame0276)" and t["results"][0]["set"] == "pacman" and t["results"][0]["title"] == "Pac-Man"
+          and t["results"][0]["key"] == "pac-man" and t["results"][0]["year"] == 1980 and t["results"][0]["in_library"] is None)
+    t = get("/api/library/titles?q=sonic")
+    check("search 'sonic': the parent before its clone; the version in the description isn't part of the title",
+          [r["set"] for r in t["results"]] == ["sonic", "sonicp"] and t["results"][0]["title"] == "SegaSonic The Hedgehog"
+          and t["results"][1]["clone_of"] == "sonic")
+    check("search with one letter: 400; with nothing in MAME's list, or only some of the words: no results; capitals and hyphens don't matter",
+          call("GET", "/api/library/titles?q=a")[0] == 400 and get("/api/library/titles?q=zzzzzz")["results"] == []
+          and get("/api/library/titles?q=sonic+zzzz")["results"] == []
+          and get("/api/library/titles?q=AREA-51")["results"][0]["set"] == "area51")
+    from gatboxweb import config as gw_config
+    from gatboxweb import titles as gw_titles
+    keep = gw_config.MAME_TITLES
+    gw_config.MAME_TITLES = f"{T}/no-such-titles.json"
+    unbuilt = gw_titles.search("pac")
+    gw_config.MAME_TITLES = keep
+    check("before the list is built: it says so and why, and finds nothing", unbuilt["built"] is False and unbuilt["results"] == []
+          and "install builds it" in unbuilt["why"])
+    c, g = call("POST", "/api/library/games", {"title": "Pac-Man", "mfr": "Namco (Midway license)", "year": 1980, "kind": "video",
+                                               "key": "pac-man", "mame_set": "pacman"})
+    mm = L.Library(LIB, create=False).get("mame", "pac-man")
+    check("ADD GAME from a MAME hit: the game, and its MAME set noted for a dump to settle",
+          c == 201 and g["key"] == "pac-man" and g["mame"] == "pacman" and mm["data"]["set"] == "pacman" and mm["data"]["status"] == "check")
+    again = get("/api/library/titles?q=pac+man")["results"][0]
+    check("search again: the game is already in the library, found by its MAME set; its natural key is taken, so a new one would get the maker",
+          again["in_library"] == "pac-man" and again["key"] == "pac-man-namco-midway-license")
+
+    print("linking a machine to a game:")
+    c, r = call("POST", "/api/library/games/widget-wars/machines", {"slug": "ws-9"})
+    check("a machine already linked to another game: 409, naming it; nothing changed", c == 409 and "ws-9" in r["error"]
+          and [m["slug"] for m in get("/api/library/games/ws-9")["machines"]] == ["ws-9"])
+    c, g = call("POST", "/api/library/games/widget-wars/machines", {"slug": "ws-9", "replace": True})
+    check("replacing it on purpose: the machine is now that game's, and reads its manuals", c == 200
+          and "ws-9" in [m["slug"] for m in g["machines"]] and get("/api/manuals/ws-9")["docs"] == get("/api/manuals/widget-wars")["docs"])
+    check("... and its limits reach the logger: the same windows as the game's machine, at once",
+          windows("ws-9") == windows("widget-wars") and windows("ws-9"))
+    c, _ = call("DELETE", "/api/library/games/widget-wars/machines/ws-9")
+    check("UNLINK: the machine is its own game again and the logger drops the limits it borrowed",
+          c == 200 and get("/api/manuals/ws-9")["docs"] == [] and not windows("ws-9"))
+    check("unlinking what isn't linked: 404; a machine not on the roster: 404; a game that isn't there: 404",
+          [call("DELETE", "/api/library/games/widget-wars/machines/ws-9")[0],
+           call("POST", "/api/library/games/widget-wars/machines", {"slug": "nope"})[0],
+           call("POST", "/api/library/games/nope/machines", {"slug": "ws-9"})[0]] == [404, 404, 404])
+    lan = next((a for a in _lan_addrs() if "." in a and not a.startswith("127.")), None)
+    if lan:
+        check("from a phone on the network: link and unlink are 403",
+              call("POST", "/api/library/games/widget-wars/machines", {"slug": "ws-9"}, base=B.replace("127.0.0.1", lan))[0] == 403
+              and call("DELETE", "/api/library/games/widget-wars/machines/ws-9", base=B.replace("127.0.0.1", lan))[0] == 403)
 
     print("limits and retirement in the library reach the logger:")
     lib = L.Library(LIB, create=False)

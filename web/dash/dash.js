@@ -1665,7 +1665,8 @@
     const btn = (label, cls, f, off) => { const b = el("button", cls, label); b.disabled = !!off; b.addEventListener("click", f); return b; };
     add(row, btn(`ALL GAMES (${d.count})`, null, () => pickGame(false)),
         btn(`MISSING (${d.missing})`, d.missing ? "warn" : null, () => pickGame(true), !d.missing));
-    if (S.local) add(row, btn("+ ADD GAME", null, addGame), btn("EDIT GAME", null, () => editGame(g), !g));
+    if (S.local) add(row, btn("+ ADD GAME", null, addGame), btn("EDIT GAME", null, () => editGame(g), !g),
+                     slug && !g ? btn("FIND GAME (MAME)", "primary", () => findGame(slug)) : null);
     head.appendChild(row);
     const info = el("div", "lb-game");
     if (g) {
@@ -1673,7 +1674,8 @@
           + (g.machines.length ? ` · machines: ${g.machines.map(m => m.name).join(", ")}` : " · no machine")));
       if (g.why && g.missing) info.appendChild(el("div", "warn", "Why no manual: " + g.why));
     } else if (slug) {
-      info.appendChild(el("div", "mut", "Not in the game library yet: ALL GAMES picks one, or + ADD GAME makes it."));
+      info.appendChild(el("div", "warn", `${machineName(slug)} has no game in the library yet. ` + (S.local ? "FIND GAME (MAME) searches MAME's list; ALL GAMES picks one; + ADD GAME types it in."
+                                                                                                      : "Pick it on the Pi's own screen.")));
     }
     head.appendChild(info);
   }
@@ -1686,11 +1688,60 @@
       sub: [g.mfr, g.year].filter(Boolean).join(" ") + (onlyMissing ? ` · ${g.why || "no reason noted"}` : ` · ${docsLine(g)}`)
            + (g.machines.length ? "" : " · no machine"), subCls: g.missing ? "warn" : null})), (gameOf(mnSlug()) || {}).key);
     if (!pick) return;
-    const g = games.find(x => x.key === pick);
+    const g = games.find(x => x.key === pick), cur = mnSlug();
+    if (S.local && cur && !gameOf(cur)) {
+      const how = await choose(g.title, `${machineName(cur)} has no game yet. Open ${g.title}, or use it for ${machineName(cur)}?`,
+                               [["use", `USE IT FOR ${machineName(cur).toUpperCase()}`, true], ["open", "JUST OPEN IT"]]);
+      if (!how) return;
+      if (how === "use") return linkMachine(cur, g.key, g.title);
+    }
     M.slug = g.primary; M.name = g.title;
     loadManuals();
   }
+  const machineName = slug => (M.slug === slug ? M.name : null) || (S.st && S.st.machine === slug && S.st.machine_name) || slug;
+  async function linkMachine(slug, key, title) {
+    try {
+      await api("POST", `/api/library/games/${encodeURIComponent(key)}/machines`, {slug});
+      toast(`${machineName(slug)} now uses ${title}`);
+    } catch (e) { fail(e); }
+    LB.data = null;
+    loadManuals();
+  }
+  // FIND GAME: MAME's own list (offline), for a machine the library has no game for. A hit becomes a game (with its MAME
+  // set noted for a dump to settle) and is linked to the machine; a game already in the library is just linked.
+  async function findGame(slug) {
+    const q = await keypad({title: "Search MAME's list for this game's title", max: 60, value: machineName(slug)});
+    if (!q) return;
+    let r;
+    try { r = await api("GET", "/api/library/titles?q=" + encodeURIComponent(q)); } catch (e) { return fail(e); }
+    if (!r.built) return toast(r.why, "warn", 8000);
+    if (!r.results.length) return toast(`Nothing in MAME's list for "${q}". + ADD GAME types it in (pinball, and games MAME lacks).`, "warn", 7000);
+    const pick = await pickFrom(`MAME: ${r.count} for "${q}"`, r.results.map(x => ({
+      key: x.set, title: x.title, find: [x.desc.toLowerCase(), x.set],
+      sub: `${[x.mfr, x.year].filter(Boolean).join(" ")} · set ${x.set}${x.clone_of ? ` (clone of ${x.clone_of})` : ""}${x.in_library ? ` · already in the library` : ""}`,
+      subCls: x.in_library ? "warn" : null})));
+    if (!pick) return;
+    const x = r.results.find(y => y.set === pick);
+    if (x.in_library) {
+      const ok = await choose(`${x.title} is in the library`, `Use it for ${machineName(slug)}?`, [["ok", `USE IT FOR ${machineName(slug).toUpperCase()}`, true]]);
+      if (ok) linkMachine(slug, x.in_library, x.title);
+      return;
+    }
+    const ok = await choose(`Add ${x.title}`, `Its key will be ${x.key}: its permanent ID in the library. MAME set ${x.clone_of || x.set}. ` +
+                            `Then ${machineName(slug)} uses it.`, [["ok", "ADD IT AND USE IT", true]]);
+    if (!ok) return;
+    try {
+      const body = {title: x.title, mfr: x.mfr, kind: "video", key: x.key, mame_set: x.clone_of || x.set};
+      if (x.year) body.year = x.year;
+      const g = await api("POST", "/api/library/games", body);
+      await api("POST", `/api/library/games/${encodeURIComponent(g.key)}/machines`, {slug});
+      toast(`ADDED ${g.title} · key ${g.key} · ${machineName(slug)} uses it`);
+    } catch (e) { fail(e); }
+    LB.data = null;
+    loadManuals();
+  }
   async function addGame() {
+    const cur = mnSlug(), orphan = cur && !gameOf(cur) ? cur : null;       // the machine in view, if it has no game yet
     const title = await keypad({title: "The game's title", max: 120});
     if (!title) return;
     const kind = await choose(`${title}: what kind of game?`, "A pinball's key starts with pin-.",
@@ -1712,8 +1763,10 @@
     try {
       const g = await api("POST", "/api/library/games", body);
       LB.data = null;
-      M.slug = g.key; M.name = g.title;
       toast(`ADDED ${g.title} · key ${g.key}`);
+      if (orphan && await choose(`Use ${g.title} for ${machineName(orphan)}?`, `${machineName(orphan)} has no game yet.`,
+                                 [["use", `USE IT FOR ${machineName(orphan).toUpperCase()}`, true]])) return linkMachine(orphan, g.key, g.title);
+      M.slug = g.key; M.name = g.title;
       loadManuals();
     } catch (e) { fail(e); }
   }

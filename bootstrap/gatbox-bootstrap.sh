@@ -98,6 +98,7 @@ backend/gatboxweb/mame.py                       /usr/local/lib/gatbox/gatboxweb/
 backend/gatboxweb/libsource.py                  /usr/local/lib/gatbox/gatboxweb/libsource.py          644
 backend/gatboxweb/games.py                      /usr/local/lib/gatbox/gatboxweb/games.py              644
 backend/gatboxweb/rom_check.py                  /usr/local/lib/gatbox/gatboxweb/rom_check.py          644
+backend/gatboxweb/titles.py                     /usr/local/lib/gatbox/gatboxweb/titles.py             644
 backend/gatboxweb/manuals.py                    /usr/local/lib/gatbox/gatboxweb/manuals.py            644
 backend/gatboxweb/wifi.py                       /usr/local/lib/gatbox/gatboxweb/wifi.py               644
 backend/gatboxweb/orders.py                     /usr/local/lib/gatbox/gatboxweb/orders.py             644
@@ -144,6 +145,10 @@ parts_ok() { head -n 1 "$PARTS_LIST" 2>/dev/null | grep -qxF "# minipro $(minipr
 MAME_ROMS=/usr/local/share/gatbox/mame-roms.json
 mame_roms_wanted() { [ -f "$REPO/data/gatbox-mame-sets.json" ] && [ -x /usr/games/mame ]; }
 mame_roms_ok() { GATBOX_DATA="$REPO/data" python3 "$REPO/tools/gatbox-mame-roms" --check "$MAME_ROMS"; }
+# MAME's own title list for the LIBRARY's title search: every game's description, year and maker, once per MAME version
+MAME_TITLES=/usr/local/share/gatbox/mame-titles.json
+mame_titles_wanted() { [ -x /usr/games/mame ]; }
+mame_titles_ok() { python3 "$REPO/tools/gatbox-mame-roms" --titles-check "$MAME_TITLES"; }
 MINIPRO_URL=https://gitlab.com/DavidGriffith/minipro.git
 MINIPRO_SRC=/usr/local/src/minipro
 # gatbox-web's fonts: Chakra Petch + Share Tech Mono (SIL OFL), the project's design-token fonts, pinned to one
@@ -275,6 +280,7 @@ if [ "${1:-}" = "--check" ]; then
         && DIFFS+=("group      $(id -un) += gatbox-manuals (the manuals folder)")
     command -v minipro >/dev/null && ! parts_ok && DIFFS+=("generate   $PARTS_LIST")
     mame_roms_wanted && ! mame_roms_ok && DIFFS+=("generate   $MAME_ROMS (from mame -listxml: a minute or two)")
+    mame_titles_wanted && ! mame_titles_ok && DIFFS+=("generate   $MAME_TITLES (MAME's title list, once per MAME version: a minute or two)")
     if ((${#DIFFS[@]})); then printf 'a run would change:\n'; printf '  %s\n' "${DIFFS[@]}"; exit 3; fi
     echo "nothing to change: this Pi matches the checkout"
     exit 0
@@ -541,6 +547,14 @@ if mame_roms_wanted && ! mame_roms_ok; then
     HOME=$mh /usr/local/bin/gatbox-mame-roms --build "$MAME_ROMS" 2>&1 | sed 's/^/     /' || true
     rm -rf "$mh"
     mame_roms_ok || warn "the MAME ROM checklist didn't build: the dashboard shows machines without it"
+fi
+# MAME's title list, for LIBRARY -> FIND GAME. Once per MAME version, built the same way.
+if mame_titles_wanted && ! mame_titles_ok; then
+    log "building MAME's title list from mame -listxml (a minute or two)"
+    mh=$(mktemp -d)
+    HOME=$mh /usr/local/bin/gatbox-mame-roms --titles "$MAME_TITLES" 2>&1 | sed 's/^/     /' || true
+    rm -rf "$mh"
+    mame_titles_ok || warn "MAME's title list didn't build: LIBRARY's FIND GAME has nothing to search"
 fi
 
 # 9 ---------------------------------------------------------------------------

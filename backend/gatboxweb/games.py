@@ -9,6 +9,7 @@ A game's key is its title as a slug and is permanent, so the view shows the prop
 the Pi's own screen only (decision L5: no library edits from a phone on the deck's Wi-Fi). Every write is compare-and-set:
 an edit names the revision it started from, and a game changed meanwhile is a 409, never a silent overwrite.
 """
+import json
 import os
 import shutil
 import threading
@@ -109,6 +110,52 @@ def storage():
     return out
 
 
+def _slug_keys(v):
+    return libview.slug_keys(v.lib)
+
+
+def link(key, body, local):
+    """POST /api/library/games/<key>/machines {slug, replace?}: this Pi's machine is this game, so it reads the game's manuals,
+    limits, chips and images. A machine a hub knows is linked in its app (its model_key), not here."""
+    if not local:
+        raise meter.Bad(403, "the library is edited on the Pi's own screen")
+    body = _fields(body)
+    v = _view()
+    slug = body.get("slug")
+    if slug not in (roster.local_slugs() or set()):
+        raise meter.Bad(404, f"{slug!r} isn't a machine on this Pi's roster (a hub's machine is linked in its app)")
+    game = v.lib.resolve(key)
+    if game is None:
+        raise meter.Bad(404, f"no game {key!r} in the library")
+    with libsource._lock:
+        sk = _slug_keys(v)
+        have = v.key_for(slug)
+        if have and have != game["id"] and body.get("replace") is not True:
+            raise meter.Bad(409, f"{slug} is already linked to {have!r}: replace it only if that was a mistake")
+        sk[slug] = game["id"]
+        v.lib.set_meta("slug_keys", json.dumps(sk, sort_keys=True))
+    libsource.refresh_export()                              # the machine's limits now come from this game
+    LIVE.emit("library", {"key": game["id"], "action": "linked", "slug": slug})
+    return detail(game["id"])
+
+
+def unlink(key, slug, local):
+    """DELETE /api/library/games/<key>/machines/<slug>: undo a link made here. A machine whose slug is the game's key is
+    that game by name and can't be unlinked."""
+    if not local:
+        raise meter.Bad(403, "the library is edited on the Pi's own screen")
+    v = _view()
+    with libsource._lock:
+        sk = _slug_keys(v)
+        if sk.get(slug) is None:
+            raise meter.Bad(404, f"{slug} isn't linked to a game by a link that can be undone")
+        del sk[slug]
+        v.lib.set_meta("slug_keys", json.dumps(sk, sort_keys=True))
+    libsource.refresh_export()
+    LIVE.emit("library", {"key": key, "action": "unlinked", "slug": slug})
+    return detail(key) if key in _view().games else {"slug": slug, "linked": False}
+
+
 def detail(key):
     v = _view()
     if key not in v.games:
@@ -152,6 +199,10 @@ def add(body, local):
     data = {k: body[k] for k in ("title", "mfr", "year", "kind", "notes") if k in body}
     res = v.lib.put("game", key, data, 0, by="gatbox")
     _refused(res)
+    mame_set = body.get("mame_set")
+    if mame_set is not None:                               # found by title search: MAME's set, to be settled by a dump
+        _refused(v.lib.put("mame", key, {"model_key": key, "set": mame_set, "prefer": mame_set, "status": "check",
+                                         "why": "found by the title search: a dump of one of its chips settles which version"}, 0, by="gatbox"))
     LIVE.emit("library", {"key": key, "action": "added"})
     return detail(key)
 

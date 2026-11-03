@@ -637,7 +637,20 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         that has a dump, the marks inside the sheet, and a "ROM images" card on each game in LIBRARY. A phone reads.
         `test-library-web.sh` 64, `test-dash.sh` 143 (screenshots 27a–27c, 28), `test-seed.sh` 40; 16 of 16 guards broken
         on purpose fail a test
-  - [ ] B5, the title search and linking a machine to a game · B8, manuals on request (⏸ a path unit, shown first)
+  - [x] B5, the title search and linking a machine to a game. `gatbox-mame-roms --titles OUT` writes MAME's own game list
+        (set, description, year, maker, parent; no devices, no BIOS sets) once per MAME version, and the bootstrap
+        builds it like the chip list (shown in `--check`). `GET /api/library/titles?q=` searches it offline: every word
+        must match, the exact title first, parents before clones; each hit carries the key a new game would get and the
+        game in the library that already is it. `POST /api/library/games` takes a `mame_set` (noted for a dump to settle);
+        `POST /api/library/games/<key>/machines {slug}` links a machine on this Pi's roster to a game (409 if it already
+        has another, unless `replace`), and `DELETE .../machines/<slug>` undoes it; both refresh the logger's limits and
+        are the Pi's own screen only. On the 7": a machine with no game says so and offers FIND GAME (MAME) (type a
+        title, pick the hit, ADD IT AND USE IT); ALL GAMES offers USE IT FOR <machine>; ADD GAME offers it too.
+        `test-library-web.sh` 78, `test-dash.sh` 147 (screenshots 29a–29d); 17 of 17 guards broken on purpose fail a
+        test. **Not done:** a game added after the seed has its MAME set noted but no chip list until MAME's list is
+        built from the library's games too (the chip list is still built from `gatbox-mame-sets.json`): the CHECK says
+        "NO CHIP LIST" until then
+  - [ ] B8, manuals on request (⏸ a path unit, shown first)
   - [ ] ⏸ Install diff, shown first (not made yet): `gatbox-web.service` gets `ReadWritePaths=-/srv/gatbox/library` (it
         already has the `gatbox-manuals` group), tmpfiles `d /srv/gatbox/library 2775 root gatbox-manuals -`, and the
         MANIFEST lines already in the bootstrap (`library.py`, `libview.py`, `seed.py`, `libsource.py`, `gatbox-library`)

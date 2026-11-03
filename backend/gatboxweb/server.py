@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import (captures, config, devices, dump, games, libsource, mame, manuals, meter, orders, phone, report,
-               rom_check, roster, sessions, system, wifi)
+               rom_check, roster, sessions, system, titles, wifi)
 from .live import LIVE
 from .meter import Bad
 
@@ -578,6 +578,20 @@ def api_library_edit(h, m, q):
     h.json(200, g)
 
 
+def api_library_titles(h, m, q):
+    h.json(200, titles.search(q1(q, "q", "")))
+
+
+def api_library_link(h, m, q):
+    g = games.link(unquote(m["key"]), h.body(), h.is_local())
+    h.log_line(f"library: {g['key']} linked to a machine")
+    h.json(200, g)
+
+
+def api_library_unlink(h, m, q):
+    h.json(200, games.unlink(unquote(m["key"]), unquote(m["slug"]), h.is_local()))
+
+
 def api_library_check(h, m, q):
     h.json(200, rom_check.check(q1(q, "image", "")))
 
@@ -854,6 +868,9 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("GET", r"/api/library/games/(?P<key>[^/]+)", api_library_game),
     ("PUT", r"/api/library/games/(?P<key>[^/]+)", api_library_edit),
     ("GET", r"/api/library/games/(?P<key>[^/]+)/images", api_library_images),
+    ("GET", r"/api/library/titles", api_library_titles),
+    ("POST", r"/api/library/games/(?P<key>[^/]+)/machines", api_library_link),
+    ("DELETE", r"/api/library/games/(?P<key>[^/]+)/machines/(?P<slug>[^/]+)", api_library_unlink),
     ("GET", r"/api/library/check", api_library_check),
     ("POST", r"/api/library/images/(?P<sha>[^/]+)/mark", api_library_mark),
     ("GET", r"/api/manuals", api_manuals_all),

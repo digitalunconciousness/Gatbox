@@ -278,7 +278,9 @@ def setup():
                GATBOX_LOGDIR=f"{T}/log", GATBOX_RUNDIR=f"{T}/run", GATBOX_REPORT=os.path.join(REPO, "tools/gatbox-rail-report"),
                GATBOX_DATA=f"{T}/data", MPLCONFIGDIR=f"{T}/cache/mpl", GATBOX_DUMP_SPOOL=f"{T}/spool",
                GATBOX_ROMS=f"{T}/roms", GATBOX_MINIPRO_PARTS=f"{T}/parts.txt", GATBOX_MAME_ROMS=f"{T}/mame-roms.json",
-               GATBOX_MANUALS=f"{T}/manuals", GATBOX_LIBRARY=f"{T}/lib/library.sqlite")
+               GATBOX_MANUALS=f"{T}/manuals", GATBOX_LIBRARY=f"{T}/lib/library.sqlite", GATBOX_MAME_TITLES=f"{T}/mame-titles.json")
+    subprocess.run([sys.executable, os.path.join(REPO, "tools/gatbox-mame-roms"), "--titles", f"{T}/mame-titles.json"], check=True,
+                   capture_output=True, env=dict(os.environ, GATBOX_MAME=os.path.join(REPO, "tests/fake-mame")))
     os.environ["GATBOX_DATA"] = f"{T}/data"               # the logger's gatbox-meta reads the same data
     procs["web"] = subprocess.Popen(["python3", os.path.join(REPO, "backend/gatbox-web")], env=env,
                                     stdout=open(f"{T}/web.log", "w"), stderr=subprocess.STDOUT, start_new_session=True)
@@ -1417,6 +1419,51 @@ def main():
             c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
         else:
             print("  skip  the phone's LIBRARY view (no LAN address here)")
+
+        print("FIND GAME (MAME's title list) and linking a machine to a game:")
+        c.open(B + "/dash/", 1024, 600)
+        c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
+        for nm in ("Pacman Cabinet", "Second Pacman"):
+            api("POST", "/api/roster", {"name": nm, "mfr": "Namco", "kind": "video_games", "platform": "test_hdd"})
+        api("PUT", "/api/machine", {"slug": "pacman-cabinet"})
+        click('[data-view="library"]')
+        check("a machine with no game: LIBRARY says so, in words, and offers FIND GAME (MAME) first",
+              lib_has("Pacman Cabinet has no game in the library yet") and "FIND GAME (MAME)" in text("#lb-body")
+              and q("[...document.querySelectorAll('#lb-body .btnrow button')].map(b => b.textContent).includes('FIND GAME (MAME)')"))
+        shot("29a-library-no-game")
+        lib_tap("FIND GAME")
+        c.wait("document.querySelector('#pane .kp-field')")
+        for _ in range(len("Pacman Cabinet")):
+            q("[...document.querySelectorAll('#pane .keys button')].find(b => b.textContent === '⌫').click()")
+        type_text("PAC MAN")
+        c.wait("document.querySelectorAll('#pane .picklist .row').length >= 1", 10)
+        row = q("document.querySelector('#pane .picklist .row').textContent")
+        check("the keypad starts with the machine's name; the search finds MAME's Pac-Man, with its maker, year and set",
+              row.startswith("Pac-Man") and "set pacman" in row and "1980" in row)
+        shot("29b-library-find-game")
+        q("document.querySelector('#pane .picklist .row').click()")
+        c.wait("document.querySelector('#pane').textContent.includes('Its key will be pac-man')", 10)
+        pane_tap("ADD IT AND USE IT")
+        check("ADD IT AND USE IT: the game is made, with its key, and the machine uses it",
+              lib_has("key pac-man") and "machines: Pacman Cabinet" in text("#lb-body")
+              and [m["slug"] for m in api("GET", "/api/library/games/pac-man")["machines"]] == ["pacman-cabinet"]
+              and api("GET", "/api/library/games/pac-man")["mame"] == "pacman")
+        shot("29c-library-found")
+        api("PUT", "/api/machine", {"slug": "second-pacman"})
+        click('[data-view="meter"]')
+        time.sleep(0.5)
+        click('[data-view="library"]')
+        lib_has("Second Pacman has no game in the library yet")
+        lib_tap("ALL GAMES")
+        c.wait("[...document.querySelectorAll('#pane .picklist .row')].some(r => r.textContent.startsWith('Pac-Man'))", 10)
+        q("[...document.querySelectorAll('#pane .picklist .row')].find(r => r.textContent.startsWith('Pac-Man')).click()")
+        c.wait("document.querySelector('#pane').textContent.includes('has no game yet')", 10)
+        shot("29d-library-use-it")
+        pane_tap("USE IT FOR SECOND PACMAN")
+        check("ALL GAMES for a machine with no game: it can use the one picked, and says so",
+              lib_has("machines: Pacman Cabinet, Second Pacman")
+              and sorted(m["slug"] for m in api("GET", "/api/library/games/pac-man")["machines"]) == ["pacman-cabinet", "second-pacman"])
+        api("PUT", "/api/machine", {"slug": "gauntlet-legends"})
 
         print("CHECK: a dump against MAME, the game's chips, her images and the machine's earlier dumps:")
         c.open(B + "/dash/", 1024, 600)

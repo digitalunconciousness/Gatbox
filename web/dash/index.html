@@ -34,6 +34,7 @@
   <button data-view="system">SYSTEM</button>
   <button data-view="devices">DEVICES</button>
   <button data-view="dump" id="n-dump" class="dim">DUMP<small id="n-dump-s">T48 not plugged in</small></button>
+  <button data-view="disk" id="n-disk" class="dim">DISK<small id="n-disk-s">…</small></button>
 </nav>
 
 <main>
@@ -109,6 +110,9 @@
 
   <!-- DUMP (M7) -->
   <section id="v-dump" class="view scroll"><div id="du-body"></div></section>
+
+  <!-- DISK: hard disks, CF and SD cards on the USB dock or reader (docs/plans/2026-11-02-disk-imaging.md) -->
+  <section id="v-disk" class="view scroll"><div id="dk-body"></div></section>
 </main>
 
 <div id="alarm" class="hide" role="alertdialog" aria-live="assertive">

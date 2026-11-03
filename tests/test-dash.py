@@ -22,6 +22,7 @@ import urllib.request
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "tests"))
 from cdp import Chrome  # noqa: E402
+from fakedisk import MiB, FakeDisks, fat_card  # noqa: E402
 
 KEEP = len(sys.argv) > 1
 OUT = sys.argv[1] if KEEP else tempfile.mkdtemp(prefix="gatbox-dash-shots-")
@@ -33,6 +34,7 @@ OHM = "Ω"                                     # sigrok's OHM SIGN
 FX = "/var/log/gatbox/rail_20260925_021402.csv"
 passed = failed = 0
 procs = {}
+FD = None                                     # the fake drives (tests/fakedisk.py): the DISK tab's
 
 
 def settles(c, js, timeout=20):
@@ -193,8 +195,15 @@ def setup():
         raise SystemExit(f"port {PORT} is already in use: stop whatever runs there first")
     except OSError:
         pass
-    for d in ("log", "run", "ctrl", "cache", "data", "led", "spool"):
+    global FD
+    for d in ("log", "run", "ctrl", "cache", "data", "led", "spool", "dspool"):
         os.makedirs(os.path.join(T, d))
+    # the DISK tab's drives: one on the dock, the image store, an empty card slot (invented names, plain files)
+    FD = FakeDisks(f"{T}/disk")
+    FD.usb_disk("sda", 3 * MiB, "WIDGET", "WIDGETDRIVE 1000", port=1, devnum="8:0", data=os.urandom(3 * MiB))
+    FD.usb_disk("sdc", 64 * MiB, "WD", "Widget Store 4T", port=2, devnum="8:32", parts=["sdc1"])
+    FD.usb_disk("sdd", 0, "Generic", "Card Reader CF", port=3, devnum="8:48")
+    FD.mount_table()
     with open(f"{T}/led/trigger", "w") as f:
         f.write("[mmc0] none\n")
     open(f"{T}/led/brightness", "w").close()
@@ -276,7 +285,8 @@ def setup():
                GATBOX_LOGDIR=f"{T}/log", GATBOX_RUNDIR=f"{T}/run", GATBOX_REPORT=os.path.join(REPO, "tools/gatbox-rail-report"),
                GATBOX_DATA=f"{T}/data", MPLCONFIGDIR=f"{T}/cache/mpl", GATBOX_DUMP_SPOOL=f"{T}/spool",
                GATBOX_ROMS=f"{T}/roms", GATBOX_MINIPRO_PARTS=f"{T}/parts.txt", GATBOX_MAME_ROMS=f"{T}/mame-roms.json",
-               GATBOX_MANUALS=f"{T}/manuals")
+               GATBOX_MANUALS=f"{T}/manuals", GATBOX_SYSFS=FD.sys, GATBOX_DEV=FD.dev, GATBOX_MOUNTINFO=FD.mountinfo,
+               GATBOX_DISKS=FD.store, GATBOX_DISK_SPOOL=f"{T}/dspool")
     os.environ["GATBOX_DATA"] = f"{T}/data"               # the logger's gatbox-meta reads the same data
     procs["web"] = subprocess.Popen(["python3", os.path.join(REPO, "backend/gatbox-web")], env=env,
                                     stdout=open(f"{T}/web.log", "w"), stderr=subprocess.STDOUT, start_new_session=True)
@@ -1212,10 +1222,177 @@ def main():
               settles(c, "[...document.querySelectorAll('#mc-body h3')].some(h => h.textContent === 'Work orders')")
               and not q(f"!!({job_card})") and "AS-" not in text("#m-window"))
 
+        print("DISK (a runner stands in for gatbox-disk.path):")
+        import threading
+        dk_done = threading.Event()
+
+        def disk_runner():
+            while not dk_done.is_set():
+                if os.path.exists(f"{T}/dspool/request.json"):
+                    time.sleep(1.5)                          # long enough to see the progress card
+                    extra = {}
+                    if os.path.exists(f"{T}/dk-bad"):
+                        extra["FAKE_DDRESCUE_BAD"] = "0:512"
+                    if os.path.exists(f"{T}/dk-heal"):
+                        extra["FAKE_DDRESCUE_HEAL"] = "1"
+                    subprocess.run(["python3", os.path.join(REPO, "tools/gatbox-disk"), "--job", f"{T}/dspool/request.json",
+                                    "--status", f"{T}/dspool/status.json"], capture_output=True, timeout=120, check=False,
+                                   env=FD.env(GATBOX_API=B, **extra))
+                time.sleep(0.2)
+        threading.Thread(target=disk_runner, daemon=True).start()
+
+        def dk_tap(start, sel="#dk-body button"):
+            q(f"[...document.querySelectorAll({json.dumps(sel)})].find(b => b.textContent.startsWith({json.dumps(start)})).click()")
+
+        def dk_has(t, timeout=15):
+            return settles(c, f"document.querySelector('#dk-body').textContent.includes({json.dumps(t)})", timeout)
+
+        def dk_seg(t):
+            q(f"[...document.querySelectorAll('#dk-body .seg button')].find(b => b.textContent === {json.dumps(t)}).click()")
+
+        def dk_tile(name):
+            q(f"[...document.querySelectorAll('#dk-body .dk-drives button')].find(b => b.textContent.startsWith({json.dumps(name + ' ·')})).click()")
+            c.wait(f"[...document.querySelectorAll('#dk-body .dk-drives .tile.on')].some(b => b.textContent.startsWith({json.dumps(name + ' ·')}))", 10)
+
+        click('[data-view="disk"]')
+        c.wait("document.querySelectorAll('#dk-body .dk-drives .tile').length === 3", 15)
+        tiles = q("[...document.querySelectorAll('#dk-body .dk-drives .tile')].map(t => t.tagName + ' ' + t.textContent)")
+        check("DISK: the store CONNECTED; sda a button, the IMAGE STORE and an EMPTY SLOT plain tiles that say so",
+              "CONNECTED" in text("#dk-body .dk-store") and tiles[0].startswith("BUTTON sda · WIDGET WIDGETDRIVE 1000")
+              and tiles[1].startswith("DIV sdc") and "IMAGE STORE" in tiles[1] and tiles[2].startswith("DIV sdd")
+              and "EMPTY SLOT" in tiles[2] and text("#n-disk-s") == "1 drive")
+        check("READ is off until the source, the media and a label are picked",
+              q("document.querySelector('#dk-body button.dk-go').disabled") and "pick the source" in text("#dk-body"))
+        dk_tile("sda")
+        dk_seg("HDD")
+        dk_tap("TYPE A LABEL")
+        c.wait("document.querySelector('#pane .kp-field')")
+        tap_keys("WW-HDD")
+        c.wait("document.querySelector('#dk-body').textContent.includes('LABEL: WW-HDD')", 10)
+        check("... then READ is on, for the current machine, and says what an HDD read does",
+              not q("document.querySelector('#dk-body button.dk-go').disabled") and "Gauntlet Legends" in text("#dk-body")
+              and "one pass with no retries" in text("#dk-body"))
+        shot("23a-disk-read")
+        click("#dk-body button.dk-go")
+        check("READ: the progress card", dk_has("READING WW-HDD"))
+        shot("23b-disk-reading")
+        dk_has("STORED", 40)
+        stored = [f for f in os.listdir(f"{FD.store}/gauntlet-legends") if f.endswith(".img")] \
+            if os.path.isdir(f"{FD.store}/gauntlet-legends") else []
+        import re as _re
+        check("... STORED: the dated name, read once, queued for the archive; it's in the store's list",
+              len(stored) == 1 and _re.fullmatch(r"WW-HDD_\d{8}_[0-9a-f]{8}\.img", stored[0]) is not None
+              and stored[0] in text("#dk-body") and "read once" in text("#dk-body")
+              and settles(c, "[...document.querySelectorAll('#dk-body .dk-img b')].some(b => b.textContent.startsWith('WW-HDD'))", 10))
+        shot("23c-disk-stored")
+
+        FD.usb_disk("sde", MiB, "WIDGET", "OLDSPINNER 40", port=5, devnum="8:64", data=os.urandom(MiB))
+        open(f"{T}/dk-bad", "w").close()
+        c.wait("[...document.querySelectorAll('#dk-body .dk-drives button')].some(b => b.textContent.startsWith('sde ·'))", 15)
+        dk_tile("sde")
+        dk_tap("LABEL: WW-HDD")
+        c.wait("document.querySelector('#pane .kp-field')")
+        tap_keys("⌫⌫⌫OLD")
+        c.wait("document.querySelector('#dk-body').textContent.includes('LABEL: WW-OLD')", 10)
+        click("#dk-body button.dk-go")
+        dk_has("BAD AREAS", 40)
+        check("bad areas: BAD AREAS with the map's numbers, and RETRY is the tech's call",
+              "% read · 1 bad area" in text("#dk-body") and "never retries on its own" in text("#dk-body")
+              and q("[...document.querySelectorAll('#dk-body button')].some(b => b.textContent === 'RETRY THE BAD AREAS')"))
+        shot("23d-disk-bad-areas")
+        open(f"{T}/dk-heal", "w").close()
+        dk_tap("RETRY THE BAD AREAS")
+        check("RETRY: the bad areas read after all, STORED", dk_has("RETRYING", 10) and dk_has("STORED", 40)
+              and "WW-OLD" in text("#dk-body"))
+        os.remove(f"{T}/dk-bad")
+        os.remove(f"{T}/dk-heal")
+
+        FD.usb_disk("sdh", 8 * MiB, "WIDGET", "WIDGET SSD 64G C", port=8, devnum="8:112", data=fat_card(8 * MiB))
+        dk_seg("WRITE")
+        c.wait("[...document.querySelectorAll('#dk-body button')].some(b => b.textContent === 'PICK AN IMAGE')", 10)
+        dk_tap("PICK AN IMAGE")
+        c.wait("[...document.querySelectorAll('#pane .picklist .row')].some(r => r.textContent.startsWith('WW-HDD'))", 10)
+        q("[...document.querySelectorAll('#pane .picklist .row')].find(r => r.textContent.startsWith('WW-HDD')).click()")
+        c.wait("[...document.querySelectorAll('#dk-body .dk-drives button')].some(b => b.textContent.startsWith('sdh ·'))", 15)
+        small = q("[...document.querySelectorAll('#dk-body .dk-drives .tile')].find(t => t.textContent.startsWith('sde ·'))")
+        check("WRITE: a drive smaller than the image is a plain tile, TOO SMALL FOR THE IMAGE",
+              q("(() => { const t = [...document.querySelectorAll('#dk-body .dk-drives .tile')].find(t => t.textContent.startsWith('sde ·'));"
+                " return !!t && t.tagName === 'DIV' && t.textContent.includes('TOO SMALL'); })()") and small is not None)
+        dk_tile("sda")
+        dk_tap("TARGET CHECK")
+        check("TARGET CHECK on the drive the image came from: TARGET REFUSED, it says why",
+              dk_has("TARGET REFUSED", 30) and "the drive the image came from" in text("#dk-body"))
+        dk_tile("sdh")
+        dk_tap("TARGET CHECK")
+        dk_has("TARGET OK", 30)
+        check("TARGET CHECK on the card: TARGET OK, NOT BLANK with what's on it, and no hold before the acknowledgement",
+              "NOT BLANK" in text("#dk-body") and "vfat filesystem on the whole drive 'WIDGETCARD'" in text("#dk-body")
+              and not q("[...document.querySelectorAll('#dk-body button')].some(b => b.textContent.startsWith('HOLD'))"))
+        q("document.querySelector('#dk-body .dk-over').scrollIntoView({block: 'center'})")
+        shot("23e-disk-check")
+        dk_tap("OVERWRITE IT: I'M SURE")
+        c.wait("[...document.querySelectorAll('#dk-body button')].some(b => b.textContent.startsWith('HOLD 3 S TO OVERWRITE sdh WITH WW-HDD'))", 10)
+        q("document.querySelector('#dk-body button.hold').dispatchEvent(new PointerEvent('pointerdown', {bubbles: true}))")
+        time.sleep(1.0)
+        q("document.querySelector('#dk-body button.hold').dispatchEvent(new PointerEvent('pointerup', {bubbles: true}))")
+        time.sleep(1.0)
+        card = open(f"{FD.dev}/sdh", "rb").read(512)
+        check("let go early: nothing armed, nothing sent, the card as it was",
+              not os.path.exists(f"{T}/dspool/request.json") and card == fat_card(8 * MiB)[:512])
+        q("document.querySelector('#dk-body button.hold').scrollIntoView({block: 'center'})")
+        shot("23f-disk-armable")
+        q("document.querySelector('#dk-body button.hold').dispatchEvent(new PointerEvent('pointerdown', {bubbles: true}))")
+        check("held 3 s: WRITING", dk_has("WRITING", 15))
+        dk_has("VERIFIED", 40)
+        img = open(f"{FD.store}/gauntlet-legends/{stored[0]}", "rb").read() if stored else b"x"
+        check("... VERIFIED: the card holds the image, the rest of it left as it was",
+              open(f"{FD.dev}/sdh", "rb").read(len(img)) == img and "beyond the image left as it was" in text("#dk-body"))
+        shot("23g-disk-verified")
+        dk_tap("THE SWAP CHECKLIST")
+        c.wait("document.querySelectorAll('#dk-body button.dk-tick').length === 10", 10)
+        check("the swap checklist: this write's, ten lines, none ticked", "→ sdh" in text("#dk-body")
+              and not q("document.querySelectorAll('#dk-body .dk-tick.done').length"))
+        q("[...document.querySelectorAll('#dk-body button.dk-tick')].find(b => b.textContent.includes('5 V at the board')).click()")
+        c.wait("document.querySelectorAll('#dk-body .dk-tick.done').length === 1", 10)
+        cl = api("GET", "/api/disk/checklist")
+        check("... a tap ticks a line, with its time, and gatbox-web keeps it",
+              [i["item"] for i in cl["items"] if i["done"]] == ["five_volts"])
+        shot("23h-disk-checklist")
+        FD.mount_table(store=False)
+        dk_seg("READ")
+        check("the store unplugged: NOT CONNECTED, READ off and it says why, the nav says so",
+              dk_has("NOT CONNECTED", 15) and q("document.querySelector('#dk-body button.dk-go').disabled")
+              and "waits for the image store" in text("#dk-body") and text("#n-disk-s") == "no store")
+        shot("23i-disk-no-store")
+        FD.mount_table()
+        c.wait("document.querySelector('#dk-body .dk-store .badge').textContent === 'CONNECTED'", 15)
+        lan = next((a for a in _lan_addrs() if "." in a and not a.startswith("127.")), None)
+        if lan:
+            c.open(f"http://{lan}:{PORT}/dash/?box=0", 390, 844)
+            c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
+            click('[data-view="disk"]')
+            c.wait("document.querySelector('#dk-body').textContent.includes('Drives on USB')", 15)
+            settles(c, "document.querySelectorAll('#dk-body .dk-tick').length === 10", 10)
+            time.sleep(0.5)
+            shot("24-disk-phone")
+            check("from a phone: the state, the drives, the images and the checklist; no READ, WRITE, hold or ticks",
+                  not q("document.querySelector('#dk-body .seg')") and not q("document.querySelector('#dk-body button.hold')")
+                  and not q("document.querySelector('#dk-body button.dk-tick')") and q("document.querySelectorAll('#dk-body div.dk-tick').length") == 10
+                  and "READ and WRITE are on the Pi's own screen" in text("#dk-body") and "VERIFIED" in text("#dk-body")
+                  and not q("[...document.querySelectorAll('#dk-body .dk-drives button')].length"))
+            check("from a phone: no horizontal scroll, and nothing runs past a card's edge",
+                  q("document.documentElement.scrollWidth <= 391")
+                  and q("[...document.querySelectorAll('#dk-body .card')].every(c => c.scrollWidth <= c.clientWidth + 1)"))
+            c.open(B + "/dash/", 1024, 600)
+            c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
+        else:
+            print("  skip  the phone's DISK view (no LAN address here)")
+        dk_done.set()
+
         print("the 7\" box (html.box: the kiosk opens the dashboard at 127.0.0.1):")
         check("box: the kiosk's page is in box mode", q("document.documentElement.classList.contains('box')"))
         bad_frame, small = {}, {}
-        for v in ("meter", "sessions", "machine", "manuals", "system", "devices", "dump"):
+        for v in ("meter", "sessions", "machine", "manuals", "system", "devices", "dump", "disk"):
             click(f'[data-view="{v}"]')
             time.sleep(1.2)
             f, s = q(BOX_FRAME), q(BOX_SMALL)
@@ -1228,9 +1405,11 @@ def main():
                 print("    ", d)
         check("box: every view sits inside the bezel margin (20 px at the sides, 16 at top and bottom)", not bad_frame)
         check("box: no text under 14 px, header and nav included", not small)
+        check("box: the eight tabs fit down the side, the nav doesn't scroll",
+              q("(() => { const n = document.querySelector('nav'); return n.scrollHeight <= n.clientHeight + 1; })()"))
         # The kiosk has no back button: a link that leaves the dashboard strands it there.
         leaving = {}
-        for v in ("meter", "sessions", "machine", "manuals", "system", "devices", "dump"):
+        for v in ("meter", "sessions", "machine", "manuals", "system", "devices", "dump", "disk"):
             click(f'[data-view="{v}"]')
             time.sleep(0.8)
             if v == "sessions":                       # a session's report is open, as it is when you read one

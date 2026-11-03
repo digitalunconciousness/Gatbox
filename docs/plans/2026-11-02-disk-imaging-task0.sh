@@ -3,12 +3,12 @@
 # code relies on them (hard rule 12). READ-ONLY: it mounts nothing, writes to no device, changes no setting and saves
 # no file. It prints; paste the output back. sudo is asked for once, for smartctl, hdparm, blkid and dmesg.
 #
-# Before running it:
-#   - the Pi on its wall supply;
-#   - the dock (with its own PSU on) holding a spare IDE drive and a SATA SSD. NOT the CarnEvil Quantum or any drive
-#     whose spin-ups matter: IDENTIFY spins a drive up. If the dock shows one drive at a time, run this once per drive;
-#   - the 4 TB drive plugged in;
-#   - the CF reader out for now (it comes back for step 9's card test, or use a CF card on the dock's CF-to-IDE adapter).
+# It reports whatever is plugged in, so it runs in stages (the design note's §10):
+#   1. now: the dock on its PSU with no drive in it (its bridge may show in lsusb even empty), and a spare card for step 9;
+#   2. when the 4 TB drive is here: plugged in, on the port it will use;
+#   3. when a drive is on the dock: a donor, or the next real job's drive. NOT a drive whose spin-ups matter (like the
+#      CarnEvil Quantum): IDENTIFY spins a drive up. If the dock shows one drive at a time, run this once per drive.
+# Each time: the Pi on its wall supply, and not while it's logging a cabinet.
 # Run, from ~/gatbox after `git fetch origin disk-imaging`:
 #   bash <(git show origin/disk-imaging:docs/plans/2026-11-02-disk-imaging-task0.sh)
 #   bash <(git show origin/disk-imaging:docs/plans/2026-11-02-disk-imaging-task0.sh) /path/to/a.chd   # + chdman info

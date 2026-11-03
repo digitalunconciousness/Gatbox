@@ -1,6 +1,6 @@
 # Disk imaging on the deck: IDE, SATA, CF and SD media — design note
 
-**Status: owner's answers recorded 2026-11-02 (§9). OK'd except for the open items in §9.2.** Its home in the repo
+**Status: owner's answers recorded 2026-11-02 and 2026-11-03 (§9). OK'd; §9.3 (found in session 1) awaits her OK.** Its home in the repo
 will be `docs/plans/2026-11-02-disk-imaging.md`. Per RULES §3, her OK on this note covers the code, the tests and the
 push.
 
@@ -54,10 +54,12 @@ SSD. That hand process is the spec. What went wrong doing it by hand becomes the
     - whether `smartctl -i -d sat` and `hdparm -I` reach the drive's own model, serial and default CHS through it, for
       an IDE drive and for a SATA one;
     - what `/sys/block/sdX/queue/rotational` reports for an SSD on it.
-- **Image store:** a 4 TB Western Digital external drive. Owned and unused.
-  - **To read or ask:**
-    - the model, and whether it's bus-powered (2.5") or has its own PSU (3.5");
-    - whether anything on it needs keeping before it's reformatted.
+- **Image store:** a 4 TB Western Digital external drive. Owned; with the owner from 2026-11-04.
+  - **The owner, 2026-11-03:**
+    - It's **bus-powered**. The MEGA4 is how it will be powered ("I have a mega4 hub for power. Eventually.").
+    - It holds a Batocera install that can go, and **a couple of MAME sets to save** first. They're copied off (on the
+      laptop) before it's reformatted.
+  - **To read:** its model and serial (Task 0), and how the MEGA4 itself is powered, before it carries the store.
   - Bus-powered matters for the Pi's USB budget: about 1.6 A shared with `PSU_MAX_CURRENT=5000`.
 - **CF reader:** the current four-slot reader has a broken pin, and the owner is buying a new one. Read its USB ID and
   LUN layout on the Pi before code relies on it. Until it arrives, CF goes on the dock through a CF-to-IDE adapter.
@@ -65,9 +67,12 @@ SSD. That hand process is the spec. What went wrong doing it by hand becomes the
   dock, CF reader and image store.
   - The owner has the UUGear MEGA4 (bought by 10-29). CLAUDE.md still lists it as not owned, so update that. It's
     used as a plain hub here; uhubctl stays out of scope.
-  - **Proposed layout:**
-    - the dock and the image store on the Pi's own two USB 3 ports, so a dock → store read doesn't share one link;
-    - the MEGA4 on a USB 2 port, carrying the DMM adapter, T48, touch, scanner and the CF reader.
+  - **Layout** (§9.2 d, adjusted 2026-11-03 because the store is bus-powered and the MEGA4 powers it):
+    - the dock on one of the Pi's USB 3 ports;
+    - the MEGA4 on the other USB 3 port, carrying the image store, the T48, the scanner and the CF reader. A dock →
+      store read still crosses two links, and the store keeps USB 3 speed;
+    - the DMM adapter and the touch screen on the Pi's own USB 2 ports. The logger's adapter is never behind the
+      hub, so a hub's power trouble can't stop the logger (hard rule 3).
   - Before deciding, read `lsusb -t` and re-run DEVICES. Existing udev rules key on USB IDs, not ports.
 - **Not owned, so not assumed:** a reader with a write-protect switch, and the master guide's panel-mount media bay.
 
@@ -102,8 +107,12 @@ gatbox-web watches status.json → SSE "disk" → the DISK tab's progress and re
 7. **Second read, flash media only:** an O_DIRECT read of the whole device. Its SHA-1 must equal pass 1's, or the
    job stops with "the card reads differently twice: flaky". For an HDD it's skipped, to save spin time.
 8. **Hash:** SHA-1 and SHA-256.
-9. **Rename** to `<label>_<sha1:8>.img` and write the `.json` sidecar beside it. The `.map` is kept too.
+9. **Rename** to `<label>_<YYYYmmdd>_<sha1:8>.img` and write the `.json` sidecar beside it. The `.map` is kept too,
+   under the same name. The date is the Pi's local date when the read started, as in the rail CSVs' names (owner,
+   2026-11-03: "the images filename should have a date also"). The sidecar keeps the exact time and the clock label.
    **The raw image is kept** (owner, 2026-11-02). There's no compression on the deck.
+   **The same bytes are never stored twice**, as in the dump archive: when the machine's folder already holds that
+   SHA-1, the job reports "already in the store as `<name>`", and that sidecar gains this read's date.
 10. **Run the MAME check (§7)** when the machine has MAME disks. Its result goes into the sidecar.
 11. **Queue it for the archive (§8).**
 
@@ -278,26 +287,62 @@ Each tick is saved with the write record, with its time. The checklist blocks no
 6. **The MAME CHD check is wanted:** in v1, §7.
 7. **Automatic upload to the archive is wanted:** queued from v1, uploaded by phase D, §8.
 
-### 9.2 Still open (recommendation first)
-a. **The 4 TB drive:** which model, bus-powered or its own PSU, and is there anything on it to keep? It gets
-   reformatted ext4.
-b. **Off-deck copy until the archive exists:** the homelab pull with an `rrsync -ro` key (recommended), or a manual
-   rsync after each job.
-c. **Reference CHDs:** does she have the CarnEvil and Gauntlet Legends CHDs to drop into `_chd/`? Without them, only
-   tier 2 runs.
-d. **USB layout:** the dock and store on the Pi's USB 3 ports, everything else on the MEGA4 (recommended), once
-   `lsusb -t` and DEVICES confirm it.
+### 9.2 Answered (2026-11-03: "9.2 recommended is fine")
+a. **The 4 TB drive:** bus-powered, and powered through the MEGA4 (eventually). The Batocera install can go. A couple
+   of MAME sets are saved first, then it's reformatted ext4 (§3). Its model and serial come from Task 0.
+b. **Off-deck copy until the archive exists:** the homelab pull with an `rrsync -ro` key.
+c. **Reference CHDs:** any CHDs she has go into `_chd/`. The MAME sets on the 4 TB drive may include CarnEvil's or
+   Gauntlet Legends': check while copying them off. Otherwise only tier 2 runs.
+d. **USB layout:** as recommended, adjusted for the bus-powered store (§3): the dock on a Pi USB 3 port, the MEGA4 on
+   the other with the store on it, and the DMM adapter and touch on the Pi's own USB 2 ports. `lsusb -t` confirms it.
+
+### 9.3 Found in session 1 (2026-11-03): recommended, waiting for her OK
+Checked against the code at HEAD. Everything else matched: the spool and path unit, one job at a time, the 30 s arm
+and 5-minute check window, the screen-only write, the 20-minute timeout, the archive's naming, the sidecar's clock
+label, the SSE relay, and `gatbox-mame-roms` keeping disk hashes for every version.
+1. **Realm.** Dumps don't record a realm today. gatbox-web looks up the machine's hub when it queues a request and puts
+   the realm in `request.json`.
+2. **The clock label.** The dump job asks gatbox-web on localhost for it, which `IPAddressDeny=any` alone would block.
+   The disk unit also gets `IPAddressAllow=localhost`, as the dump's does.
+3. **Two groups.** The spool's group isn't the devices' group. gatbox-web joins the spool's group to queue work, and
+   must not hold the group the udev rule gives write access to every USB disk (its empty `/dev` would then be the
+   only lock). The owner's login stays out of the devices' group too, so the CLI hands its work to the job through the
+   spool, or uses sudo.
+4. **Capabilities.** As a non-root user, ATA pass-through (what `smartctl -d sat` and `hdparm -I` send) needs
+   `CAP_SYS_RAWIO`, and `blockdev --flushbufs` needs `CAP_SYS_ADMIN`. The unit grants `CAP_SYS_RAWIO` alone (bounding
+   set the same). The flush is dropped: the write's fsync and the O_DIRECT reads already go past the page cache. The
+   first job run on the Pi confirms it.
+5. **No `RequiresMountsFor=`.** With the drive unplugged it fails the service before the job runs, `request.json`
+   stays, and the path unit refires until it gives up, so the DISK tab never gets a status. Instead: `After=` the
+   mount unit; the job's own mount and marker check reports "IMAGE STORE NOT CONNECTED" and clears the request; and
+   the bare mountpoint isn't writable by the job, so an unplugged store can't fill the SD card.
+6. **The UUID** lives in `/etc/gatbox/disks.conf` (§5 said `/etc`, Task 4 a git-ignored site file). It's created empty
+   by tmpfiles, like `hub.conf`, and the bootstrap writes the mount unit only when it holds a UUID.
+7. **Smaller:** the disk listing reads `/sys/block`, not the `/sys/bus/usb/devices` that `devices.py` reads, so it and
+   `GATBOX_SYSFS` are new code. The 12 V buck (§1, row 10) isn't recorded in the repo: if it powers the Pi in a
+   cabinet, it belongs in CLAUDE.md's Owned list.
 
 ## 10. Tasks (one branch, one PR; small commits, each with a test that fails without it)
 
-**Task 0 ⏸, read-only on the Pi, run by the owner:**
+**Task 0 ⏸, read-only on the Pi, run by the owner** (`docs/plans/2026-11-02-disk-imaging-task0.sh`):
 - the §3 facts: the dock, the 4 TB drive, `lsusb -t`;
 - the Pi's free space;
 - the package names: `apt policy gddrescue smartmontools mame-tools`;
 - `chdman info -i` on any CHD (the output format);
 - the auto-mount behaviour.
 
+It runs in stages, since there's no donor drive yet (owner, 2026-11-03). The script reports whatever is plugged in:
+1. **Now:** the USB tree, the dock's USB ID if its bridge shows up with no drive in it, packages, free space, auto-mount
+   with a spare card.
+2. **When the 4 TB drive is here (11-04):** its model, serial, partitions and power, with it spinning.
+3. **When a drive is on the dock** (a donor, or the next real job): what the bridge passes through for IDE and SATA.
+   Until then the code treats the ATA serial and CHS as "if the bridge passes them", as §4.1 already says, and
+   nothing ships that depends on an unread fact.
+
 Paste them into BRINGUP before any code depends on them.
+
+**Before the reformat ⏸:** the owner copies the MAME sets off the 4 TB drive (on the laptop). The format commands are
+written from Task 0's identity of that drive (model and serial), never from a `/dev` name.
 
 **Task 1, test doubles:**
 - a fake sysfs tree (`GATBOX_SYSFS`);
@@ -353,6 +398,8 @@ listing named from `mame-roms.json`.
 - MAME tier 2: createhd's SHA1 equal → MATCH; unequal → "no match without a reference CHD", never "bad";
 - a finished image → `archive: pending` plus one `archive-queue.jsonl` line; a re-read of the same bytes → no
   duplicate line;
+- the image's name carries the read's date; the same bytes read again on another day → not stored twice, and the
+  existing sidecar gains the date;
 - a write from a non-loopback address → 403; no check, or an expired one → 409; a non-blank target without `ack` →
   409; an expired arm → stopped;
 - no route serves store bytes (a GET on any store path → 404)

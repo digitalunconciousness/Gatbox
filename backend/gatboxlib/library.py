@@ -180,15 +180,36 @@ def confirmed(v):
     return {"by": text(60)(v["by"]), "at": v["at"]}
 
 
+def _opt_text(n):
+    return nullable(text(n))
+
+
 def rom_entries(v):
+    """The ROMs of one MAME version, as `mame -listxml` gives them (gatbox-mame-roms keeps hashes only, no ROM data)."""
     if not isinstance(v, list):
         raise Reject("a list of ROMs")
     out = []
     for r in v:
-        if not isinstance(r, dict) or set(r) - {"name", "size", "crc", "sha1"} or not isinstance(r.get("name"), str):
-            raise Reject("each ROM is {name, size, crc, sha1}")
+        if not isinstance(r, dict) or set(r) - {"name", "size", "crc", "sha1", "region", "status", "bios"} \
+                or not isinstance(r.get("name"), str):
+            raise Reject("each ROM is {name, size, crc, sha1, region, status, bios}")
         out.append({"name": text(120)(r["name"]), "size": nullable(integer(0, 1 << 32))(r.get("size")),
-                    "crc": nullable(text(8))(r.get("crc")), "sha1": nullable(text(40))(r.get("sha1"))})
+                    "crc": _opt_text(8)(r.get("crc")), "sha1": _opt_text(40)(r.get("sha1")),
+                    "region": _opt_text(60)(r.get("region")), "status": _opt_text(20)(r.get("status")),
+                    "bios": _opt_text(60)(r.get("bios"))})
+    return out
+
+
+def rom_disks(v):
+    """A version's CHDs (hard disk or CD images), by hash: what a disk image is checked against."""
+    if not isinstance(v, list):
+        raise Reject("a list of disks")
+    out = []
+    for d in v:
+        if not isinstance(d, dict) or set(d) - {"name", "sha1", "region", "status"} or not isinstance(d.get("name"), str):
+            raise Reject("each disk is {name, sha1, region, status}")
+        out.append({"name": text(120)(d["name"]), "sha1": _opt_text(40)(d.get("sha1")),
+                    "region": _opt_text(60)(d.get("region")), "status": _opt_text(20)(d.get("status"))})
     return out
 
 
@@ -197,10 +218,13 @@ def rom_versions(v):
         raise Reject("a list of versions")
     out = []
     for x in v:
-        if not isinstance(x, dict) or set(x) - {"name", "parent", "description", "roms"} or not isinstance(x.get("name"), str):
-            raise Reject("each version is {name, parent, description, roms}")
+        if not isinstance(x, dict) or set(x) - {"name", "parent", "description", "year", "mfr", "roms", "disks"} \
+                or not isinstance(x.get("name"), str):
+            raise Reject("each version is {name, parent, description, year, mfr, roms, disks}")
         out.append({"name": text(60)(x["name"]), "parent": bool(x.get("parent")),
-                    "description": text(200)(x.get("description", "")), "roms": rom_entries(x.get("roms", []))})
+                    "description": text(200)(x.get("description", "")), "year": text(20)(x.get("year", "")),
+                    "mfr": text(120)(x.get("mfr", "")), "roms": rom_entries(x.get("roms", [])),
+                    "disks": rom_disks(x.get("disks", []))})
     return out
 
 
@@ -225,7 +249,7 @@ KINDS = {
                  "source": (text(200), ""), "sha256": (nullable(hexn(64)), None),
                  "pages": (nullable(integer(0, 100000)), None), "bytes": (nullable(integer(0, 1 << 31)), None)},
     "mame": {"model_key": (key_field, REQ), "set": (nullable(text(60)), None), "prefer": (nullable(text(60)), None),
-             "status": (nullable(enum("sure", "check")), None), "why": (text(500), "")},
+             "status": (nullable(enum("sure", "check")), None), "why": (text(500), "")},     # null: not in MAME
     "rom_list": {"model_key": (key_field, REQ), "mame": (text(60), ""), "set": (nullable(text(60)), None),
                  "versions": (rom_versions, REQ)},
     "rom_image": {"size": (integer(0, 1 << 31), REQ), "crc32": (hexn(8), REQ), "sha1": (hexn(40), REQ),

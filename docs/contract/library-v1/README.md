@@ -29,7 +29,7 @@ Each write carries a `uid`, minted once per edit. The result is one of:
 | `game` | the `model_key` | `title, mfr, year, kind (video\|pinball\|other), notes, replaced_by` |
 | `document` | `<model_key>/<doc_id>` | `model_key, doc_id, title, kind, source_url (https), source, sha256, pages, bytes` |
 | `mame` | the `model_key` | `model_key, set, prefer, status (sure\|check\|null), why` |
-| `rom_list` | the `model_key` | `model_key, mame, set, versions[{name, parent, description, roms[{name, size, crc, sha1}]}]` |
+| `rom_list` | the `model_key` | `model_key, mame (MAME's version), set, versions[{name, parent, description, year, mfr, roms[{name, size, crc, sha1, region, status, bios}], disks[{name, sha1, region, status}]}]`. Written only by the deck, from `mame -listxml`: hashes only, no ROM data |
 | `rom_image` | the image's sha256 | `size, crc32, sha1, label, part, romident, model_key, chip, verdict (good\|bad\|unknown), revision, note` |
 | `rail_limit` | 32 hex digits | `model_key, rail, lo, hi, doc_id, page, quote, confirmed (null \| {by, at})` |
 | `fact` | 32 hex digits | `model_key, group, what, value, doc_id, page, quote` |

@@ -144,6 +144,18 @@ def main():
     check("... and the survivor can't be pointed back at the retired one (a loop)",
           lib.put("game", "widget-wars", dict(GAME, replaced_by="widget-wars-dupe"), 1)["result"] == "rejected")
     r = lib.put("rom_image", "b" * 64, {"size": 4, "crc32": "0" * 8, "sha1": "c" * 40, "model_key": "widget-wars"}, 0)
+    ver = {"name": "widgetw", "parent": True, "description": "Widget Wars (version 1.2)", "year": "1983", "mfr": "Widgetco",
+           "roms": [{"name": "ww1.u10", "size": 524288, "crc": "deadbeef", "sha1": "d" * 40, "region": "user1", "bios": "bios0"}],
+           "disks": [{"name": "widgetw", "sha1": "e" * 40, "region": "ide:0:hdd"}]}
+    r = lib.put("rom_list", "widget-wars", {"model_key": "widget-wars", "mame": "0.276", "set": "widgetw", "versions": [ver]}, 0)
+    got = r["record"]["data"]["versions"][0] if r["result"] == "created" else {}
+    check("a ROM list keeps what the chip list shows: year, maker, region, BIOS, and the version's disks by hash; "
+          "a field left out is stored as null",
+          got.get("year") == "1983" and got.get("mfr") == "Widgetco" and got["roms"][0]["region"] == "user1"
+          and got["roms"][0]["bios"] == "bios0" and got["roms"][0]["status"] is None and got["disks"][0]["sha1"] == "e" * 40
+          and got["disks"][0]["status"] is None)
+    check("a ROM with a field nobody defined: rejected",
+          lib.put("rom_list", "widget-wars", {"model_key": "widget-wars", "versions": [dict(ver, roms=[{"name": "a", "colour": 1}])]}, 1)["result"] == "rejected")
     check("a ROM image of a known game is stored by its hash; a missing optional field takes its default",
           r["result"] == "created" and r["record"]["data"]["verdict"] == "unknown" and r["record"]["data"]["chip"] == "")
 

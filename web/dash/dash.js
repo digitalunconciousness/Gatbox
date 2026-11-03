@@ -1577,7 +1577,7 @@
         ...(sc.recent || []).slice(0, 3).map(r => [`${hms(r.at, true)}  ${r.action === "unknown" ? "unknown code " + r.code
                                                      : r.action === "mark" ? "MARK" : r.action === "new" ? "NEW FILE" : r.name || r.code}`, "mut"])]);
       card("Touch panel", [[d.touch.present ? `Waveshare 7" (C) · USB ${d.touch.usb_id}` : "not found", d.touch.present ? "ok" : "warn"]]);
-      for (const [t, why] of [["M2K SCOPE", "ADALM2000: not fitted"], ["HUB ARM", "UUGear MEGA4 / uhubctl: not fitted"],
+      for (const [t, why] of [["M2K SCOPE", "ADALM2000: not fitted"], ["HUB ARM", "uhubctl port switching: not used (the MEGA4 is a plain hub)"],
                               ["BOARD POWER", "not fitted: GATBOX never powers a board"]])
         card(t, [[why, "mut"]], "notfit");
     }

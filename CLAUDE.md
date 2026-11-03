@@ -70,7 +70,7 @@ The bootstrap's MANIFEST maps repo files to installed paths. `--check` (no root)
   MACHINE "ROM chips (MAME)" and DUMP "WHICH CHIP?" tick chips whose SHA-1 is in the dump archive (`/api/mame/<slug>`).
 - Manuals: `gatbox-manuals fetch|list` (run as the owner, group gatbox-manuals) downloads each machine's documents
   from `data/gatbox-manuals.json` (git-ignored; https from the manual archives only; sha256 pinned) into
-  `/srv/gatbox/manuals/<slug>/` (PDF + .json sidecar + .txt; never in git). The dashboard's MANUALS tab: the documents
+  `/srv/gatbox/manuals/<slug>/` (PDF + .json sidecar + .txt; never in git). The dashboard's LIBRARY tab (it was MANUALS): the documents
   (page images from `pdftoppm`, search, phone uploads) and the spec sheet: the manual's rail limits with page and words
   → CONFIRM (only then the logger's window) and actual values from the field beside them (own window optional). Spec
   layers in `profiles.machine_specs()`: specs file < confirmed (`machine-specs-confirmed.json`) < actual window

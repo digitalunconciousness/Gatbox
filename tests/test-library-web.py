@@ -55,8 +55,20 @@ def cli(*args):
     return r.returncode, r.stdout + r.stderr
 
 
-def call(method, path, body=None):
-    req = urllib.request.Request(B + path, method=method, data=json.dumps(body).encode() if body is not None else None,
+def _lan_addrs():
+    try:
+        return subprocess.run(["hostname", "-I"], capture_output=True, text=True, check=False).stdout.split()
+    except (FileNotFoundError, OSError):
+        pass
+    try:
+        out = subprocess.run(["ip", "-4", "-o", "addr", "show", "scope", "global"], capture_output=True, text=True, check=False).stdout
+        return [ln.split()[3].split("/")[0] for ln in out.splitlines() if len(ln.split()) > 3]
+    except (FileNotFoundError, OSError, IndexError):
+        return []
+
+
+def call(method, path, body=None, base=B):
+    req = urllib.request.Request(base + path, method=method, data=json.dumps(body).encode() if body is not None else None,
                                  headers={"Content-Type": "application/json"} if body is not None else {})
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
@@ -157,6 +169,9 @@ def main():
           not os.path.exists(EXPORT) and wins0["widget-wars"] == {"+5V": [4.75, 5.25]} and wins0["gizmo-racer"] == {"+5V": [4.9, 5.1]})
     check("the manuals tab's answer for a machine names its documents and its note", before["manuals widget-wars"]["docs"]
           and before["specs widget-wars"]["rails"])
+    check("the games API says the library isn't set up, and refuses to add a game to one",
+          get("/api/library") == {"seeded": False}
+          and call("POST", "/api/library/games", {"title": "Sprocket Wars", "kind": "video"})[0] == 409)
 
     print("seeding it (an identity plan) changes no answer:")
     code, _ = cli("seed", "--plan", "--out", f"{T}/plan.json")
@@ -254,6 +269,62 @@ def main():
     check("... and the other cabinet that became the same game shows it too",
           get("/api/manuals/widget-wars-cocktail")["note"] == "A note from the library")
 
+    print("the games API (the LIBRARY view's):")
+    lst = get("/api/library")
+    byk = {g["key"]: g for g in lst["games"]}
+    check("the list: every live game by title, with what the library holds for it and which machines are it",
+          [g["title"] for g in lst["games"]] == ["Gizmo Racer", "Sprocket & Cog", "Widget Pinball", "Widget Wars"]
+          and lst["count"] == 4 and byk["widget-wars"]["limits"] == 2 and byk["widget-wars"]["facts"] == 2
+          and [m["slug"] for m in byk["widget-wars"]["machines"]] == ["widget-wars", "widget-wars-cocktail"]
+          and byk["widget-wars"]["mame"] == "widgetw")
+    check("a game with no manual fetched is MISSING; one with a manual isn't; the notes come with each game",
+          byk["gizmo-racer"]["missing"] and not byk["widget-wars"]["missing"] and lst["missing"] == 3
+          and byk["widget-wars"]["notes"] == "A note from the library" and byk["widget-wars"]["fetched"] == 3
+          and byk["widget-wars"]["docs"] == 4)
+    check("a proposed key: the title as a slug, a pinball's with pin-, a taken one gets the maker",
+          get("/api/library/key?title=Sprocket+Wars&kind=video")["key"] == "sprocket-wars"
+          and get("/api/library/key?title=Widget+Wars&kind=pinball")["key"] == "pin-widget-wars"
+          and get("/api/library/key?title=Widget+Wars&kind=video&mfr=Other+Co")["key"] == "widget-wars-other-co"
+          and call("GET", "/api/library/key?title=%E3%82%B2%E3%83%BC%E3%83%A0")[0] == 400)
+    c, g = call("POST", "/api/library/games", {"title": "Sprocket Wars", "mfr": "Cogco", "year": 1984, "kind": "video",
+                                               "notes": "Upright only"})
+    check("ADD GAME: 201, the proposed key, its fields kept, no machines yet", c == 201 and g["key"] == "sprocket-wars"
+          and g["title"] == "Sprocket Wars" and g["year"] == 1984 and g["machines"] == [] and g["missing"])
+    check("... it's in the list, and a second one with that key is refused",
+          any(x["key"] == "sprocket-wars" for x in get("/api/library")["games"])
+          and call("POST", "/api/library/games", {"title": "Sprocket Wars", "kind": "video", "key": "sprocket-wars"})[0] == 409)
+    check("ADD GAME with a missing title, a bad kind or a title over 120 characters: 400 each",
+          [call("POST", "/api/library/games", b)[0] for b in ({"kind": "video"}, {"title": "X", "kind": "arcade"},
+                                                                {"title": "x" * 121, "kind": "video"})] == [400, 400, 400])
+    check("a game no roster machine is still has manuals and a spec sheet, and no actual values (those are per machine)",
+          get("/api/manuals/sprocket-wars")["docs"] == [] and get("/api/specs/sprocket-wars")["machine"] is False
+          and call("PUT", "/api/actuals/sprocket-wars", {"rail": "+5V", "value": 5.0})[0] == 404
+          and get("/api/specs/widget-wars")["machine"] is True)
+    c, e = call("PUT", "/api/library/games/sprocket-wars", {"rev": g["rev"], "title": "Sprocket Wars II", "notes": "Upright and cocktail"})
+    check("EDIT: the fields change and the key never does", c == 200 and e["key"] == "sprocket-wars" and e["title"] == "Sprocket Wars II"
+          and e["notes"] == "Upright and cocktail" and e["rev"] == g["rev"] + 1)
+    check("EDIT from a stale revision: 409, nothing changed; an unknown game: 404; a bad field: 400",
+          call("PUT", "/api/library/games/sprocket-wars", {"rev": g["rev"], "title": "Stale"})[0] == 409
+          and get("/api/library/games/sprocket-wars")["title"] == "Sprocket Wars II"
+          and call("PUT", "/api/library/games/nope", {"rev": 1, "title": "x"})[0] == 404
+          and call("PUT", "/api/library/games/sprocket-wars", {"rev": e["rev"], "title": ""})[0] == 400)
+    lib = L.Library(LIB, create=False)
+    lib.put("game", "listed-only", {"title": "Listed Only", "kind": "video"}, 0)
+    lib.put("document", "listed-only/manual", {"model_key": "listed-only", "doc_id": "manual", "title": "Manual", "kind": "manual",
+                                               "source_url": "https://archive.example/m.pdf"}, 0)
+    lo = next(g for g in get("/api/library")["games"] if g["key"] == "listed-only")
+    check("a game whose documents are listed but not fetched yet is still MISSING a manual",
+          lo["docs"] == 1 and lo["fetched"] == 0 and lo["missing"])
+    lan = next((a for a in _lan_addrs() if "." in a and not a.startswith("127.")), None)
+    if lan:
+        base = B.replace("127.0.0.1", lan)
+        check("from a phone on the network the library is read-only: add and edit are 403, the list still reads",
+              call("POST", "/api/library/games", {"title": "From A Phone", "kind": "video"}, base=base)[0] == 403
+              and call("PUT", "/api/library/games/sprocket-wars", {"rev": e["rev"], "title": "x"}, base=base)[0] == 403
+              and call("GET", "/api/library", base=base)[0] == 200)
+    else:
+        print("  skip  the phone's read-only check (no LAN address here)")
+
     print("limits and retirement in the library reach the logger:")
     lib = L.Library(LIB, create=False)
     g5 = next(r for r in lib.all("rail_limit", "gizmo-racer") if r["data"]["rail"] == "+5V")
@@ -270,6 +341,9 @@ def main():
     gz = lib.get("game", "gizmo-racer")
     lib.put("game", "gizmo-racer", dict(gz["data"], replaced_by="widget-wars"), gz["rev"])
     ov = get("/api/manuals")["machines"]
+    check("... and the retired game leaves the games list, while asking for it by its old key gives the survivor",
+          "gizmo-racer" not in {g["key"] for g in get("/api/library")["games"]}
+          and get("/api/library/games/gizmo-racer")["key"] == "widget-wars")
     check("a game retired into another: its machine reads the survivor's documents and the logger gets the survivor's limits",
           get("/api/manuals/gizmo-racer")["library"] == "widget-wars" and ov["gizmo-racer"] == ov["widget-wars"]
           and settles(lambda: windows("gizmo-racer") == windows("widget-wars"), 20))

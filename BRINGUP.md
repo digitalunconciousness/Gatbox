@@ -611,7 +611,17 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         CONFIRM through the library to the logger, an outside change within seconds, the fallbacks, the merge), 21 of 22
         guards broken on purpose fail a test (the 22nd is equivalent); the web-api, manuals, mame, roster, raillog,
         report and sync suites pass unchanged
-  - [ ] B4–B8, LIBRARY (replaces MANUALS), the title search, CHECK + marks, the SYSTEM tile, manuals on request
+  - [x] B4, the LIBRARY view (it replaces MANUALS: nav, `#v-library`; the machine-keyed spec sheet and documents are
+        inside it). `GET /api/library` (every game with what the library holds and whether it's missing a manual, and
+        why), `/api/library/key` (the key a title would get), `POST /api/library/games` (ADD GAME) and `PUT
+        /api/library/games/<key>` (EDIT: title, maker, year, notes; compare-and-set on `rev`, the key never changes),
+        both the Pi's own screen only (L5). The manuals API takes a game's key as well as a machine's slug, so a game no
+        roster machine is has documents and a spec sheet; actual values stay per machine. On the 7": ALL GAMES, MISSING,
+        + ADD GAME (title, kind, maker, year, then the permanent key shown before saving), EDIT GAME; a phone reads. With
+        no library the tab is each machine's manuals as before and says the library isn't set up. `test-library-web.sh`
+        44, `test-dash.sh` 137 (LIBRARY seeded: 11; screenshots 25a–25e, 26); 18 of 21 new guards broken on purpose
+        fail a test (two of the three that didn't got tests, the third is equivalent)
+  - [ ] B5–B8, the title search and linking a machine to a game, CHECK + marks, the SYSTEM tile, manuals on request
         (⏸ a path unit, shown first)
   - [ ] ⏸ Install diff, shown first (not made yet): `gatbox-web.service` gets `ReadWritePaths=-/srv/gatbox/library` (it
         already has the `gatbox-manuals` group), tmpfiles `d /srv/gatbox/library 2775 root gatbox-manuals -`, and the

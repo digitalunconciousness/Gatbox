@@ -63,6 +63,14 @@ def _num(x, what):
 
 # --- the documents --------------------------------------------------------------------------------------
 def _slug(slug):
+    """A machine on the roster, or (a seeded deck) a game in the library: a game no roster machine is has manuals too."""
+    if slug not in (roster.slugs() or set()) and not libsource.key_for(slug):
+        raise Bad(404, f"not in the roster: {slug!r}")
+    return slug
+
+
+def _machine(slug):
+    """Actual values are measured on one board: a roster machine only, never a bare game."""
     if slug not in (roster.slugs() or set()):
         raise Bad(404, f"not in the roster: {slug!r}")
     return slug
@@ -402,7 +410,8 @@ def sheet(slug):
     listed = {f["what"] for f in facts}
     facts += [{"what": w, "value": None, "actual": a} for w, a in (act.get("facts") or {}).items() if w not in listed]
     order = lambda r: (0 if r.startswith("+") else 1, float(re.sub(r"[^0-9.]", "", r) or 0))   # noqa: E731
-    return {"slug": own, "library": lib, "rails": [rails[r] for r in sorted(rails, key=order)], "facts": facts}
+    return {"slug": own, "library": lib, "machine": own in (roster.slugs() or set()),
+            "rails": [rails[r] for r in sorted(rails, key=order)], "facts": facts}
 
 
 def confirm(slug, body):
@@ -444,7 +453,7 @@ def unconfirm(slug, body):
 
 def set_actual(slug, body):
     """PUT /api/actuals/<slug>: {rail, value, window?, note?, from?} or {fact, value, note?}."""
-    _slug(slug)
+    _machine(slug)
     if not isinstance(body, dict):
         raise Bad(400, "expected a JSON object")
     note = _text(body.get("note"), "note", 200)
@@ -483,7 +492,7 @@ def set_actual(slug, body):
 
 def clear_actual(slug, body):
     """DELETE /api/actuals/<slug> {rail} or {fact}."""
-    _slug(slug)
+    _machine(slug)
     if not isinstance(body, dict) or not ({"rail", "fact"} & set(body)):
         raise Bad(400, "expected {rail} or {fact}")
     group, key = ("rails", body["rail"]) if "rail" in body else ("facts", body["fact"])

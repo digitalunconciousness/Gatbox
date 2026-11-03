@@ -132,10 +132,10 @@ class View:
                 for rail, d in best.items()}
 
     def confirmed_state(self):
-        per_key = {k: c for k in self._live() if (c := self._confirmed(k))}
+        per_key = {k: c for k in self.live() if (c := self._confirmed(k))}
         return self._expand(per_key)
 
-    def _live(self):
+    def live(self):
         return [k for k, g in self.games.items() if not g["data"]["replaced_by"]]
 
     # --- gatbox-machine-specs.json's shape: {name: {rails: {rail: [lo, hi]}, source}} ----------------------------------
@@ -150,7 +150,7 @@ class View:
 
     def file_spec(self):
         per_key = {}
-        for key in self._live():
+        for key in self.live():
             rails, source = self._file_limits(key)
             if rails:
                 per_key[key] = {"rails": rails, "source": source}
@@ -161,7 +161,7 @@ class View:
         """Per name, the rail windows in force from the library: the specs-file limits, overridden by the latest
         CONFIRMed manual limit of each rail. Only confirmed limits are ever here (hard rule 12)."""
         per_key = {}
-        for key in self._live():
+        for key in self.live():
             rails, source = self._file_limits(key)
             sources = {r: SPECS_FILE_LABEL for r in rails}
             for rail, c in self._confirmed(key).items():
@@ -177,7 +177,7 @@ class View:
     # --- mame-roms.json's shape: {meta, machines: {name: {set, status, why, prefer, versions}}} ----------------------------
     def mame_roms(self):
         per_key, mame_version = {}, None
-        for key in self._live():
+        for key in self.live():
             m = (self.recs("mame", key) or [None])[0]
             rl = (self.recs("rom_list", key) or [None])[0]
             if m is None and rl is None:

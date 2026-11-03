@@ -276,7 +276,7 @@ def setup():
                GATBOX_LOGDIR=f"{T}/log", GATBOX_RUNDIR=f"{T}/run", GATBOX_REPORT=os.path.join(REPO, "tools/gatbox-rail-report"),
                GATBOX_DATA=f"{T}/data", MPLCONFIGDIR=f"{T}/cache/mpl", GATBOX_DUMP_SPOOL=f"{T}/spool",
                GATBOX_ROMS=f"{T}/roms", GATBOX_MINIPRO_PARTS=f"{T}/parts.txt", GATBOX_MAME_ROMS=f"{T}/mame-roms.json",
-               GATBOX_MANUALS=f"{T}/manuals")
+               GATBOX_MANUALS=f"{T}/manuals", GATBOX_LIBRARY=f"{T}/lib/library.sqlite")
     os.environ["GATBOX_DATA"] = f"{T}/data"               # the logger's gatbox-meta reads the same data
     procs["web"] = subprocess.Popen(["python3", os.path.join(REPO, "backend/gatbox-web")], env=env,
                                     stdout=open(f"{T}/web.log", "w"), stderr=subprocess.STDOUT, start_new_session=True)
@@ -703,15 +703,15 @@ def main():
             shot("16-sessions-fixture")
         stop("logger")
 
-        print("MANUALS: the spec sheet, the viewer, CONFIRM, an actual:")
+        print("LIBRARY before the seed (each machine's manuals as ever): the spec sheet, the viewer, CONFIRM, an actual:")
         api("PUT", "/api/machine", {"slug": "gauntlet-legends"})
-        click('[data-view="manuals"]')
-        c.wait("document.querySelector('#mn-body').textContent.includes('Documents (1)')", 15)
+        click('[data-view="library"]')
+        c.wait("document.querySelector('#lb-body').textContent.includes('Documents (1)')", 15)
         check("spec sheet: the manual's limit with its page and CONFIRM, the specs file's beside it, a fact",
-              all(s_ in text("#mn-body") for s_ in ("Spec sheet", "4.75–5.25 V", "p.2 ▸", "CONFIRM", "specs file: 4.9–5.1 V",
+              all(s_ in text("#lb-body") for s_ in ("Spec sheet", "4.75–5.25 V", "p.2 ▸", "CONFIRM", "specs file: 4.9–5.1 V",
                                                      "Fuse F1", "5 A slow-blow", "Gauntlet Legends Operations Manual")))
         shot("18a-manuals")
-        q("document.querySelector('#mn-body .row.doc').click()")
+        q("document.querySelector('#lb-body .row.doc').click()")
         c.wait("!document.querySelector('#viewer').classList.contains('hide') && document.querySelector('#vw-img').naturalWidth > 0", 30)
         check("the viewer: page 1 of 3 drawn by the Pi", text("#vw-page") == "1 / 3")
         click("#vw-next")
@@ -735,20 +735,20 @@ def main():
         c.wait("document.querySelector('#vw-page').textContent === '2 / 3'", 10)
         check("SEARCH 4.75 -> page 2", True)
         click("#vw-close")
-        q("[...document.querySelectorAll('#mn-body button')].find(b => b.textContent === 'CONFIRM').click()")
+        q("[...document.querySelectorAll('#lb-body button')].find(b => b.textContent === 'CONFIRM').click()")
         c.wait("!document.querySelector('#sheet').classList.contains('hide') && document.querySelector('#pane .pagebox img')", 10)
         c.wait("document.querySelector('#pane .pagebox img').naturalWidth > 0", 30)
         check("CONFIRM shows the page and the manual's words first", "“+5 VDC 4.75 to 5.25 V”" in text("#pane"))
         shot("18c-confirm")
         q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'CONFIRM').click()")
-        c.wait("document.querySelector('#mn-body').textContent.includes('✓ CONFIRMED')", 15)
+        c.wait("document.querySelector('#lb-body').textContent.includes('✓ CONFIRMED')", 15)
         check("confirmed: the window in use is the manual's, and the logger's too",
-              "4.75–5.25 V · the manual, confirmed" in text("#mn-body")
+              "4.75–5.25 V · the manual, confirmed" in text("#lb-body")
               and api("GET", "/api/meter/profile")["profile"]["window"] == [4.75, 5.25])
         api("PUT", "/api/actuals/gauntlet-legends", {"rail": "+5V", "value": 5.2, "window": [5.1, 5.3], "note": "boosted at the PSU"})
-        c.wait("document.querySelector('#mn-body').textContent.includes('own window')", 15)
+        c.wait("document.querySelector('#lb-body').textContent.includes('own window')", 15)
         check("an actual from the field beside the manual (kept, still confirmed), its own window in use",
-              all(s_ in text("#mn-body") for s_ in ("5.20 V", "own window 5.1–5.3 V", "boosted at the PSU", "4.75–5.25 V",
+              all(s_ in text("#lb-body") for s_ in ("5.20 V", "own window 5.1–5.3 V", "boosted at the PSU", "4.75–5.25 V",
                                                      "✓ CONFIRMED", "5.1–5.3 V · this machine's actual")))
         shot("18d-actual")
         click('[data-view="meter"]')
@@ -1215,7 +1215,7 @@ def main():
         print("the 7\" box (html.box: the kiosk opens the dashboard at 127.0.0.1):")
         check("box: the kiosk's page is in box mode", q("document.documentElement.classList.contains('box')"))
         bad_frame, small = {}, {}
-        for v in ("meter", "sessions", "machine", "manuals", "system", "devices", "dump"):
+        for v in ("meter", "sessions", "machine", "library", "system", "devices", "dump"):
             click(f'[data-view="{v}"]')
             time.sleep(1.2)
             f, s = q(BOX_FRAME), q(BOX_SMALL)
@@ -1230,7 +1230,7 @@ def main():
         check("box: no text under 14 px, header and nav included", not small)
         # The kiosk has no back button: a link that leaves the dashboard strands it there.
         leaving = {}
-        for v in ("meter", "sessions", "machine", "manuals", "system", "devices", "dump"):
+        for v in ("meter", "sessions", "machine", "library", "system", "devices", "dump"):
             click(f'[data-view="{v}"]')
             time.sleep(0.8)
             if v == "sessions":                       # a session's report is open, as it is when you read one
@@ -1247,12 +1247,12 @@ def main():
         check("box: METER's action buttons say all of it (nothing cut off), and METER doesn't scroll",
               q("[...document.querySelectorAll('.act small')].every(s => s.scrollWidth <= s.clientWidth + 1 && s.scrollHeight <= s.clientHeight + 1)")
               and q("(() => { const v = document.querySelector('#v-meter'); return v.scrollHeight <= v.clientHeight + 1; })()"))
-        click('[data-view="manuals"]')
-        c.wait("[...document.querySelectorAll('#v-manuals h2')].some(h => h.textContent === 'Spec sheet')", 15)
-        check("box: MANUALS keeps its explanation behind HOW THIS WORKS",
-              "The manual's numbers as" not in q("[...document.querySelectorAll('#v-manuals *')].filter(e => e.getClientRects().length"
+        click('[data-view="library"]')
+        c.wait("[...document.querySelectorAll('#v-library h2')].some(h => h.textContent === 'Spec sheet')", 15)
+        check("box: LIBRARY keeps the spec sheet's explanation behind HOW THIS WORKS",
+              "The manual's numbers as" not in q("[...document.querySelectorAll('#v-library *')].filter(e => e.getClientRects().length"
                                                  " && e.children.length === 0).map(e => e.textContent).join(' ')")
-              and q("[...document.querySelectorAll('#v-manuals button')].some(b => b.textContent.includes('HOW THIS WORKS'))"))
+              and q("[...document.querySelectorAll('#v-library button')].some(b => b.textContent.includes('HOW THIS WORKS'))"))
         click('[data-view="devices"]')
         time.sleep(1)
         check("box: DEVICES says where the T48 is used (no milestone talk)", "M7" not in text("#v-devices")
@@ -1304,6 +1304,112 @@ def main():
         q("document.querySelector('#toast').classList.add('hide')")
         check("box: a toast never takes a tap, and sits inside the margin", tst["pe"] == "none" and tst["l"] >= 19.5
               and tst["t"] >= 15.5 and tst["r"] <= 1004.5 and tst["b"] <= 584.5)
+
+        print("LIBRARY after the seed (the games):")
+        penv = dict(os.environ, GATBOX_DATA=f"{T}/data", GATBOX_STATE=f"{T}/ctrl", GATBOX_MANUALS=f"{T}/manuals", GATBOX_ROMS=f"{T}/roms",
+                    GATBOX_MAME_ROMS=f"{T}/mame-roms.json", GATBOX_LIBRARY=f"{T}/lib/library.sqlite")
+        for step in (("seed", "--plan", "--out", f"{T}/lib-plan.json"), ("seed", "--apply", f"{T}/lib-plan.json")):
+            subprocess.run([sys.executable, os.path.join(REPO, "tools/gatbox-library"), *step], env=penv, check=True, capture_output=True)
+        api("PUT", "/api/machine", {"slug": "gauntlet-legends"})
+
+        def lib_has(t, timeout=15):
+            return settles(c, f"document.querySelector('#lb-body').textContent.includes({json.dumps(t)})", timeout)
+
+        def lib_tap(label, sel="#lb-body button"):
+            q(f"[...document.querySelectorAll({json.dumps(sel)})].find(b => b.textContent === {json.dumps(label)} || b.textContent.startsWith({json.dumps(label)})).click()")
+
+        def type_text(txt, save=True):
+            for ch in txt:
+                label = "SPACE" if ch == " " else ch
+                q(f"[...document.querySelectorAll('#pane .keys button')].find(b => b.textContent === {json.dumps(label)}).click()")
+            if save:
+                q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'SAVE').click()")
+
+        def pane_tap(label):
+            c.wait(f"[...document.querySelectorAll('#pane button')].some(b => b.textContent === {json.dumps(label)})", 10)
+            q(f"[...document.querySelectorAll('#pane button')].find(b => b.textContent === {json.dumps(label)}).click()")
+
+        click('[data-view="meter"]')
+        time.sleep(0.5)
+        click('[data-view="library"]')
+        check("seeded: the bar shows ALL GAMES (3) and MISSING (2), the machine's game with its key and its manual",
+              lib_has("ALL GAMES (3)") and "MISSING (2)" in text("#lb-body") and "key gauntlet-legends" in text("#lb-body")
+              and "1 manual" in text("#lb-body") and "Documents (1)" in text("#lb-body") and "Spec sheet" in text("#lb-body"))
+        check("... the spec sheet still answers as before: the manual's limit, its page, CONFIRM / CONFIRMED, actuals for the machine",
+              "4.75–5.25 V" in text("#lb-body") and "SET ACTUAL" in text("#lb-body"))
+        shot("25a-library-seeded")
+        lib_tap("ALL GAMES")
+        c.wait("document.querySelectorAll('#pane .picklist .row').length >= 3", 10)
+        names = q("[...document.querySelectorAll('#pane .picklist .row')].map(r => r.textContent)")
+        check("ALL GAMES: every game, by title, with what it has: 'NO MANUAL' for the ones without (the added machine's game too)",
+              len(names) == 3 and names[0].startswith("Gauntlet") and "NO MANUAL" in names[0] and "1 manual" in names[1]
+              and names[2].startswith("Zaxxon") and "NO MANUAL" in names[2])
+        shot("25b-library-games")
+        q("[...document.querySelectorAll('#pane .picklist .row')].find(r => r.textContent.startsWith('Gauntlet') && r.textContent.includes('NO MANUAL')).click()")
+        check("picking a game opens it: its title, no manual, and the missing reason line (none noted here)",
+              lib_has("key gauntlet ·") and "NO MANUAL" in text("#lb-body") and "Nothing read off the manuals yet." in text("#lb-body"))
+        lib_tap("MISSING")
+        c.wait("document.querySelectorAll('#pane .picklist .row').length >= 2", 10)
+        check("MISSING: only the games with no manual, each with why", q("document.querySelectorAll('#pane .picklist .row').length") == 2
+              and "no reason noted" in text("#pane") and "Gauntlet Legends" not in text("#pane"))
+        shot("25c-library-missing")
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'CLOSE').click()")
+
+        lib_tap("+ ADD GAME")
+        c.wait("document.querySelector('#pane .kp-field')")
+        type_text("SPROCKET WARS")
+        pane_tap("VIDEO")
+        c.wait("document.querySelector('#pane .kp-field')")
+        type_text("COGCO")
+        c.wait("document.querySelector('#pane.num')")
+        type_text("1984")
+        c.wait("document.querySelector('#pane').textContent.includes('Key: sprocket-wars')", 10)
+        check("ADD GAME: title, kind, maker, year, then the key it would get, with the words that it's permanent",
+              "permanent ID" in text("#pane") and "never changes" in text("#pane"))
+        shot("25d-library-add-key")
+        pane_tap("ADD IT")
+        check("... added: the game opens, with its key, its maker and year, no manual and no machine",
+              lib_has("key sprocket-wars") and "SPROCKET WARS" in text("#lb-body") and "COGCO 1984" in text("#lb-body")
+              and "no machine" in text("#lb-body") and "ALL GAMES (4)" in text("#lb-body"))
+        check("... a game with no machine has a spec sheet and documents, and no actual-value controls (those are per machine)",
+              "Nothing read off the manuals yet." in text("#lb-body") and "None here yet." in text("#lb-body")
+              and "SET ACTUAL" not in text("#lb-body") and "+ ACTUAL" not in text("#lb-body"))
+        shot("25e-library-added")
+        lib_tap("EDIT GAME")
+        pane_tap("TITLE")
+        c.wait("document.querySelector('#pane .kp-field')")
+        type_text("S")
+        check("EDIT GAME: the title changes, the key never does",
+              lib_has("SPROCKET WARSS") and "key sprocket-wars" in text("#lb-body")
+              and api("GET", "/api/library/games/sprocket-wars")["title"] == "SPROCKET WARSS")
+        bad_frame, small, short = {}, {}, {}
+        for v in ("library",):
+            f, sm = q(BOX_FRAME), q(BOX_SMALL)
+            if f:
+                bad_frame[v] = f
+            if sm:
+                small[v] = sm
+        short = q("[...document.querySelectorAll('#lb-body .lb-bar-btn, #lb-body .btnrow button')].filter(b => !b.classList.contains('mini') && "
+                  "!b.classList.contains('cite') && b.getClientRects().length && b.getBoundingClientRect().height < 55).map(b => b.textContent)")
+        check("box: LIBRARY sits inside the bezel, no text under 14 px, every bar button is a full 56 px target",
+              not bad_frame and not small and not short)
+        if bad_frame or small or short:
+            print("    ", bad_frame, small, short)
+        lan = next((a for a in _lan_addrs() if "." in a and not a.startswith("127.")), None)
+        if lan:
+            c.open(f"http://{lan}:{PORT}/dash/?box=0", 390, 844)
+            c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
+            click('[data-view="library"]')
+            lib_has("ALL GAMES (4)")
+            time.sleep(0.5)
+            shot("26-library-phone")
+            check("from a phone: the games and MISSING read; no ADD GAME, no EDIT GAME; no horizontal scroll",
+                  "MISSING (" in text("#lb-body") and "+ ADD GAME" not in text("#lb-body") and "EDIT GAME" not in text("#lb-body")
+                  and q("document.documentElement.scrollWidth <= 391"))
+            c.open(B + "/dash/", 1024, 600)
+            c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
+        else:
+            print("  skip  the phone's LIBRARY view (no LAN address here)")
 
     print("phone (390x844):")
     with Chrome(f"{T}/browser2") as c:

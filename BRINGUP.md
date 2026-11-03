@@ -566,7 +566,8 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         the SYSTEM tile. Routing should leave it nothing to do; it is there so a routing bug can't put
         one hub's data in the other. One hub: no guard, status.json unchanged. `test-sync.sh` sweeps
         every item both stub hubs received, then forces a leak past routing. sync 115 → 137.
-  - [ ] Installed (bootstrap: `/usr/local/bin/gatbox-sync` only, no unit or system config)
+  - [x] Installed (bootstrap: `/usr/local/bin/gatbox-sync` only, no unit or system config); owner, 2026-11-03:
+        "Merged and deployed"
 - **The 7" box: a readability and touch pass (2026-10-26).** The owner: the on-screen keyboard
   crushed (PICK MACHINE), hard to read and to hit on the touch screen, taps landing above the
   buttons, and a 3D-printed box with a wide bezel coming. Plan and findings:
@@ -621,7 +622,11 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   - [x] One privacy check: `scripts/privacy_check.sh` and `.githooks/pre-push`, byte-identical in all three; this
         repo's own paths in `.githooks/privacy.conf`. New here: emails are checked, a missing patterns file refuses
         the push, and a refusal never prints the pattern. `test-hooks.sh` 17 → 24.
-  - [ ] ⏸ Owner: merge the three PRs together (the contract, the rules and the check must match in all three)
+  - [x] ⏸ Owner: merge the three PRs together (merged 2026-11-02: #19 here, cabcrawl #41, the tech tracker #27)
+  - [x] antislop (2026-11-03): a pinned copy of the anti-slop skills (UI, copy, accessibility, mobile layout, code
+        comments) in `.claude/skills/`, in all three repos (`docs/antislop/PROVENANCE.md`: the upstream commit,
+        and the two changes: no `allowed-tools`, no MCP server). `DESIGN.md` is the owner's direction: the deck's
+        Synthwave is deliberate. RULES.md §5: the mode is during. `test-antislop.sh` (12).
 - In a cabinet with no known Wi-Fi, the hotspot comes up ~90 s after boot: join **GATBOX**,
   Pi at `10.42.0.1` / `gatbox.local`. Since 2026-10-05 it also drops again by itself when a
   saved network comes back into range, and there are three ways to join a new one — see

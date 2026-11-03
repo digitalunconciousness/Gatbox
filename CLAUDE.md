@@ -133,6 +133,7 @@ Synthwave: neon on a deep violet gradient, scanlines, mono type, glow only on ba
 bg `#150a28`, bg2 `#1f0f3d`, panel `#1f1240`, border `#3d1e6b`, magenta (primary) `#ff2e9f`, cyan (secondary)
 `#7dfaff`, lime (OK) `#5ef2b0`, red (trip/danger) `#ff4d6d`, amber (warn) `#ffb74d`, text `#ece3ff`, dim `#9080b0`.
 Body `linear-gradient(180deg, bg2, bg)`. Fonts: Chakra Petch (display), Share Tech Mono (body), served from the Pi.
+UI, copy and code-comment work also follows the antislop skills in `.claude/skills/` (RULES.md §5), with `DESIGN.md` as the direction: Synthwave only, and deliberate.
 
 ## Conventions
 - Backend = the existing **gatbox-web, grown** (stdlib, one server on :80, DynamicUser). FastAPI only if a concrete

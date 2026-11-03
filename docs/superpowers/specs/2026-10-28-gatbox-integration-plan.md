@@ -321,6 +321,7 @@ without it, in its repo's suite.
 | **B. The library on the deck** | `library.sqlite`, seed, readers switched over; LIBRARY on the 7"; the title search; manual fetch on request; MISSING; the CHECK screen; known-good marks; space on SYSTEM | Gatbox | the seed review; new units shown before install |
 | **C. Dumps and burns to their world** | `rom_dump`, `burn`, the file endpoints; the apps store and show them | all three | deploys |
 | **D. The archive** | `archive/` (server, installer, RUNBOOK), the deck ↔ archive sync and conflicts, every image to the archive; **each app's read-only copy** (tables, pull job, reader token, the game section on machine / asset pages), `Game.model_key` | Gatbox + both apps | creating the LXC and the Cloudflare tunnel and Access (written out for her, ⏸) |
+| **D2. Disk imaging** | IDE, SATA, CF and SD drives read to images on the deck's image-store drive (`/srv/gatbox/disks`), verified, checked against MAME's CHDs and queued for the archive; an image written back to a disk, armed at the Pi like a burn. A disk job copies the T48 dump job's pattern, and gatbox-web never opens a block device. Spec: §18 and the owner's design note | Gatbox | the design note; Task 0 (read-only facts off the Pi); the note's §9.2 answers; the hard rule 6 change; the system-config diff (udev rule, units, sysusers, tmpfiles); the image-store drive's UUID (site config, never in git) |
 | **E. Barcade work on the deck** | action ledger, "acts as", order actions, coin counts, parts and stock with the scanner | Gatbox + cabcrawl | deploy; the device switches |
 | **F. Side work on the deck** | the same for jobs, time, readings, parts | Gatbox + Tech Tracker | deploy |
 | **G. More floor data** | §16 ideas 8 and 9: cost to keep, downtime and lost plays, repeat faults, rail health beside each swap | cabcrawl | deploy |
@@ -334,7 +335,9 @@ without it, in its repo's suite.
   and "acts as". E and F can swap if the side work is busier. G and H touch one app each and
   can run any time after A, alongside the deck's phases. G is worth doing early, since the
   barcade is about to put cabcrawl into service. I comes once there's something worth
-  watching (after C).
+  watching (after C). **D2 comes right after D** (the owner, 2026-11-03: "the sooner the better,
+  although after we set up the archive"): its images queue for the archive, which D brings. It
+  touches only the deck, so it can run alongside E and F.
 - **PRs:** one per repo per phase, never merged by an agent. Merge the apps first in C–F (each
   advertises a capability only once deployed, and an older deck ignores it); Gatbox goes last.
 - **Every phase:** a short spec → **her one OK** (it covers the code and the push) → code and
@@ -358,6 +361,7 @@ without it, in its repo's suite.
 | L3–L5, L7, L8 | CONFIRM on the 7" only; the key naming; no library edits from a phone on the deck's Wi-Fi; apps pull over the node's private network; apps get ROM hashes and verdicts, not the images | **Recommended** (library spec §10). |
 | N | The privacy-patterns location (`~/.config/gatbox-family/`) | **Decided.** |
 | ROMs | Keep ROM images | **Decided: yes, every image, in the archive and on the deck** (she has permission). |
+| D2 | Disk imaging | **Asked for by the owner (2026-11-03):** a phase of its own, right after the archive (§18). Hard rule 6 changes exactly as her design note's §5 words it: disk writes from the 7" are armed at the Pi, like a burn. |
 
 ---
 
@@ -388,7 +392,11 @@ without it, in its repo's suite.
 4. **An open web server on someone else's network:** side-work data is 7"-only, and anything new
    on the phone view is reviewed against that rule.
 5. **Growth:** watched on the deck; the archive's mount grows in Proxmox.
-6. **Size of the program:** seven phases over three repos and one new container. Each phase is
+6. **Writing to the wrong disk (D2).** A drive is its model, serial and size, never a path: the
+   dock's by-id name is the dock's, the same for every drive. It's identified again right before
+   a write, the write is armed at the Pi, and verifying reads back exactly the image's bytes with
+   O_DIRECT. No test opens a real block device.
+7. **Size of the program:** seven phases over three repos and one new container. Each phase is
    useful alone, and A–C deliver what was asked for by name first.
 
 ---
@@ -462,6 +470,9 @@ design without changing it:
 - **Knowledge it produces** (platforms and pinouts, logic-analyzer signatures, MAME notes, disk
   images, photos, fix notes) becomes new record kinds in the archive (library spec §2.4). The
   store and protocol are built so each is added without touching the others.
+- **The media bay's "CF → SSD"** has its own phase now: D2, disk imaging (§18), with the drive
+  dock, the CF reader and the 4 TB image-store drive the owner has. They join CLAUDE.md's Owned
+  list with their real USB IDs from Task 0, not before.
 - **New instruments** (ADALM2000, INA226 trip, adjustable rail, thermal camera, microscope,
   media bay, UV drawer) are deck features. They produce bench records for the machine at hand,
   sent to its world like a meter session today. **None of them is owned yet, so no code assumes
@@ -658,3 +669,71 @@ what their admins choose to send:
 | F3 | How she hears about a new one | **cabcrawl: its alert channels** (a `feedback` event and a `public_error` event, chosen per channel). **The Tech Tracker: a count on the dashboard now, ntfy with phase I.** |
 | F4 | GitHub issue forms and a SECURITY.md | **Yes, in all three repos,** with the privacy warning. Nothing is ever filed automatically. |
 | F5 | Reports from other places that run the apps | **Their admins send them on**, with "report to the developers": a prefilled GitHub form they read and submit themselves. `UPSTREAM_ISSUES_URL` chooses where; empty turns it off. |
+
+---
+
+## 18. Disk imaging (phase D2, the deck)
+
+The owner, 2026-11-03: disk imaging "needs to be added to the plan, the sooner the better, although
+after we set up the archive, probably." Her design note is the spec:
+`docs/plans/2026-11-02-disk-imaging.md`, which she'll add. Her brief for the session that builds it is
+`docs/plans/2026-11-02-disk-imaging-prompt.md`. This section says only where the work fits; where
+the two differ, the note wins.
+
+**What it does.**
+- Reads an IDE, SATA, CF or SD drive, through a USB dock or a CF reader on the Pi, to an image on
+  the image-store drive: the owner's 4 TB external hard drive (2026-11-03), mounted at
+  `/srv/gatbox/disks`.
+- Verifies the image, and checks it against MAME's CHDs (`chdman info`).
+- Writes an image back to a disk, armed at the Pi like a burn.
+- Fills each image's sidecar `archive` field and adds it to `archive-queue.jsonl`. **Uploading is
+  phase D's job**, so the archive and the library's `disk_image` kind (library spec §2.4) take the
+  images from there.
+
+**How it's built.**
+- **A disk job copies the T48 dump job's pattern** (`tools/gatbox-dump`, its path unit, its own
+  user and sandbox). **gatbox-web never opens a block device, never serves image bytes, and has no
+  route to `/srv/gatbox/disks`.**
+- **Identity, not paths.** A drive is its model, serial and size, and it's identified again right
+  before a write.
+- **Verification** reads exactly the image's bytes back with O_DIRECT, and nothing assumes a
+  replug. **No automatic retries on a hard drive.**
+- **Nothing is written under `/srv/gatbox/disks`** unless the image-store drive is mounted there
+  with its marker present. Its UUID is site config, never in git.
+- **The MAME check reports and never judges.** A miss at the second tier proves nothing, and the
+  result says so. `chdman info` is parsed only in the format Task 0 shows.
+- **Hard rule 6 changes exactly as the note's §5 words it,** so disk writes from the 7" are armed at
+  the Pi like a burn.
+- **Stdlib Python and apt packages only** (`gddrescue`, `smartmontools`, `mame-tools`; Task 0 checks
+  apt has them). The dashboard keeps its usual rules: plain HTML, CSS and JS, Synthwave, 56 px touch
+  targets on the 7".
+- **The udev rule, units, sysusers and tmpfiles go through the bootstrap,** and the owner sees the
+  diff first (hard rule 5).
+- **Power.** The Pi 5's USB ports share 1.6 A in all, even with its 5 A supply and
+  `usb_max_current_enable=1`. The T48, the meter's adapter, the scanner and the touch screen are
+  on them too. A bus-powered hard drive spinning up beside a bus-powered dock could brown the bus
+  out in the middle of an image. So Task 0 also records whether the drive and the dock have their
+  own power supplies, and `vcgencmd get_throttled` with both running. If either runs off the bus,
+  the design note says how it's powered (its own supply, or a powered hub).
+
+**Tests.** `tests/test-disk.sh`, like `test-dump.sh`. No test opens a real block device: a fake
+sysfs tree, plain files as devices, and `tests/fake-ddrescue`. Fixtures are invented (Widget Wars),
+with no customer, no site, no real roster, no images and no hashes of anyone's disks.
+
+**How the work runs** (the brief has the detail).
+1. **Session 1, no code:**
+   - branch `disk-imaging`, with the design note committed on it;
+   - the note checked against the code;
+   - **Task 0**, one ⏸ block of read-only commands for the owner to run on the Pi with the dock and
+     the reader plugged in;
+   - then only the note's open §9.2 questions, in one batch.
+2. **Tasks 1–7,** in the note's order. One PR, with screenshots of the 7" and a phone.
+3. **The owner installs** with the bootstrap, after reviewing the system-config diff.
+
+**It needs from the owner:**
+- the design note;
+- Task 0's output, since every hardware fact comes from it (the dock's USB ID, UAS or usb-storage,
+  what the desktop does with an inserted card);
+- the §9.2 answers;
+- the image-store drive's UUID, as site config;
+- whether the 4 TB drive and the dock have their own power supplies.

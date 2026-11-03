@@ -1,7 +1,7 @@
 # Phase C: dumps and burns go to their world — short spec
 
-Status: **proposed, waiting for the owner's OK** (it covers the code and the push in all three repos, integration
-plan §10; merging, deploying and installing stay hers).
+Status: **approved by the owner, 2026-11-03** ("OK as written"; her OK covers the code and the push in all three repos,
+integration plan §10; merging, deploying and installing stay hers). Built the same day: see "As built" at the end.
 
 This is the build plan for phase C of `docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md` (§5). Where
 this file and that one differ, this file says why (last section).
@@ -87,7 +87,7 @@ Apps first, Gatbox last (the merge order of integration plan §10).
 |---|---|---|---|
 | C1 | Gatbox, copied to both | **The contract:** README, examples, `CHECKSUMS`, uid vectors, the hex test image | each repo's contract test (checksums, sibling diff, the examples' bytes) |
 | C2 | Tech Tracker | **Hub side.** `rom_file` / `rom_dump` / `burn` tables and one migration (`grant_app()`, `EXPECTED_GRANTS`); the file endpoints over the existing content-addressed store (`SHOP_FILES_DIR`, so the existing backup carries it); ingest of both items with every rejection above; `roms` in health; the asset page list, the job page list, the login-only download | the examples posted, a duplicate, each rejection, a part replayed, an interrupted upload resumed, a wrong hash dropped, no download without login |
-| C3 | cabcrawl | **Hub side.** The same, with its own tables and migration (registered in `scripts/check_schema.py`), files in a new `ROM_FILES_DIR` outside `UPLOAD_FOLDER` (part photos are served from there), added to the backup; `app` and `capabilities` in health; the machine page list, the order page list, the operator-and-up download | the same, on SQLite and a throwaway PostgreSQL; the characterization snapshot regenerated and checked |
+| C3 | cabcrawl | **Hub side.** The same, with its own tables and migration (registered in `scripts/check_schema.py`), files in `ROM_FILES_DIR` (`uploads/rom_files/`: see "As built"), already in the uploads backup; `app` and `capabilities` in health; the machine page list, the order page list, the operator-and-up download | the same, on SQLite and a throwaway PostgreSQL; the characterization snapshot regenerated and checked |
 | C4 | Gatbox | **Sending.** `gatbox-web` loopback-only reads (`/api/sync/dumps`, `/api/sync/burns`, the image bytes by part); `gatbox-sync` uploads the file then posts the item to a hub whose health lists `roms`, routed and `guard()`ed by roster exactly like sessions; its own ledger namespaces (so an older `sent.json` loads unchanged); the 32 MiB rule; `unassigned` and unrostered machines held with the reason | two stub hubs: nothing crosses; an upload cut off mid-part resumes; a hub without `roms` is sent nothing; a refused item parks after five tries with its reason |
 | C5 | Gatbox | **The 7" says where each one is** (the words above), and SYSTEM's hub block counts them | `test-dash.sh`, screenshots |
 | C6 | Gatbox | **FOR ORDER** on DUMP and BURN: the request carries `order`, the sidecar and burn line keep it, the item sends it | `test-dump.sh` with the fakes; the dash test |
@@ -107,8 +107,8 @@ C1 is first and is the risk: the contract is the one thing that can't be changed
 ## What she does (⏸), after she merges
 
 - Tech Tracker: deploy as usual (the migration adds three tables; `SHOP_FILES_DIR` already exists).
-- cabcrawl: deploy (the migration adds three tables). `ROM_FILES_DIR` defaults beside `uploads/`; the app
-  creates it at start like it does `uploads/`. If the unit can't, the runbook line says which directory to make.
+- cabcrawl: deploy (the migration adds three tables). The images go in `uploads/rom_files/`, which the service may
+  already write and the uploads backup already archives: nothing to make or edit.
 - Gatbox: the bootstrap's usual run. Until a hub lists `roms`, the deck sends nothing new: **apps first, then
   the deck, in that order**.
 
@@ -125,3 +125,30 @@ C1 is first and is the risk: the contract is the one thing that can't be changed
   offers it to another. A machine moved between worlds is the one case this doesn't cover, and it's a roster
   conflict already.
 - **The pull-back moves to D** (above); the hubs' read routes are built now.
+
+## As built (2026-11-03)
+
+What differs from the plan above, and why:
+
+- **cabcrawl's images are in `uploads/rom_files/`, not a new folder.** Its systemd unit is `ProtectSystem=strict`
+  with a list of writable folders, so a new top-level folder would have needed a unit edit (and the backup list
+  another entry). `uploads/` is writable and archived already, and the one route that serves from it takes a bare file
+  name, so a folder inside it has no URL (a test says so). `ROM_FILES_DIR` is the config key; the Tech Tracker keeps
+  its images in its existing file store (`SHOP_FILES_DIR/<aa>/<sha256>.rom`).
+- **The read-back routes (C7) were built with each app's hub side (C2, C3),** not last: they read the same rows. The
+  deck's own side of a rebuild is still D's.
+- **The contract's example uids hash the machine slug,** and the Tech Tracker makes its own asset tags. Its tests
+  substitute their tag and recompute the two uids by the rule; the README says so (a hub with a machine called
+  `widget-wars`, like cabcrawl's tests, posts the example as it is).
+- **ROM items have state files of their own.** The sync keeps, per hub, `roms.json` (what that hub acknowledged,
+  refusals counted, parked items) and, once, `roms-status.json` for the 7"; `sent.json` and the session ledger are
+  untouched, so an older sync state loads as it always did. `status.json` gains `roms_waiting` and `roms_parked` per hub.
+- **A chip read again can't be linked to a new order.** The same bytes are the same dump in the archive and at the hub
+  (one record per dump, evidence that is never changed), so the second read is "already archived". The job says
+  "not linked to order #N: this chip was archived before, and the same bytes are the same dump" in the result's steps
+  rather than drop the link quietly. A burn is its own record each time, so FOR ORDER always works for a burn.
+- **FOR ORDER offers only the cached open orders** (`GET /api/orders/open?machine=`), and gatbox-web refuses an order
+  that isn't open for the machine as of the last sync (400), so a made-up or stale number never reaches a hub.
+- **The deck's sandbox is unchanged.** gatbox-sync still reads from gatbox-web on loopback only; the images come out
+  of three loopback-only routes (`/api/sync/dumps`, `/api/sync/burns`, `/api/sync/image`), which refuse any other
+  address (a test connects from 127.0.0.2).

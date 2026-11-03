@@ -87,6 +87,7 @@ backend/gatboxweb/live.py                       /usr/local/lib/gatbox/gatboxweb/
 backend/gatboxweb/meter.py                      /usr/local/lib/gatbox/gatboxweb/meter.py              644
 backend/gatboxweb/captures.py                   /usr/local/lib/gatbox/gatboxweb/captures.py           644
 backend/gatboxweb/roster.py                     /usr/local/lib/gatbox/gatboxweb/roster.py             644
+backend/gatboxweb/romsync.py                    /usr/local/lib/gatbox/gatboxweb/romsync.py            644
 backend/gatboxweb/system.py                     /usr/local/lib/gatbox/gatboxweb/system.py             644
 backend/gatboxweb/devices.py                    /usr/local/lib/gatbox/gatboxweb/devices.py            644
 backend/gatboxweb/dump.py                       /usr/local/lib/gatbox/gatboxweb/dump.py               644

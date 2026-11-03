@@ -151,6 +151,14 @@ def open_orders(slug):
     return [r for r in rows if isinstance(r, dict) and r.get("id")]
 
 
+def rom_states():
+    """{key: {state, hub, reason}} for every archived dump and burn gatbox-sync has looked at (roms-status.json): where each
+    stands, for the 7". Keys: "dump:<machine>/<file>.bin" and "burn:<epoch>:<sha1>" (romsync.burns() names its keys the
+    same way). A Pi whose sync never ran, or ran before phase C, has none."""
+    items = (_read(os.path.join(_root(), "roms-status.json"), {}) or {}).get("items")
+    return items if isinstance(items, dict) else {}
+
+
 def sent_uids():
     """Every outbox uid any hub has acknowledged: the queued/sent badge is a join."""
     dirs = [h["dir"] for h in hubs()] or [_root()]

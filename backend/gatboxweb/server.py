@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import (captures, config, devices, dump, games, libsource, mame, manuals, meter, orders, phone, report,
-               roster, sessions, system, wifi)
+               rom_check, roster, sessions, system, wifi)
 from .live import LIVE
 from .meter import Bad
 
@@ -578,6 +578,20 @@ def api_library_edit(h, m, q):
     h.json(200, g)
 
 
+def api_library_check(h, m, q):
+    h.json(200, rom_check.check(q1(q, "image", "")))
+
+
+def api_library_mark(h, m, q):
+    r = rom_check.mark(m["sha"], h.body(), h.is_local())
+    h.log_line(f"library: image {m['sha'][:8]} marked {r['verdict']}")
+    h.json(200, r)
+
+
+def api_library_images(h, m, q):
+    h.json(200, rom_check.images(unquote(m["key"])))
+
+
 def api_manuals_all(h, m, q):
     h.json(200, {"machines": manuals.overview()})
 
@@ -839,6 +853,9 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("POST", r"/api/library/games", api_library_add),
     ("GET", r"/api/library/games/(?P<key>[^/]+)", api_library_game),
     ("PUT", r"/api/library/games/(?P<key>[^/]+)", api_library_edit),
+    ("GET", r"/api/library/games/(?P<key>[^/]+)/images", api_library_images),
+    ("GET", r"/api/library/check", api_library_check),
+    ("POST", r"/api/library/images/(?P<sha>[^/]+)/mark", api_library_mark),
     ("GET", r"/api/manuals", api_manuals_all),
     ("GET", r"/api/manuals/(?P<slug>[^/]+)", api_manuals),
     ("POST", r"/api/manuals/(?P<slug>[^/]+)", api_manuals_upload),

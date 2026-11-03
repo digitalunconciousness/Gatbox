@@ -6,6 +6,7 @@ the logger within seconds, a damaged export or a vanished library falls back to 
 game share their manuals and ROM list, and the logger's code path never opens the database.
     python3 tests/test-library-web.py
 """
+import hashlib
 import json
 import os
 import shutil
@@ -16,6 +17,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import zlib
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "backend"))
@@ -147,6 +149,27 @@ def start():
     raise SystemExit("gatbox-web didn't start")
 
 
+def add_dump(machine, label, data, epoch, match=None, matches=(), when=None):
+    """An archived dump, as gatbox-dump leaves one: <machine>/<label>_<sha1:8>.bin and its sidecar."""
+    sha1 = hashlib.sha1(data).hexdigest()
+    base = f"{T}/roms/{machine}/{label}_{sha1[:8]}"
+    write(base + ".bin", data, True)
+    write(base + ".json", {"label": label, "part": "27C040@DIP32", "machine": machine, "size": len(data), "sha1": sha1,
+                           "crc32": f"{zlib.crc32(data) & 0xffffffff:08x}", "epoch": epoch,
+                           "date": when or time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(1790000000 + epoch * 86400)),
+                           "romident": {"match": match, "matches": list(matches)} if match is not None else {}})
+    return f"{machine}/{label}_{sha1[:8]}.bin", sha1, hashlib.sha256(data).hexdigest()
+
+
+def chk(image):
+    c, j = call("GET", f"/api/library/check?image={image}")
+    return j if c == 200 else {"error": j, "code": c}
+
+
+def verdicts(j):
+    return {c["against"]: c["verdict"] for c in j["checks"]}
+
+
 def drop_library():
     for suffix in ("", "-wal", "-shm"):
         if os.path.exists(LIB + suffix):
@@ -173,6 +196,12 @@ def main():
     check("SYSTEM's library numbers before the seed: not set up, but the manuals' size and the room on /srv are there",
           sysl["seeded"] is False and sysl["manuals_bytes"] > 0 and sysl["roms_bytes"] > 0 and sysl["db_bytes"] == 0 and "games" not in sysl
           and "low" in sysl)
+    first_img = next(f for f in os.listdir(f"{T}/roms/widget-wars") if f.endswith(".bin"))
+    j = chk(f"widget-wars/{first_img}")
+    check("CHECK before the library is set up: MAME's answer, the machine's history and what was seen before all work; the "
+          "game's chips say there's no library; a mark is refused",
+          j["library"] is False and verdicts(j) == {"mame": "match", "game": "no_library", "images": "never_seen", "machine": "first"}
+          and call("POST", f"/api/library/images/{j['sha256']}/mark", {"verdict": "good"})[0] == 409)
     check("the games API says the library isn't set up, and refuses to add a game to one",
           get("/api/library") == {"seeded": False}
           and call("POST", "/api/library/games", {"title": "Sprocket Wars", "kind": "video"})[0] == 409)
@@ -342,6 +371,81 @@ def main():
               and call("GET", "/api/library", base=base)[0] == 200)
     else:
         print("  skip  the phone's read-only check (no LAN address here)")
+
+    print("CHECK: four comparisons, and the marks:")
+    jw = chk(f"widget-wars/{first_img}")
+    check("a dump that is the game's listed chip: MAME match, RIGHT CHIP, never seen before, the first dump of that chip",
+          verdicts(jw) == {"mame": "match", "game": "right_chip", "images": "never_seen", "machine": "first"}
+          and "RIGHT CHIP: ww1.u10" in jw["checks"][1]["text"] and [c["level"] for c in jw["checks"]] == ["ok", "ok", "mut", "mut"]
+          and jw["library"] and jw["size"] == 2048 and len(jw["sha256"]) == 64)
+    img_a, sha1_a, sha256_a = add_dump("widget-wars", "WW-U10", os.urandom(4096), 20)
+    check("the dump archive's new dump becomes a library image on its own, within seconds (no mark yet)",
+          settles(lambda: any(i["sha256"] == sha256_a for i in get("/api/library/games/widget-wars/images")["images"]), 20)
+          and next(i for i in get("/api/library/games/widget-wars/images")["images"] if i["sha256"] == sha256_a)["verdict"] == "unknown")
+    ja = chk(img_a)
+    check("a later dump of the same chip with different bytes: CHANGED since the earlier one, and MAME no match / not in the list",
+          verdicts(ja)["machine"] == "changed" and "CHANGED since" in ja["checks"][3]["text"]
+          and verdicts(ja)["mame"] == "unknown" and verdicts(ja)["game"] == "unlisted")
+    img_b, _, sha256_b = add_dump("widget-wars", "ww-u10", os.urandom(4096), 30, match=False)
+    check("NO MATCH in MAME is a warning, with its words", verdicts(chk(img_b))["mame"] == "no_match"
+          and chk(img_b)["checks"][0]["level"] == "warn" and "NO MATCH" in chk(img_b)["checks"][0]["text"])
+    same_bytes = os.urandom(512)
+    img_aa, _, _ = add_dump("widget-wars", "AA-U1", same_bytes, 50)
+    img_h, _, _ = add_dump("widget-wars", "aa-u1", same_bytes, 51)
+    check("the same bytes under the same label (any case) as an earlier dump: SAME AS LAST TIME; the earlier one is a FIRST DUMP",
+          verdicts(chk(img_h))["machine"] == "same" and verdicts(chk(img_aa))["machine"] == "first")
+    lib = L.Library(LIB, create=False)
+    rl = lib.get("rom_list", "widget-wars")
+    data = json.loads(json.dumps(rl["data"]))
+    other = hashlib.sha1(b"another revision's chip").hexdigest()
+    data["versions"].append({"name": "widgetw12", "parent": False, "description": "Widget Wars (version 1.2)", "year": "1983",
+                             "mfr": "Widgetco", "roms": [{"name": "ww1.u10", "size": 23, "crc": "00000000", "sha1": other}], "disks": []})
+    lib.put("rom_list", "widget-wars", data, rl["rev"])
+    img_d, _, _ = add_dump("widget-wars", "WW-REV", b"another revision's chip", 31, match=True,
+                           matches=[{"set": "widgetw12", "rom": "ww1.u10", "description": "x"}])
+    jd = chk(img_d)
+    check("a chip of another revision of the same game: ANOTHER REVISION, naming it and the version MAME lists first",
+          verdicts(jd)["game"] == "other_revision" and "ANOTHER REVISION: ww1.u10 of Widget Wars (version 1.2)" in jd["checks"][1]["text"])
+    img_e, _, _ = add_dump("widget-wars", "ELSEWHERE", b"a chip of some other game", 32, match=True,
+                           matches=[{"set": "othergame", "rom": "x.bin", "description": "Other Game"}])
+    je = chk(img_e)
+    check("a chip MAME knows as another game's: NOT THIS GAME, in red, saying which",
+          verdicts(je)["game"] == "not_this_game" and je["checks"][1]["level"] == "bad" and "othergame" in je["checks"][1]["text"])
+    img_f, _, _ = add_dump("unassigned", "LOOSE", b"loose chip bytes", 33)
+    check("a dump from no machine: the machine has no game, and it says how to link one", verdicts(chk(img_f))["game"] == "no_game")
+    img_g, _, _ = add_dump("ws-9", "SHARED", b"the same chip on two machines", 34)
+    add_dump("widget-wars", "SHARED", b"the same chip on two machines", 35)
+    jg = chk(img_g)
+    check("the same bytes dumped on another machine too: SEEN BEFORE, naming where and when",
+          verdicts(jg)["images"] == "seen_before" and "widget-wars" in jg["checks"][2]["text"] and "2026-" in jg["checks"][2]["text"])
+    sha_a = jw["sha256"]
+    c, _ = call("POST", f"/api/library/images/{sha_a}/mark", {"verdict": "good", "note": "read twice, matches the ROM set", "revision": "1.2"})
+    jw2 = chk(f"widget-wars/{first_img}")
+    check("MARK KNOWN GOOD: kept with its note and revision, and CHECK says so, with the words",
+          c == 200 and jw2["mark"]["verdict"] == "good" and verdicts(jw2)["images"] == "known_good"
+          and "read twice" in jw2["checks"][2]["text"] and jw2["checks"][2]["level"] == "ok" and jw2["mark"]["revision"] == "1.2")
+    call("POST", f"/api/library/images/{sha256_b}/mark", {"verdict": "bad", "note": "reads differently each time"})
+    check("MARK KNOWN BAD: in red", verdicts(chk(img_b))["images"] == "known_bad" and chk(img_b)["checks"][2]["level"] == "bad")
+    check("the mark survives new dumps arriving (the watcher never changes a record that's there)",
+          (add_dump("widget-wars", "LATER", b"a dump after the marks", 36) and settles(
+              lambda: any(i["label"] == "LATER" for i in get("/api/library/games/widget-wars/images")["images"]), 20))
+          and chk(f"widget-wars/{first_img}")["mark"]["verdict"] == "good")
+    check("UNMARK: back to never seen", call("POST", f"/api/library/images/{sha_a}/mark", {"verdict": "unknown"})[0] == 200
+          and verdicts(chk(f"widget-wars/{first_img}"))["images"] in ("never_seen", "seen_before"))
+    check("bad marks and bad images: a verdict that isn't one, a hash that isn't one, a hash not in the library: 400 / 400 / 404",
+          [call("POST", f"/api/library/images/{sha_a}/mark", {"verdict": "great"})[0],
+           call("POST", "/api/library/images/xyz/mark", {"verdict": "good"})[0],
+           call("POST", f"/api/library/images/{'0' * 64}/mark", {"verdict": "good"})[0]] == [400, 400, 404])
+    check("CHECK with a path that isn't an archived dump: 400 for a traversal or a wrong name, 404 for a dump that isn't there",
+          [call("GET", "/api/library/check?image=../etc/passwd")[0], call("GET", "/api/library/check?image=widget-wars/x.txt")[0],
+           call("GET", "/api/library/check?image=widget-wars/NOPE_00000000.bin")[0], call("GET", "/api/library/check")[0],
+           call("GET", "/api/library/check?image=../widget-wars/x.bin")[0], call("GET", "/api/library/check?image=widget-wars/../x.bin")[0]]
+          == [400, 400, 404, 400, 400, 400])
+    lan = next((a for a in _lan_addrs() if "." in a and not a.startswith("127.")), None)
+    if lan:
+        check("a mark from a phone on the network: 403; the check itself reads",
+              call("POST", f"/api/library/images/{sha_a}/mark", {"verdict": "good"}, base=B.replace("127.0.0.1", lan))[0] == 403
+              and call("GET", f"/api/library/check?image=widget-wars/{first_img}", base=B.replace("127.0.0.1", lan))[0] == 200)
 
     print("limits and retirement in the library reach the logger:")
     lib = L.Library(LIB, create=False)

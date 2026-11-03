@@ -10,6 +10,7 @@ in its state directory: the confirmed limits as flat JSON. That file is all the 
 state the library is in (hard rule 3). A watcher notices changes made from outside (the owner's `gatbox-library seed` or
 `import`) and refreshes the export within a few seconds.
 """
+import glob
 import json
 import os
 import sqlite3
@@ -17,12 +18,10 @@ import threading
 import time
 
 from gatboxlib import library as L
-from gatboxlib import libview, profiles
+from gatboxlib import libview, profiles, seed
 
-from . import (  # meter.Bad at call time: meter imports roster, which imports this
-    config,
-    meter,
-)
+# meter.Bad is read at call time: meter imports roster, which imports this module
+from . import config, meter
 
 PATH = config.LIBRARY
 _lock = threading.RLock()
@@ -146,6 +145,33 @@ def unconfirm(name, rail):
     refresh_export()
 
 
+# --- dumps become library images ---------------------------------------------------------------------------------------
+
+_adopted = {"sig": None}
+
+
+def adopt_dumps(force=False):
+    """Make a rom_image record for every archived dump the library hasn't got (by the bytes' SHA-256, with the dump's label,
+    part, MAME's answer and its game), so CHECK and the known-good marks have something to hold. Records already there,
+    marks included, are never changed. Cheap when nothing new has arrived. -> how many were added."""
+    v = current()
+    if v is None:
+        return 0
+    sig = tuple(sorted((p, os.stat(p).st_mtime_ns) for p in glob.glob(os.path.join(config.ROMS, "*", "*.json"))
+                       + glob.glob(os.path.join(config.ROMS, "_images", "*.bin"))))
+    if not force and sig == _adopted["sig"]:
+        return 0
+    folders = {os.path.basename(p) for p in glob.glob(os.path.join(config.ROMS, "*")) if os.path.isdir(p)}
+    games = {f: {"key": v.key_for(f), "title": f, "mfr": "", "kind": "video"} for f in folders if v.key_for(f)}
+    src = {"data": profiles.data_dir(), "state": config.CTRL, "manuals": config.MANUALS, "roms": config.ROMS,
+           "mame_roms": config.MAME_ROMS}
+    records, _, _ = seed.build(src, {"games": games}, only=("rom_image",))
+    res = v.lib.bulk(records, by="dump", create_only=True)
+    if not res["rejected"]:
+        _adopted["sig"] = sig
+    return res["created"]
+
+
 # --- the logger's flat export -------------------------------------------------------------------------------------------
 
 def refresh_export():
@@ -182,6 +208,7 @@ def watch(every=3.0):
         while True:
             try:
                 refresh_export()
+                adopt_dumps()
             except (OSError, sqlite3.Error, ValueError):
                 pass                                     # the logger keeps whatever export it has, or the files
             time.sleep(every)

@@ -45,7 +45,7 @@ class View:
             self.slugs.setdefault(k, []).append(s)
         self.games = {g["id"]: g for g in lib.all("game")}
         by = {}
-        for kind in ("document", "rail_limit", "fact", "mame", "rom_list"):
+        for kind in ("document", "rail_limit", "fact", "mame", "rom_list", "rom_image"):
             for r in lib.all(kind):
                 by.setdefault(kind, {}).setdefault(r["data"]["model_key"], []).append(r)
         self.by = by

@@ -55,14 +55,14 @@ def build_deck(T, stale=True):
     write(f"{T}/state/machine-specs-confirmed.json", {"widget-wars": conf})
     write(f"{T}/data/gatbox-mame-sets.json", {"machines": {
         "widget-wars": {"set": "widgetw", "status": "sure"}, "gizmo-racer": {"set": None, "status": "none", "why": "PC-based"}}})
-    rom = {"name": "ww1.u10", "size": 524288, "crc": "deadbeef", "sha1": "d" * 40, "region": "user1"}
+    img = os.urandom(2048)
+    sha1, crc = hashlib.sha1(img).hexdigest(), f"{zlib.crc32(img) & 0xffffffff:08x}"
+    rom = {"name": "ww1.u10", "size": 2048, "crc": crc, "sha1": sha1, "region": "user1"}
     write(f"{T}/mame-roms.json", {"meta": {"mame": "0.276 (mame0276)"}, "machines": {
         "widget-wars": {"set": "widgetw", "status": "sure", "why": "", "prefer": "widgetw", "versions": [
             {"name": "widgetw", "desc": "Widget Wars (version 1.2)", "year": "1983", "mfr": "Widgetco", "parent": True,
              "roms": [rom], "disks": [{"name": "widgetw", "sha1": "e" * 40, "region": "ide:0:hdd"}]}]},
         "gizmo-racer": {"set": None, "status": "none", "why": "PC-based"}}})
-    img = os.urandom(2048)
-    sha1, crc = hashlib.sha1(img).hexdigest(), f"{zlib.crc32(img) & 0xffffffff:08x}"
     write(f"{T}/roms/widget-wars/WW-U10_{sha1[:8]}.bin", img, True)
     write(f"{T}/roms/widget-wars/WW-U10_{sha1[:8]}.json", {
         "label": "WW-U10", "part": "27C040@DIP32", "machine": "widget-wars", "size": 2048, "sha1": sha1, "crc32": crc,

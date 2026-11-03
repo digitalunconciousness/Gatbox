@@ -196,7 +196,7 @@ def main():
     check("SYSTEM's library numbers before the seed: not set up, but the manuals' size and the room on /srv are there",
           sysl["seeded"] is False and sysl["manuals_bytes"] > 0 and sysl["roms_bytes"] > 0 and sysl["db_bytes"] == 0 and "games" not in sysl
           and "low" in sysl)
-    first_img = next(f for f in os.listdir(f"{T}/roms/widget-wars") if f.endswith(".bin"))
+    first_img = next(f for f in sorted(os.listdir(f"{T}/roms/widget-wars")) if f.startswith("WW-U10_") and f.endswith(".bin"))
     j = chk(f"widget-wars/{first_img}")
     check("CHECK before the library is set up: MAME's answer, the machine's history and what was seen before all work; the "
           "game's chips say there's no library; a mark is refused",
@@ -306,7 +306,7 @@ def main():
     sysl = get("/api/system")["library"]
     check("seeded: games, documents on the Pi of those listed, limits confirmed of all, ROM images, the database's size",
           sysl["seeded"] and sysl["games"] == 4 and sysl["documents"] == 4 and sysl["fetched"] == 3 and sysl["limits"] == 3
-          and sysl["confirmed"] == 2 and sysl["images"] == 2 and sysl["db_bytes"] > 0 and sysl["missing"] == 3)
+          and sysl["confirmed"] == 2 and sysl["images"] == 3 and sysl["db_bytes"] > 0 and sysl["missing"] == 3)
     from gatboxweb import games as gw_games
     GB = 1000 ** 3
     check("running short: under 2 GB free, or 90% used, warns; room to spare doesn't",
@@ -376,7 +376,7 @@ def main():
     jw = chk(f"widget-wars/{first_img}")
     check("a dump that is the game's listed chip: MAME match, RIGHT CHIP, never seen before, the first dump of that chip",
           verdicts(jw) == {"mame": "match", "game": "right_chip", "images": "never_seen", "machine": "first"}
-          and "RIGHT CHIP: ww1.u10" in jw["checks"][1]["text"] and [c["level"] for c in jw["checks"]] == ["ok", "ok", "mut", "mut"]
+          and "RIGHT CHIP: ww1.u10" in jw["checks"][1]["text"] and jw["checks"][1]["word"] == "RIGHT CHIP" and [c["level"] for c in jw["checks"]] == ["ok", "ok", "mut", "mut"]
           and jw["library"] and jw["size"] == 2048 and len(jw["sha256"]) == 64)
     img_a, sha1_a, sha256_a = add_dump("widget-wars", "WW-U10", os.urandom(4096), 20)
     check("the dump archive's new dump becomes a library image on its own, within seconds (no mark yet)",
@@ -384,7 +384,7 @@ def main():
           and next(i for i in get("/api/library/games/widget-wars/images")["images"] if i["sha256"] == sha256_a)["verdict"] == "unknown")
     ja = chk(img_a)
     check("a later dump of the same chip with different bytes: CHANGED since the earlier one, and MAME no match / not in the list",
-          verdicts(ja)["machine"] == "changed" and "CHANGED since" in ja["checks"][3]["text"]
+          verdicts(ja)["machine"] == "changed" and "CHANGED: since" in ja["checks"][3]["text"]
           and verdicts(ja)["mame"] == "unknown" and verdicts(ja)["game"] == "unlisted")
     img_b, _, sha256_b = add_dump("widget-wars", "ww-u10", os.urandom(4096), 30, match=False)
     check("NO MATCH in MAME is a warning, with its words", verdicts(chk(img_b))["mame"] == "no_match"

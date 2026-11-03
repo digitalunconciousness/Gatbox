@@ -1623,6 +1623,11 @@
     if (mnSlug() !== slug) return;                 // another machine was picked meanwhile
     M.docs = d; M.sheet = s;
     add(clear(B), head, specCard(slug, s, d), docsCard(slug, d));
+    const g = LB.data && LB.data.seeded ? gameOf(slug) : null;
+    if (g) {
+      const ic = await imagesCard(g);
+      if (ic && mnSlug() === slug) B.appendChild(ic);
+    }
   }
   async function pickManualsMachine() {
     let R, O;
@@ -1730,6 +1735,67 @@
       toast(`${g.title}: ${what} saved`);
       loadManuals();
     } catch (e) { fail(e); LB.data = null; loadManuals(); }
+  }
+  // --- CHECK: one dump against MAME, the game's chips, her images and the machine's earlier dumps (B6) -----------------
+  // The server does the comparing (GET /api/library/check) and says each result in words and a level; this draws them and,
+  // on the 7", the marks: KNOWN GOOD, KNOWN BAD, UNMARK. Nothing here sends anything anywhere.
+  const CHECK_AGAINST = {mame: "AGAINST MAME", game: "THE GAME'S CHIPS", images: "YOUR IMAGES", machine: "THIS MACHINE'S EARLIER DUMPS"};
+  const imageOf = path => String(path || "").split("/").slice(-2).join("/");
+  function checkButton(image, label) {
+    const b = el("button", "mini", label || "CHECK ▸");
+    b.addEventListener("click", () => openCheck(image));
+    return b;
+  }
+  async function openCheck(image) {
+    let j;
+    try { j = await api("GET", "/api/library/check?image=" + encodeURIComponent(image)); } catch (e) { return fail(e); }
+    const act = await sheet(`CHECK ${j.label}`, (pane, done) => {
+      pane.appendChild(el("div", "mut", `${j.part || "chip"} · ${j.size.toLocaleString("en-US")} bytes · SHA-1 ${j.sha1.slice(0, 8)} · ${j.date || "no date"}`));
+      for (const c of j.checks) {
+        const row = el("div", "ck-row");
+        add(row, el("span", "badge " + c.level, c.word), el("b", null, " " + CHECK_AGAINST[c.against]), el("div", "mut", c.detail));
+        pane.appendChild(row);
+      }
+      if (S.local && j.library) {
+        const row = el("div", "btnrow");
+        for (const [k, t] of [["good", "KNOWN GOOD"], ["bad", "KNOWN BAD"], ["unknown", "UNMARK"]]) {
+          const b = el("button", j.mark.verdict === k && k !== "unknown" ? "on" : null, t);
+          b.disabled = k === "unknown" && j.mark.verdict === "unknown";
+          b.addEventListener("click", () => done(k));
+          row.appendChild(b);
+        }
+        pane.appendChild(row);
+      } else if (!j.library) pane.appendChild(el("div", "mut", "Marks and the game's chips need the game library: it isn't set up yet."));
+    });
+    if (!act) return;
+    let note = j.mark.note;
+    if (act !== "unknown") {
+      note = await keypad({title: "Note (optional): where it came from, what it was checked against", max: 200, value: j.mark.note || ""});
+      if (note == null) return openCheck(image);
+    }
+    try {
+      await api("POST", `/api/library/images/${j.sha256}/mark`, {verdict: act, note: act === "unknown" ? "" : note});
+      toast(act === "unknown" ? "Mark removed" : `${j.label}: marked ${act === "good" ? "KNOWN GOOD" : "KNOWN BAD"}`);
+    } catch (e) { fail(e); }
+    openCheck(image);
+    if (S.view === "library") loadManuals();
+  }
+  async function imagesCard(g) {
+    let r;
+    try { r = await api("GET", `/api/library/games/${encodeURIComponent(g.key)}/images`); } catch (e) { return null; }
+    const c = el("div", "card");
+    c.appendChild(el("h2", null, `ROM images (${r.images.length})`));
+    if (!r.images.length) { c.appendChild(el("div", "mut", "None yet: every chip dumped from a machine of this game lands here.")); return c; }
+    for (const i of r.images) {
+      const b = el("button", "row");
+      const lvl = {good: ["KNOWN GOOD", "ok"], bad: ["KNOWN BAD", "bad"], unknown: ["NOT MARKED", "mut"]}[i.verdict];
+      add(b, el("b", null, (i.label || i.sha1.slice(0, 8)) + " "), el("span", "badge " + lvl[1], lvl[0]),
+          el("div", "mut", `${i.size.toLocaleString("en-US")} bytes · SHA-1 ${i.sha1.slice(0, 8)}${i.match === true ? " · MAME knows it" : i.match === false ? " · NO MATCH in MAME" : ""}${i.note ? " · " + i.note : ""}`));
+      if (i.image) b.addEventListener("click", () => openCheck(i.image));
+      else b.disabled = true;
+      c.appendChild(b);
+    }
+    return c;
   }
   const pageUrl = (slug, file, page, w) => `/manual/${encodeURIComponent(slug)}/${encodeURIComponent(file)}/${page}.png?w=${w}`;
   function specCard(slug, s, d) {
@@ -2098,7 +2164,8 @@
     for (const r of v.roms) {
       const tr = el("tr"), d = r.dumped[0], fam = famsFor(r.size).map(f => f.label).join(" or ");
       const name = el("td");
-      add(name, el("b", null, r.name), d ? el("div", "ok", `← ${d.label}${d.machine !== slug ? ` (archived under ${d.machine})` : ""}`) : null);
+      add(name, el("b", null, r.name), d ? el("div", "ok", `← ${d.label}${d.machine !== slug ? ` (archived under ${d.machine})` : ""}`) : null,
+          d ? checkButton(`${d.machine}/${d.file}`) : null);
       add(tr, el("td", d ? "ok" : "mut", d ? "✓" : "·"), name,
           el("td", null, KB(r.size) + (fam ? ` · ${fam}` : "")), el("td", null, r.crc || "—"),
           el("td", r.sha1 ? null : "warn", r.sha1 ? r.sha1.slice(0, 8) : (r.status === "nodump" ? "no known dump" : "no hash")),
@@ -2305,7 +2372,7 @@
     L.appendChild(el("h2", null, "Dumps for this machine"));
     B.appendChild(L);
     api("GET", "/api/dumps" + (D.machine ? "?machine=" + encodeURIComponent(D.machine) : ""))
-      .then(r => dumpList(L, r.dumps)).catch(() => {});
+      .then(r => dumpList(L, r.dumps, D.machine || (S.st && S.st.machine) || "unassigned")).catch(() => {});
   }
   // the part: family tiles (lit for a size: the MAME chip's, or the image's) → minipro's exact names; or SEARCH
   function partSection(p, size) {
@@ -2446,6 +2513,7 @@
           el("div", "mut", `SHA-1 ${s.sha1} · CRC32 ${s.crc32}`),
           el("div", "mut", (a.new ? "archived: " : "already archived: ") + (a.path || "")));
       if (s.blank) c.appendChild(el("div", "warn", "archived although it reads " + s.blank));
+      if (a.path) c.appendChild(checkButton(imageOf(a.path)));
     } else {
       add(c, el("div", "big bad", "STOPPED"), el("div", null, s.error || ""), s.hint ? el("div", "mut", "→ " + s.hint) : null);
       const again = el("div", "btnrow"), same = {part: s.part, label: s.label};
@@ -2460,13 +2528,14 @@
     }
     return c;
   }
-  function dumpList(box, list) {
+  function dumpList(box, list, machine) {
     if (!list.length) { box.appendChild(el("div", "mut", "None yet.")); return; }
     for (const d of list.slice(0, 20)) {
       const r = el("div");
       r.style.margin = "4px 0";
       add(r, el("b", null, d.label + " "), el("span", d.match ? "tag ok" : "tag warn", d.match ? "MATCH" : "NO MATCH"),
-          el("div", "mut", `${(d.matches[0] && d.matches[0].set + "/" + d.matches[0].rom) || ""} ${d.part} · ${(d.date || "").slice(0, 16).replace("T", " ")} · ${d.sha1.slice(0, 8)}`));
+          el("div", "mut", `${(d.matches[0] && d.matches[0].set + "/" + d.matches[0].rom) || ""} ${d.part} · ${(d.date || "").slice(0, 16).replace("T", " ")} · ${d.sha1.slice(0, 8)}`),
+          d.file ? checkButton(`${machine}/${d.file}`) : null);
       box.appendChild(r);
     }
   }

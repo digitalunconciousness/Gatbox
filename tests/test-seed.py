@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import zlib
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "backend"))
@@ -74,7 +75,7 @@ def main():
           "+12V was confirmed at 11.4 to 12.5 V" in flags and "CONFIRM the limit again" in flags)
     check("... a dump sidecar with no .bin", "NOBIN_aaaaaaaa.bin" in flags)
     check("the counts say what would be written",
-          plan["counts"] == {"game": 5, "document": 3, "rail_limit": 3, "fact": 2, "mame": 2, "rom_list": 1, "rom_image": 2})
+          plan["counts"] == {"game": 5, "document": 3, "rail_limit": 3, "fact": 2, "mame": 2, "rom_list": 1, "rom_image": 3})
     check("the plan wrote nothing: no library exists yet", not os.path.exists(f"{T}/lib"))
 
     print("applying it:")
@@ -124,6 +125,11 @@ def main():
           images["WW-U10"]["id"] == hashlib.sha256(img).hexdigest() and images["WW-U10"]["data"]["model_key"] == "widget-wars"
           and images["WW-U10"]["data"]["romident"]["match"] and images["loose-image"]["data"]["model_key"] is None
           and images["loose-image"]["data"]["size"] == len(b"loose image bytes"))
+    raw = b"a dump whose sidecar says almost nothing"
+    nc = images["NOCRC"]["data"]
+    check("a dump whose sidecar lacks its size, CRC and SHA-1: they're read from the file, so it's still adopted",
+          nc["size"] == len(raw) and nc["crc32"] == f"{zlib.crc32(raw) & 0xffffffff:08x}" and nc["sha1"] == hashlib.sha1(raw).hexdigest()
+          and nc["model_key"] == "widget-wars")
     check("the slug -> key map is kept for imports, with the seed's time",
           json.loads(lib.meta("slug_keys"))["widget-wars-cocktail"] == "widget-wars" and lib.meta("seeded_at"))
     before = lib.digest()

@@ -67,8 +67,17 @@ def _archive():
     return out
 
 
-def _chk(against, verdict, level, text, **extra):
-    return dict({"against": against, "verdict": verdict, "level": level, "text": text}, **extra)
+WORDS = {"match": "MATCH", "no_match": "NO MATCH", "unknown": "NOT IDENTIFIED", "right_chip": "RIGHT CHIP",
+         "other_revision": "ANOTHER REVISION", "not_this_game": "NOT THIS GAME", "unlisted": "NOT LISTED", "no_list": "NO CHIP LIST",
+         "no_game": "NO GAME", "no_library": "NO LIBRARY", "known_good": "KNOWN GOOD", "known_bad": "KNOWN BAD",
+         "seen_before": "SEEN BEFORE", "never_seen": "NEVER SEEN", "same": "SAME AS LAST TIME", "changed": "CHANGED", "first": "FIRST DUMP"}
+
+
+def _chk(against, verdict, level, detail, **extra):
+    """One comparison's result: the verdict, its word, how it should be drawn, and the explanation. `text` is the word and
+    the explanation in one line, for anything that shows it without a badge."""
+    return dict({"against": against, "verdict": verdict, "word": WORDS[verdict], "level": level, "detail": detail,
+                 "text": f"{WORDS[verdict]}: {detail}"}, **extra)
 
 
 def _mame(side):
@@ -76,22 +85,22 @@ def _mame(side):
     if ri.get("match") is True:
         ms = ri.get("matches") or []
         first = "; ".join(f"{m.get('set')} / {m.get('rom')}" + (f" ({m['description']})" if m.get("description") else "") for m in ms[:3])
-        return _chk("mame", "match", "ok", f"MATCH: {first or 'known to MAME'}", matches=ms)
+        return _chk("mame", "match", "ok", first or "known to MAME", matches=ms)
     if ri.get("match") is False:
-        return _chk("mame", "no_match", "warn", "NO MATCH: MAME doesn't know these bytes. A revision it lacks, a changed chip or a bad read.")
-    return _chk("mame", "unknown", "mut", "NOT IDENTIFIED: MAME couldn't run when this was dumped.")
+        return _chk("mame", "no_match", "warn", "MAME doesn't know these bytes: a revision it lacks, a changed chip or a bad read.")
+    return _chk("mame", "unknown", "mut", "MAME couldn't run when this was dumped.")
 
 
 def _game(v, machine, sha1, mame_check):
     key = v.key_for(machine) if v else None
     if v is None:
-        return _chk("game", "no_library", "mut", "The game library isn't set up, so there's no list of this game's chips to compare with.")
+        return _chk("game", "no_library", "mut", "the game library isn't set up, so there's no list of this game's chips to compare with.")
     if not key:
         return _chk("game", "no_game", "warn", f"{machine} has no game in the library: LIBRARY, ALL GAMES or + ADD GAME links one.")
     title = v.games[key]["data"]["title"]
     rl = (v.recs("rom_list", key) or [None])[0]
     if rl is None or not rl["data"]["versions"]:
-        return _chk("game", "no_list", "warn", f"The library has no chip list for {title} (MAME doesn't have it, or the list isn't built).", key=key)
+        return _chk("game", "no_list", "warn", f"the library has no chip list for {title} (MAME doesn't have it, or the list isn't built).", key=key)
     mame = (v.recs("mame", key) or [None])[0]
     versions = rl["data"]["versions"]
     prefer = (mame["data"]["prefer"] or mame["data"]["set"]) if mame else None
@@ -100,16 +109,16 @@ def _game(v, machine, sha1, mame_check):
     if hits:
         here = next(((x, r) for x, r in hits if x["name"] == first["name"]), None)
         if here:
-            return _chk("game", "right_chip", "ok", f"RIGHT CHIP: {here[1]['name']} of {here[0]['description'] or here[0]['name']}", key=key)
+            return _chk("game", "right_chip", "ok", f"{here[1]['name']} of {here[0]['description'] or here[0]['name']}", key=key)
         x, r = hits[0]
-        return _chk("game", "other_revision", "warn", f"ANOTHER REVISION: {r['name']} of {x['description'] or x['name']}, not "
+        return _chk("game", "other_revision", "warn", f"{r['name']} of {x['description'] or x['name']}, not "
                     f"{first['description'] or first['name']} (the version MAME lists first for {title}).", key=key)
     sets = {m.get("set") for m in (mame_check.get("matches") or [])}
     if sets and not sets & {x["name"] for x in versions}:
-        return _chk("game", "not_this_game", "bad", f"NOT THIS GAME: MAME knows these bytes as {', '.join(sorted(s for s in sets if s))}, "
+        return _chk("game", "not_this_game", "bad", f"MAME knows these bytes as {', '.join(sorted(s for s in sets if s))}, "
                     f"which isn't a version of {title}.", key=key)
     n = sum(len(x["roms"]) for x in versions)
-    return _chk("game", "unlisted", "warn", f"NOT LISTED: not one of the {n} chips MAME lists for {title}'s versions. A revision it lacks, "
+    return _chk("game", "unlisted", "warn", f"not one of the {n} chips MAME lists for {title}'s versions: a revision it lacks, "
                 f"a changed chip or a bad read.", key=key)
 
 
@@ -117,26 +126,26 @@ def _images(v, sha256, sha1, machine, file):
     rec = v.lib.get("rom_image", sha256) if v else None
     d = rec["data"] if rec else {}
     if d.get("verdict") == "good":
-        return _chk("images", "known_good", "ok", "KNOWN GOOD" + (f": {d['note']}" if d.get("note") else " (marked by you)"))
+        return _chk("images", "known_good", "ok", d["note"] if d.get("note") else "marked by you")
     if d.get("verdict") == "bad":
-        return _chk("images", "known_bad", "bad", "KNOWN BAD" + (f": {d['note']}" if d.get("note") else " (marked by you)"))
+        return _chk("images", "known_bad", "bad", d["note"] if d.get("note") else "marked by you")
     others = [a for a in _archive() if a["sha1"] == sha1 and (a["machine"], a["file"]) != (machine, file)]
     if others:
         o = min(others, key=lambda a: a["epoch"])
-        return _chk("images", "seen_before", "warn", f"SEEN BEFORE: the same bytes were dumped as {o['label']} from {o['machine']} on {o['date']}. "
+        return _chk("images", "seen_before", "warn", f"the same bytes were dumped as {o['label']} from {o['machine']} on {o['date']}. "
                     "Not marked good or bad yet.")
-    return _chk("images", "never_seen", "mut", "NEVER SEEN: the first time these bytes have been read, and not marked good or bad yet.")
+    return _chk("images", "never_seen", "mut", "the first time these bytes have been read, and not marked good or bad yet.")
 
 
 def _history(machine, file, label, sha1, epoch):
     earlier = sorted((a for a in _archive() if a["machine"] == machine and a["label"].lower() == label.lower()
                       and a["file"] != file and a["epoch"] < epoch), key=lambda a: a["epoch"])
     if not earlier:
-        return _chk("machine", "first", "mut", f"FIRST DUMP of {label} from this machine.")
+        return _chk("machine", "first", "mut", f"the first time {label} has been dumped from this machine.")
     last = earlier[-1]
     if last["sha1"] == sha1:
-        return _chk("machine", "same", "ok", f"SAME AS LAST TIME ({last['date']}): the chip hasn't changed.")
-    return _chk("machine", "changed", "warn", f"CHANGED since {last['date']}: it was {last['sha1'][:8]}, it's {sha1[:8]} now. "
+        return _chk("machine", "same", "ok", f"the same bytes as the dump of {last['date']}: the chip hasn't changed.")
+    return _chk("machine", "changed", "warn", f"since {last['date']} it was {last['sha1'][:8]}, and it's {sha1[:8]} now. "
                 "Expected after a burn; otherwise a failing chip or a bad read.")
 
 
@@ -197,8 +206,12 @@ def images(key):
         raise meter.Bad(409, "the game library isn't set up on this Pi yet (gatbox-library seed --plan)")
     if key not in v.games:
         raise meter.Bad(404, f"no game {key!r} in the library")
+    files = {}
+    for a in _archive():
+        files.setdefault(a["sha1"], f"{a['machine']}/{a['file']}")
     out = [{"sha256": r["id"], "label": r["data"]["label"], "part": r["data"]["part"], "size": r["data"]["size"],
             "sha1": r["data"]["sha1"], "verdict": r["data"]["verdict"], "note": r["data"]["note"], "chip": r["data"]["chip"],
-            "revision": r["data"]["revision"], "match": (r["data"]["romident"] or {}).get("match")}
+            "revision": r["data"]["revision"], "match": (r["data"]["romident"] or {}).get("match"),
+            "image": files.get(r["data"]["sha1"])}
            for r in v.recs("rom_image", key)]
     return {"key": key, "images": sorted(out, key=lambda i: (i["label"] or "").lower())}

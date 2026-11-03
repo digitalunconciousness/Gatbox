@@ -53,6 +53,17 @@ def _sha256(path):
     return h.hexdigest()
 
 
+def _digests(path):
+    """(sha256, sha1, crc32 as 8 hex digits) of a file, in one pass."""
+    h256, h1, crc = hashlib.sha256(), hashlib.sha1(), 0
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h256.update(chunk)
+            h1.update(chunk)
+            crc = zlib.crc32(chunk, crc)
+    return h256.hexdigest(), h1.hexdigest(), f"{crc & 0xffffffff:08x}"
+
+
 def _pages(path):
     try:
         r = subprocess.run(["pdfinfo", path], capture_output=True, text=True, timeout=30, check=False)
@@ -339,24 +350,23 @@ def _images(src, key_of, known, flags):
         if not os.path.isfile(binf):
             flags.append(f"{os.path.basename(binf)}: its sidecar has no .bin beside it: left out")
             continue
-        sha = _sha256(binf)
+        sha, sha1, crc = _digests(binf)
         if sha in seen:
             continue
         seen.add(sha)
         key = key_of.get(folder)
-        out.append(("rom_image", sha, {"size": j.get("size") or os.path.getsize(binf), "crc32": j.get("crc32"),
-                                       "sha1": j.get("sha1"), "label": str(j.get("label", ""))[:120],
+        # a sidecar's own size, CRC and SHA-1 first; what it lacks is read from the file
+        out.append(("rom_image", sha, {"size": j.get("size") or os.path.getsize(binf), "crc32": j.get("crc32") or crc,
+                                       "sha1": j.get("sha1") or sha1, "label": str(j.get("label", ""))[:120],
                                        "part": str(j.get("part", ""))[:60], "romident": j.get("romident"),
                                        "model_key": key if key in known else None}))
     for binf in sorted(glob.glob(os.path.join(src["roms"], "_images", "*.bin"))):
-        sha = _sha256(binf)
+        sha, sha1, crc = _digests(binf)
         if sha in seen:
             continue
         seen.add(sha)
-        with open(binf, "rb") as f:
-            raw = f.read()
-        out.append(("rom_image", sha, {"size": len(raw), "crc32": f"{zlib.crc32(raw) & 0xffffffff:08x}",
-                                       "sha1": hashlib.sha1(raw).hexdigest(), "label": os.path.basename(binf)[:-4][:120]}))
+        out.append(("rom_image", sha, {"size": os.path.getsize(binf), "crc32": crc, "sha1": sha1,
+                                       "label": os.path.basename(binf)[:-4][:120]}))
     return out
 
 

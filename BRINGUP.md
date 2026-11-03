@@ -625,8 +625,19 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         limits confirmed of all, ROM images, the size on the Pi (manuals, ROM images, the database) and the room on
         /srv, with LOW (under 2 GB free, or 90% used) in red. It's there before the library is set up too: the manuals'
         size and the room are true either way. `/api/system` carries `library`
-  - [ ] B5, the title search and linking a machine to a game · B6, CHECK + marks · B8, manuals on request (⏸ a path
-        unit, shown first)
+  - [x] B6, CHECK and the known-good marks. `GET /api/library/check?image=<machine>/<file>.bin` compares one archived
+        dump four ways, each as a word, a level and an explanation: MAME's own answer (MATCH / NO MATCH / NOT
+        IDENTIFIED), the game's chips from the library's ROM list (RIGHT CHIP / ANOTHER REVISION / NOT THIS GAME / NOT
+        LISTED), her images (KNOWN GOOD / KNOWN BAD / SEEN BEFORE / NEVER SEEN) and this machine's earlier dumps of
+        the chip (SAME AS LAST TIME / CHANGED / FIRST DUMP). It reads and sends nothing, and works before the library
+        is set up (minus the game's chips and the marks). `POST /api/library/images/<sha256>/mark` sets known good /
+        bad / unmarked with a note (the Pi's own screen only). gatbox-web adopts every archived dump into the library
+        as a `rom_image` within seconds and never changes one that's there, a mark included; a sidecar missing its size,
+        CRC or SHA-1 has them read from the file. On the 7": CHECK ▸ on the DUMP result and list and on each ROM chip
+        that has a dump, the marks inside the sheet, and a "ROM images" card on each game in LIBRARY. A phone reads.
+        `test-library-web.sh` 64, `test-dash.sh` 143 (screenshots 27a–27c, 28), `test-seed.sh` 40; 16 of 16 guards broken
+        on purpose fail a test
+  - [ ] B5, the title search and linking a machine to a game · B8, manuals on request (⏸ a path unit, shown first)
   - [ ] ⏸ Install diff, shown first (not made yet): `gatbox-web.service` gets `ReadWritePaths=-/srv/gatbox/library` (it
         already has the `gatbox-manuals` group), tmpfiles `d /srv/gatbox/library 2775 root gatbox-manuals -`, and the
         MANIFEST lines already in the bootstrap (`library.py`, `libview.py`, `seed.py`, `libsource.py`, `gatbox-library`)

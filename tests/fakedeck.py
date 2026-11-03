@@ -67,6 +67,9 @@ def build_deck(T, stale=True):
     write(f"{T}/roms/widget-wars/WW-U10_{sha1[:8]}.json", {
         "label": "WW-U10", "part": "27C040@DIP32", "machine": "widget-wars", "size": 2048, "sha1": sha1, "crc32": crc,
         "romident": {"match": True, "matches": [{"set": "widgetw", "rom": "ww1.u10", "description": "x"}]}})
+    nocrc = b"a dump whose sidecar says almost nothing"
+    write(f"{T}/roms/widget-wars/NOCRC_00000000.bin", nocrc, True)
+    write(f"{T}/roms/widget-wars/NOCRC_00000000.json", {"label": "NOCRC"})
     write(f"{T}/roms/unknown-board/NOBIN_aaaaaaaa.json", {"label": "NOBIN", "sha1": "a" * 40, "crc32": "0" * 8, "size": 1})
     write(f"{T}/roms/_images/loose-image.bin", b"loose image bytes", True)
     return img

@@ -228,6 +228,8 @@ def setup():
                  "parent": False, "roms": [rom("legend12.u10", "d")], "disks": []}]},
             "gauntlet": {"set": None, "status": "none", "why": "test: no set", "prefer": None}}}, f)
     os.makedirs(f"{T}/roms/gauntlet-legends")
+    with open(f"{T}/roms/gauntlet-legends/LEGEND15-U10_aaaaaaaa.bin", "wb") as f:      # the sidecar's chip, as far as CHECK reads it
+        f.write(b"fixture bytes of a chip")
     with open(f"{T}/roms/gauntlet-legends/LEGEND15-U10_aaaaaaaa.json", "w") as f:
         json.dump({"label": "LEGEND15-U10", "part": "27C040@DIP32", "sha1": "a" * 40, "date": "2026-09-29T10:00:00-05:00",
                    "romident": {"match": True, "matches": [{"set": "gauntleg", "rom": "legend15.u10", "description": "x"}]}}, f)
@@ -1415,6 +1417,52 @@ def main():
             c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
         else:
             print("  skip  the phone's LIBRARY view (no LAN address here)")
+
+        print("CHECK: a dump against MAME, the game's chips, her images and the machine's earlier dumps:")
+        c.open(B + "/dash/", 1024, 600)
+        c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
+        click('[data-view="machine"]')
+        c.wait("!document.querySelector('#mc-labels').disabled", 10)
+        c.wait("[...document.querySelectorAll('#mc-body button.fold')].some(b => b.textContent.includes('ROM CHIPS'))", 15)
+        open_fold("ROM CHIPS")
+        c.wait("[...document.querySelectorAll('#mc-body button')].some(b => b.textContent === 'CHECK ▸')", 15)
+        q("[...document.querySelectorAll('#mc-body button')].find(b => b.textContent === 'CHECK ▸').click()")
+        c.wait("document.querySelector('#pane').textContent.includes('THIS MACHINE')", 10)
+        pane_text = text("#pane")
+        check("CHECK from the chip list: the four comparisons, each a word and its explanation",
+              all(w in pane_text for w in ("AGAINST MAME", "THE GAME'S CHIPS", "YOUR IMAGES", "THIS MACHINE'S EARLIER DUMPS", "MATCH", "RIGHT CHIP",
+                                           "legend15.u10 of Gauntlet Legends", "NEVER SEEN", "FIRST DUMP", "the first time LEGEND15-U10 has been dumped")))
+        check("... each result has a level class, and the marks are on the 7\"",
+              q("document.querySelectorAll('#pane .ck-row .badge.ok').length") == 2 and q("document.querySelectorAll('#pane .ck-row .badge.mut').length") == 2
+              and q("[...document.querySelectorAll('#pane button')].map(b => b.textContent).filter(t => ['KNOWN GOOD', 'KNOWN BAD', 'UNMARK'].includes(t)).length") == 3)
+        shot("27a-check")
+        pane_tap("KNOWN GOOD")
+        c.wait("document.querySelector('#pane .kp-field')")
+        type_text("ROM SET")
+        c.wait("document.querySelector('#pane .ck-row .badge.ok') && document.querySelectorAll('#pane .ck-row .badge.ok').length === 3 "
+               "&& document.querySelector('#pane').textContent.includes('ROM SET')", 15)
+        check("MARK KNOWN GOOD with a note: CHECK reopens and says so, in the words you typed",
+              "KNOWN GOOD" in text("#pane") and "ROM SET" in text("#pane") and q("document.querySelectorAll('#pane .ck-row .badge.ok').length") == 3)
+        shot("27b-check-good")
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'CLOSE').click()")
+        click('[data-view="library"]')
+        check("LIBRARY: the game's ROM images, with the mark on it",
+              lib_has("ROM images (1)") and "KNOWN GOOD" in text("#lb-body") and "ROM SET" in text("#lb-body"))
+        q("document.querySelector('#lb-body').lastElementChild.scrollIntoView({block: 'end'})")
+        shot("27c-library-images")
+        lan = next((a for a in _lan_addrs() if "." in a and not a.startswith("127.")), None)
+        if lan:
+            c.open(f"http://{lan}:{PORT}/dash/?box=0", 390, 844)
+            c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
+            click('[data-view="library"]')
+            lib_has("ROM images (1)")
+            q("[...document.querySelectorAll('#lb-body button.row')].find(b => b.textContent.includes('LEGEND15-U10')).click()")
+            c.wait("document.querySelector('#pane').textContent.includes('AGAINST MAME')", 10)
+            check("from a phone: CHECK reads, the marks aren't offered",
+                  "KNOWN GOOD" in text("#pane") and not q("[...document.querySelectorAll('#pane button')].some(b => b.textContent === 'UNMARK' || b.textContent === 'KNOWN BAD')"))
+            shot("28-check-phone")
+            c.open(B + "/dash/", 1024, 600)
+            c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
 
     print("phone (390x844):")
     with Chrome(f"{T}/browser2") as c:

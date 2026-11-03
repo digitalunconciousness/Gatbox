@@ -12,10 +12,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import zlib
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "backend"))
+sys.path.insert(0, os.path.join(REPO, "tests"))
+from fakedeck import build_deck, write
 from gatboxlib import library as L
 from gatboxlib import seed
 
@@ -35,12 +36,6 @@ def load(path):
         return json.load(f)
 
 
-def write(path, data, binary=False):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "wb" if binary else "w") as f:
-        f.write(data if binary else (data if isinstance(data, str) else json.dumps(data)))
-
-
 def env(**extra):
     e = dict(os.environ, GATBOX_DATA=f"{T}/data", GATBOX_STATE=f"{T}/state", GATBOX_MANUALS=f"{T}/manuals",
              GATBOX_ROMS=f"{T}/roms", GATBOX_MAME_ROMS=f"{T}/mame-roms.json", GATBOX_LIBRARY=f"{T}/lib/library.sqlite")
@@ -53,65 +48,8 @@ def run(*args, **extra):
     return r.returncode, r.stdout + r.stderr
 
 
-def build_deck():
-    """The files the seed reads, as they'd be on the Pi."""
-    write(f"{T}/data/gatbox-barcade-roster.json", {
-        "meta": {}, "video_games": [
-            {"slug": "widget-wars", "name": "Widget Wars", "mfr": "Widgetco", "platform": "x"},
-            {"slug": "widget-wars-cocktail", "name": "Widget Wars Cocktail", "mfr": "Widgetco", "platform": "x"},
-            {"slug": "gizmo-racer", "name": "Gizmo Racer", "mfr": "Gizmo Inc", "platform": "x"},
-            {"slug": "ws-9", "name": "Sprocket & Cog", "mfr": "", "platform": "x"}],
-        "pinball": [{"slug": "pin-widget-pinball", "name": "Widget Pinball", "mfr": "Widgetco", "platform": "y"}], "retired": []})
-    pdf = b"%PDF-1.4 widget wars manual bytes"
-    write(f"{T}/manuals/widget-wars/widget-wars-manual.pdf", pdf, True)
-    write(f"{T}/manuals/widget-wars/widget-wars-manual.json", {
-        "id": "widget-wars-manual", "title": "Widget Wars Operations Manual", "kind": "manual", "url": "https://archive.example/ww.pdf",
-        "source": "an archive", "sha256": hashlib.sha256(pdf).hexdigest(), "pages": 3, "added": "fetch"})
-    write(f"{T}/manuals/widget-wars/My Notes (1).pdf", b"%PDF-1.4 hand dropped", True)         # no sidecar, a name an id can't have
-    write(f"{T}/data/gatbox-manuals.json", {"machines": {
-        "widget-wars": {"docs": [{"id": "widget-wars-manual", "title": "Widget Wars Operations Manual", "kind": "manual",
-                                  "url": "https://archive.example/ww.pdf", "source": "an archive"},
-                                 {"id": "widget-wars-schematics", "title": "Schematics", "kind": "schematics",
-                                  "url": "http://insecure.example/s.pdf"}],
-                        "why": "the schematics are only on a site that doesn't serve plain PDFs",
-                        "specs": {"rails": [{"rail": "+5V", "lo": 4.75, "hi": 5.25, "doc": "widget-wars-manual", "page": 2,
-                                             "quote": "+5 VDC 4.75 to 5.25 V"},
-                                            {"rail": "+12V", "lo": 11.4, "hi": 12.6, "doc": "widget-wars-manual", "page": 2,
-                                             "quote": "+12 VDC"},
-                                            {"rail": "nonsense", "lo": 1, "hi": 2, "doc": "x", "page": 1, "quote": ""}],
-                                  "sheet": [{"what": "Fuse F1", "value": "5 A slow-blow", "doc": "widget-wars-manual", "page": 2,
-                                             "quote": "FUSE F1 5A SLO-BLO"},
-                                            {"what": "Monitor", "value": "19 inch raster", "doc": None, "page": None, "quote": ""}]}},
-        "widget-wars-cocktail": {"docs": [], "note": "Cocktail table too"},
-        "ghost-machine": {"docs": [], "why": "not on the roster"}}})
-    write(f"{T}/data/gatbox-machine-specs.json", {"meta": {"updated": "2026-09-26"}, "machines": {
-        "gizmo-racer": {"rails": {"+5V": [4.9, 5.1]}, "source": "Gizmo Racer manual, DC limits (per the owner)"}}})
-    write(f"{T}/state/machine-specs-confirmed.json", {"widget-wars": {
-        "+5V": {"lo": 4.75, "hi": 5.25, "doc": "widget-wars-manual", "page": 2, "source": "Widget Wars Operations Manual p.2",
-                "confirmed": "2026-10-01T12:00:00+0000"},
-        "+12V": {"lo": 11.4, "hi": 12.5, "doc": "widget-wars-manual", "page": 2, "confirmed": "2026-10-01T12:00:00+0000"},
-        "+3.3V": {"lo": 3.2, "hi": 3.4, "doc": "gone", "page": 1, "confirmed": "2026-10-01T12:00:00+0000"}}})
-    write(f"{T}/data/gatbox-mame-sets.json", {"machines": {
-        "widget-wars": {"set": "widgetw", "status": "sure"}, "gizmo-racer": {"set": None, "status": "none", "why": "PC-based"}}})
-    rom = {"name": "ww1.u10", "size": 524288, "crc": "deadbeef", "sha1": "d" * 40, "region": "user1"}
-    write(f"{T}/mame-roms.json", {"meta": {"mame": "0.276 (mame0276)"}, "machines": {
-        "widget-wars": {"set": "widgetw", "status": "sure", "why": "", "prefer": "widgetw", "versions": [
-            {"name": "widgetw", "desc": "Widget Wars (version 1.2)", "year": "1983", "mfr": "Widgetco", "parent": True,
-             "roms": [rom], "disks": [{"name": "widgetw", "sha1": "e" * 40, "region": "ide:0:hdd"}]}]},
-        "gizmo-racer": {"set": None, "status": "none", "why": "PC-based"}}})
-    img = os.urandom(2048)
-    sha1, crc = hashlib.sha1(img).hexdigest(), f"{zlib.crc32(img) & 0xffffffff:08x}"
-    write(f"{T}/roms/widget-wars/WW-U10_{sha1[:8]}.bin", img, True)
-    write(f"{T}/roms/widget-wars/WW-U10_{sha1[:8]}.json", {
-        "label": "WW-U10", "part": "27C040@DIP32", "machine": "widget-wars", "size": 2048, "sha1": sha1, "crc32": crc,
-        "romident": {"match": True, "matches": [{"set": "widgetw", "rom": "ww1.u10", "description": "x"}]}})
-    write(f"{T}/roms/unknown-board/NOBIN_aaaaaaaa.json", {"label": "NOBIN", "sha1": "a" * 40, "crc32": "0" * 8, "size": 1})
-    write(f"{T}/roms/_images/loose-image.bin", b"loose image bytes", True)
-    return img
-
-
 def main():
-    img = build_deck()
+    img = build_deck(T)
 
     print("the plan (read-only):")
     plan_path = f"{T}/plan.json"
@@ -132,6 +70,8 @@ def main():
           "ghost-machine" in flags and "My Notes (1)" in flags and "'my-notes-1'" in flags)
     check("... a source address that isn't https, a confirmed limit nothing on the list matches, a rail it can't use",
           "isn't https" in flags and "+3.3V" in flags)
+    check("... and a limit confirmed at other numbers than the list now has: the logger would stop using it, so it says so",
+          "+12V was confirmed at 11.4 to 12.5 V" in flags and "CONFIRM the limit again" in flags)
     check("... a dump sidecar with no .bin", "NOBIN_aaaaaaaa.bin" in flags)
     check("the counts say what would be written",
           plan["counts"] == {"game": 5, "document": 3, "rail_limit": 3, "fact": 2, "mame": 2, "rom_list": 1, "rom_image": 2})

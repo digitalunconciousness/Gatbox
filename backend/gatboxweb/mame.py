@@ -11,7 +11,7 @@ import os
 
 from gatboxlib import profiles
 
-from . import config, roster
+from . import config, libsource, roster
 from .meter import Bad
 
 
@@ -41,9 +41,9 @@ def checklist(slug):
                 "mame": None, "versions": [], "default": None}
     asked, slug = slug, lib
     try:
-        data = profiles._load(config.MAME_ROMS)
+        data = libsource.mame_roms(profiles._load(config.MAME_ROMS))      # a seeded deck: the library's over the file's
     except (OSError, ValueError):
-        data = None
+        data = libsource.mame_roms(None)
     if not data:
         raise Bad(503, "no MAME checklist on this Pi yet (the bootstrap builds it from gatbox-mame-sets.json)")
     meta = data.get("meta", {})

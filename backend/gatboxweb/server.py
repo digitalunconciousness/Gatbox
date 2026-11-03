@@ -20,7 +20,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from . import (captures, config, devices, dump, mame, manuals, meter, orders, phone, report,
+from . import (captures, config, devices, dump, libsource, mame, manuals, meter, orders, phone, report,
                roster, sessions, system, wifi)
 from .live import LIVE
 from .meter import Bad
@@ -948,6 +948,7 @@ def main():
         pass
     LIVE.start()
     dump.watch()
+    libsource.watch()                                      # the logger's flat export follows the game library
     threading.Thread(target=_warm, name="warm", daemon=True).start()
     ThreadingHTTPServer.allow_reuse_address = True
     ThreadingHTTPServer.daemon_threads = True

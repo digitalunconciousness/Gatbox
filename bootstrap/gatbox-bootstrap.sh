@@ -72,10 +72,14 @@ tools/gatbox-replay                             /usr/local/bin/gatbox-replay    
 tools/gatbox-labels                             /usr/local/bin/gatbox-labels                          755
 tools/gatbox-dump                               /usr/local/bin/gatbox-dump                            755
 tools/gatbox-mame-roms                          /usr/local/bin/gatbox-mame-roms                       755
+tools/gatbox-library                            /usr/local/bin/gatbox-library                         755
 tools/gatbox-manuals                            /usr/local/bin/gatbox-manuals                         755
 backend/gatboxlib/__init__.py                   /usr/local/lib/gatbox/gatboxlib/__init__.py           644
 backend/gatboxlib/modes.py                      /usr/local/lib/gatbox/gatboxlib/modes.py              644
 backend/gatboxlib/profiles.py                   /usr/local/lib/gatbox/gatboxlib/profiles.py           644
+backend/gatboxlib/library.py                    /usr/local/lib/gatbox/gatboxlib/library.py            644
+backend/gatboxlib/libview.py                    /usr/local/lib/gatbox/gatboxlib/libview.py            644
+backend/gatboxlib/seed.py                       /usr/local/lib/gatbox/gatboxlib/seed.py               644
 backend/gatboxlib/csvlog.py                     /usr/local/lib/gatbox/gatboxlib/csvlog.py             644
 backend/gatboxweb/__init__.py                   /usr/local/lib/gatbox/gatboxweb/__init__.py           644
 backend/gatboxweb/config.py                     /usr/local/lib/gatbox/gatboxweb/config.py             644
@@ -91,6 +95,7 @@ backend/gatboxweb/system.py                     /usr/local/lib/gatbox/gatboxweb/
 backend/gatboxweb/devices.py                    /usr/local/lib/gatbox/gatboxweb/devices.py            644
 backend/gatboxweb/dump.py                       /usr/local/lib/gatbox/gatboxweb/dump.py               644
 backend/gatboxweb/mame.py                       /usr/local/lib/gatbox/gatboxweb/mame.py               644
+backend/gatboxweb/libsource.py                  /usr/local/lib/gatbox/gatboxweb/libsource.py          644
 backend/gatboxweb/manuals.py                    /usr/local/lib/gatbox/gatboxweb/manuals.py            644
 backend/gatboxweb/wifi.py                       /usr/local/lib/gatbox/gatboxweb/wifi.py               644
 backend/gatboxweb/orders.py                     /usr/local/lib/gatbox/gatboxweb/orders.py             644

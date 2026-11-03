@@ -20,7 +20,7 @@ import unicodedata
 
 from gatboxlib import profiles
 
-from . import config, hubs, meter      # meter.Bad at call time: meter imports this module too
+from . import config, hubs, libsource, meter      # meter.Bad at call time: meter imports this module too
 
 KINDS = profiles.FLOOR                                 # ("video_games", "pinball")
 FIELDS = ("slug", "name", "platform", "mfr", "risk", "faults", "parts", "notes")   # a roster entry, in the file's order
@@ -331,7 +331,14 @@ def entry(slug):
 
 def library(slug):
     """Whose manuals, spec sheet and ROM list a machine uses: its own when it's on this Pi's roster, its model's
-    (model_key) when a hub knows it by one that is, else None."""
+    (model_key) when a hub knows it by one that is, else None. On a seeded deck, the slug whose folder holds the game's
+    files: two cabinets the seed made one game share their manuals, limits and ROM list."""
+    lib = libsource.library_slug(slug)
+    if lib is None:
+        m = hubs.machine(slug) if slug not in (local_slugs() or set()) else None
+        lib = libsource.library_slug(m.get("model_key")) if m and m.get("model_key") else None
+    if lib is not None:
+        return lib
     if slug in (local_slugs() or set()):
         return slug
     m = hubs.machine(slug)

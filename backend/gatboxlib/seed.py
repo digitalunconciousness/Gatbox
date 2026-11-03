@@ -303,6 +303,10 @@ def _limits(slug, key, entry, conf, specs_entry, specs_at, flags):
         c = conf.get(r["rail"]) or {}
         same = bool(c) and c.get("doc") == doc and c.get("page") == page and [c.get("lo"), c.get("hi")] == [r.get("lo"), r.get("hi")]
         manual_rails.add(r["rail"])
+        if c and not same:
+            flags.append(f"{slug}: {r['rail']} was confirmed at {c.get('lo')} to {c.get('hi')} V (page {c.get('page')}), but the list now "
+                         f"says {r.get('lo')} to {r.get('hi')} V (page {page}). The old confirmation isn't carried over, so the "
+                         f"logger stops using it: CONFIRM the limit again after the seed")
         out.append(("rail_limit", _id("rail_limit", key, r["rail"], doc, page), {
             "model_key": key, "rail": r["rail"], "lo": lo, "hi": hi, "doc_id": doc, "page": page,
             "quote": str(r.get("quote", ""))[:500],

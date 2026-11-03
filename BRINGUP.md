@@ -599,8 +599,23 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         (one transaction; what's there is kept, a deleted record stays deleted, so a second run changes nothing),
         `import --kind manuals|mame-sets|specs FILE` (edits; never confirms or unconfirms a limit), `status`.
         `test-seed.sh` 38 on an invented deck; 19 of 20 guards broken on purpose fail a test (the 20th is equivalent)
-  - [ ] B3, the readers · B4–B8, LIBRARY, the title search, CHECK + marks, the SYSTEM tile, manuals on request
+  - [x] B3, the readers: once the deck is seeded, `gatboxlib/libview.py` builds today's data shapes (the manuals list,
+        the CONFIRMed state, the specs file's limits, mame-roms.json) from the library, and `manuals.py`, `mame.py` and
+        `roster.library` read those instead of the files, which stay the fallback for a machine the seed left out. With
+        no library file nothing changes. CONFIRM / UNCONFIRM write the library, and gatbox-web keeps `library-specs.json`
+        (the confirmed limits, flat) in its state dir: that file replaces the specs-file and confirmed-state layers in
+        `profiles.machine_specs`, so the logger never opens SQLite. A damaged export, or no library, falls back to the
+        files. Two cabinets seeded as one game share their manuals (files stay in each cabinet's folder), limits and ROM
+        list; a retired game's machines read its survivor. The seed now flags a limit confirmed at other numbers than the
+        list has (the logger would stop using it). `test-library-web.sh` 31 (the same answers before and after a seed,
+        CONFIRM through the library to the logger, an outside change within seconds, the fallbacks, the merge), 21 of 22
+        guards broken on purpose fail a test (the 22nd is equivalent); the web-api, manuals, mame, roster, raillog,
+        report and sync suites pass unchanged
+  - [ ] B4–B8, LIBRARY (replaces MANUALS), the title search, CHECK + marks, the SYSTEM tile, manuals on request
         (⏸ a path unit, shown first)
+  - [ ] ⏸ Install diff, shown first (not made yet): `gatbox-web.service` gets `ReadWritePaths=-/srv/gatbox/library` (it
+        already has the `gatbox-manuals` group), tmpfiles `d /srv/gatbox/library 2775 root gatbox-manuals -`, and the
+        MANIFEST lines already in the bootstrap (`library.py`, `libview.py`, `seed.py`, `libsource.py`, `gatbox-library`)
   - [ ] ⏸ Owner: review the seed plan after B2; see the install diff before anything is installed
 - **The integration plan, phase A (2026-10-28):** `docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md`,
   approved by the owner. Repo-only on this side (nothing installed changes except the guard above).

@@ -1,0 +1,11 @@
+# NOT INSTALLED YET: this is the repo copy for review. The bootstrap doesn't install it until the owner has seen the diff
+# (BRINGUP.md, phase B8) and said yes.
+[Unit]
+Description=GATBOX: look for a manual on archive.org when the dashboard asks (a request in /var/spool/gatbox-manuals)
+
+[Path]
+PathExists=/var/spool/gatbox-manuals/request.json
+Unit=gatbox-manuals.service
+
+[Install]
+WantedBy=multi-user.target

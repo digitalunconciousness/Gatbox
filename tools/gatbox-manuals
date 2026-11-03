@@ -12,6 +12,9 @@ The list is gatbox-manuals.json (git-ignored next to the roster: it's the floor)
                                     (%PDF- and pdfinfo reads it), the list's sha256 checked (--pin records the
                                     ones it lacks); <id>.pdf + <id>.json (sidecar) + <id>.txt (its text)
   gatbox-manuals list [SLUG...]     what's here, what's missing, and the sizes
+  gatbox-manuals --job REQUEST --status STATUS     the dashboard's FIND A MANUAL (gatbox-manuals.service, started by its path
+                                    unit when gatbox-web drops a request): search archive.org's texts, list one item's PDFs,
+                                    or fetch one. Same rules as fetch: https from the archives only, a real PDF only.
 
 Run it as the owner (group gatbox-manuals: the folder is 2775). Nothing here is in git: the documents are copyrighted.
 """
@@ -51,6 +54,9 @@ TEST_HOSTS = {h for h in os.environ.get("GATBOX_MANUAL_HOSTS", "").split(",") if
 MAX = 400 * 1024 * 1024
 UA = "gatbox-manuals/1 (a personal archive of service manuals for machines in our care)"
 ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
+ARCHIVE = os.environ.get("GATBOX_ARCHIVE", "https://archive.org").rstrip("/")      # tests point this at a local fake
+IA_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,100}$")
+SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
 def list_path():
@@ -155,6 +161,100 @@ def fetch_one(slug, doc):
     return "fetched", f"{pages} pages, {side['bytes'] // 1024} KB, sha256 {digest[:12]}…"
 
 
+# --- the dashboard's job: FIND A MANUAL --------------------------------------------------------------------------------------
+
+def _get_json(url):
+    if not allowed(url):
+        raise ValueError(f"not an allowed archive: {url}")
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.build_opener(Redirects).open(req, timeout=45) as r:
+        return json.loads(r.read(8 * 1024 * 1024))
+
+
+def ia_search(query, rows=20):
+    """Items on archive.org's texts that have every word of the query in their title, the most downloaded first."""
+    words = [re.sub(r"[^A-Za-z0-9]", "", w) for w in query.split()]
+    words = [w for w in words if w][:8]
+    if not words:
+        raise ValueError("nothing to search for")
+    q = "title:(" + " AND ".join(words) + ") AND mediatype:texts"
+    from urllib.parse import urlencode
+    url = f"{ARCHIVE}/advancedsearch.php?" + urlencode([("q", q), ("fl[]", "identifier"), ("fl[]", "title"), ("fl[]", "downloads"),
+                                                        ("sort[]", "downloads desc"), ("rows", rows), ("output", "json")])
+    docs = (_get_json(url).get("response") or {}).get("docs") or []
+    return [{"identifier": d["identifier"], "title": str(d.get("title") or d["identifier"])[:120], "downloads": d.get("downloads")}
+            for d in docs if isinstance(d, dict) and IA_ID.match(str(d.get("identifier", "")))]
+
+
+def ia_files(identifier):
+    """The PDFs inside one archive.org item: [{name, size}], biggest first (the scan's own PDF and the text one the archive makes)."""
+    if not IA_ID.match(identifier):
+        raise ValueError("not an archive.org identifier")
+    meta = _get_json(f"{ARCHIVE}/metadata/{identifier}")
+    out = []
+    for f in meta.get("files") or []:
+        name = str(f.get("name", ""))
+        if name.lower().endswith(".pdf") and ".." not in name and not name.startswith("/"):
+            try:
+                size = int(f.get("size") or 0)
+            except ValueError:
+                size = 0
+            out.append({"name": name, "size": size})
+    return sorted(out, key=lambda x: -x["size"])[:30]
+
+
+def run_job(request, status):
+    """One request from gatbox-web: claims it (renames it to running.json so the path unit doesn't fire again), does it and
+    writes the outcome to the status file. A refused or failed request is a normal outcome: exit 0."""
+    running = os.path.join(os.path.dirname(request), "running.json")
+    try:
+        os.replace(request, running)
+    except FileNotFoundError:
+        return 0
+    info = {"state": "stopped"}
+    try:
+        try:
+            with open(running, encoding="utf-8") as f:
+                req = json.load(f)
+            info = {"op": req.get("op"), "job": req.get("id"), "key": req.get("key"), "state": "running", "at": req.get("at")}
+            op = req.get("op")
+            if op == "search":
+                info["candidates"] = ia_search(str(req.get("query") or ""))
+            elif op == "files":
+                info["identifier"] = str(req.get("identifier") or "")
+                info["files"] = ia_files(info["identifier"])
+            elif op == "fetch":
+                folder, did, ident, name = (str(req.get(k) or "") for k in ("folder", "doc_id", "identifier", "file"))
+                if not (SLUG.match(folder) and ID.match(did) and IA_ID.match(ident) and name and ".." not in name and not name.startswith("/")):
+                    raise ValueError("a request gatbox-web shouldn't have sent: folder, id, identifier or file is malformed")
+                from urllib.parse import quote
+                doc = {"id": did, "title": str(req.get("title") or did)[:120], "kind": req.get("kind") if req.get("kind") in (
+                       "manual", "schematics", "parts", "kit", "bulletin", "other") else "manual",
+                       "url": f"{ARCHIVE}/download/{ident}/{quote(name)}", "source": f"archive.org/details/{ident}"}
+                state, detail = fetch_one(folder, doc)
+                if state == "failed":
+                    raise ValueError(detail)
+                with open(os.path.join(DEST, folder, did + ".json"), encoding="utf-8") as f:
+                    side = json.load(f)
+                info.update(folder=folder, doc_id=did, file=did + ".pdf", fetched=state == "fetched", sha256=side["sha256"],
+                            pages=side["pages"], bytes=side["bytes"], title=side["title"], kind=side["kind"],
+                            source_url=doc["url"], source=doc["source"])
+            else:
+                raise ValueError(f"unknown request {op!r}")
+            info["state"] = "done"
+        except (ValueError, OSError, urllib.error.URLError, subprocess.SubprocessError) as e:
+            info.update(state="stopped", error=str(getattr(e, "reason", None) or e)[:300])
+        info["finished_at"] = round(time.time(), 3)
+        with open(status + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(info, f)
+        os.replace(status + ".tmp", status)
+        print(f"gatbox-manuals: {info.get('op')}: {info['state']}: {info.get('error') or ''}", flush=True)
+        return 0
+    finally:
+        if os.path.exists(running):
+            os.remove(running)
+
+
 def cmd_fetch(slugs, pin, pause):
     data = load()
     machines = data.get("machines", {})
@@ -202,6 +302,13 @@ def cmd_list(slugs):
 
 
 def main():
+    if "--job" in sys.argv[1:]:                          # the dashboard's job (a path unit starts it), not the owner's command
+        jp = argparse.ArgumentParser(add_help=False)
+        jp.add_argument("--job", required=True)
+        jp.add_argument("--status", required=True)
+        a = jp.parse_args()
+        os.umask(0o002)
+        sys.exit(run_job(a.job, a.status))
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     f = sub.add_parser("fetch", help="download what's missing")

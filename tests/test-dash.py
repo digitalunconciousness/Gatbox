@@ -12,16 +12,19 @@ Temp dirs and spare ports only; a synthetic two-entry roster stands in for the r
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "tests"))
 from cdp import Chrome  # noqa: E402
+from fakearchive import start_archive
 
 KEEP = len(sys.argv) > 1
 OUT = sys.argv[1] if KEEP else tempfile.mkdtemp(prefix="gatbox-dash-shots-")
@@ -193,7 +196,7 @@ def setup():
         raise SystemExit(f"port {PORT} is already in use: stop whatever runs there first")
     except OSError:
         pass
-    for d in ("log", "run", "ctrl", "cache", "data", "led", "spool"):
+    for d in ("log", "run", "ctrl", "cache", "data", "led", "spool", "mspool"):
         os.makedirs(os.path.join(T, d))
     with open(f"{T}/led/trigger", "w") as f:
         f.write("[mmc0] none\n")
@@ -278,7 +281,8 @@ def setup():
                GATBOX_LOGDIR=f"{T}/log", GATBOX_RUNDIR=f"{T}/run", GATBOX_REPORT=os.path.join(REPO, "tools/gatbox-rail-report"),
                GATBOX_DATA=f"{T}/data", MPLCONFIGDIR=f"{T}/cache/mpl", GATBOX_DUMP_SPOOL=f"{T}/spool",
                GATBOX_ROMS=f"{T}/roms", GATBOX_MINIPRO_PARTS=f"{T}/parts.txt", GATBOX_MAME_ROMS=f"{T}/mame-roms.json",
-               GATBOX_MANUALS=f"{T}/manuals", GATBOX_LIBRARY=f"{T}/lib/library.sqlite", GATBOX_MAME_TITLES=f"{T}/mame-titles.json")
+               GATBOX_MANUALS=f"{T}/manuals", GATBOX_LIBRARY=f"{T}/lib/library.sqlite", GATBOX_MAME_TITLES=f"{T}/mame-titles.json",
+               GATBOX_MANUALS_SPOOL=f"{T}/mspool")
     subprocess.run([sys.executable, os.path.join(REPO, "tools/gatbox-mame-roms"), "--titles", f"{T}/mame-titles.json"], check=True,
                    capture_output=True, env=dict(os.environ, GATBOX_MAME=os.path.join(REPO, "tests/fake-mame")))
     os.environ["GATBOX_DATA"] = f"{T}/data"               # the logger's gatbox-meta reads the same data
@@ -783,7 +787,6 @@ def main():
 
         print("DUMP (M7; a runner stands in for gatbox-dump.path):")
         if any(open(p_).read().strip() == "a466" for p_ in __import__("glob").glob("/sys/bus/usb/devices/*/idVendor")):
-            import threading
             done = threading.Event()
 
             def runner():
@@ -1412,8 +1415,9 @@ def main():
             lib_has("ALL GAMES (4)")
             time.sleep(0.5)
             shot("26-library-phone")
-            check("from a phone: the games and MISSING read; no ADD GAME, no EDIT GAME; no horizontal scroll",
+            check("from a phone: the games and MISSING read; no ADD GAME, no EDIT GAME, no FIND A MANUAL; no horizontal scroll",
                   "MISSING (" in text("#lb-body") and "+ ADD GAME" not in text("#lb-body") and "EDIT GAME" not in text("#lb-body")
+                  and "FIND A MANUAL" not in text("#lb-body")
                   and q("document.documentElement.scrollWidth <= 391"))
             c.open(B + "/dash/", 1024, 600)
             c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
@@ -1464,6 +1468,57 @@ def main():
               lib_has("machines: Pacman Cabinet, Second Pacman")
               and sorted(m["slug"] for m in api("GET", "/api/library/games/pac-man")["machines"]) == ["pacman-cabinet", "second-pacman"])
         api("PUT", "/api/machine", {"slug": "gauntlet-legends"})
+
+        print("FIND A MANUAL (archive.org, through the manuals service):")
+        archive = start_archive(8102, word="Gauntlet")
+        mstop = threading.Event()
+
+        def manuals_runner():                                  # gatbox-manuals.path
+            while not mstop.is_set():
+                if os.path.exists(f"{T}/mspool/request.json"):
+                    time.sleep(1.0)
+                    subprocess.run([sys.executable, os.path.join(REPO, "tools/gatbox-manuals"), "--job", f"{T}/mspool/request.json",
+                                    "--status", f"{T}/mspool/status.json"], capture_output=True, timeout=120, check=False,
+                                   env=dict(os.environ, GATBOX_MANUALS=f"{T}/manuals", GATBOX_ARCHIVE="http://127.0.0.1:8102",
+                                            GATBOX_MANUAL_HOSTS="127.0.0.1", GATBOX_DATA=f"{T}/data"))
+                time.sleep(0.2)
+        threading.Thread(target=manuals_runner, daemon=True).start()
+        c.open(B + "/dash/", 1024, 600)
+        c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
+        click('[data-view="library"]')
+        lib_has("ALL GAMES (")
+        lib_tap("ALL GAMES")
+        c.wait("[...document.querySelectorAll('#pane .picklist .row')].some(r => r.textContent.startsWith('Gauntlet') && r.textContent.includes('NO MANUAL'))", 10)
+        q("[...document.querySelectorAll('#pane .picklist .row')].find(r => r.textContent.startsWith('Gauntlet') && r.textContent.includes('NO MANUAL')).click()")
+        missing_before = int(re.search(r"MISSING \((\d+)\)", text("#lb-body")).group(1))
+        check("a game with no manual: FIND A MANUAL is offered, and is the main button",
+              lib_has("key gauntlet ·") and q("[...document.querySelectorAll('#lb-body .btnrow button')].some(b => b.textContent === 'FIND A MANUAL' && b.classList.contains('primary'))"))
+        shot("30a-library-find-manual")
+        lib_tap("FIND A MANUAL")
+        c.wait("document.querySelector('#pane .kp-field')")
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'SAVE').click()")
+        c.wait("[...document.querySelectorAll('#pane .picklist .row')].some(r => r.textContent.startsWith('Widget Pinball Manual'))", 30)
+        rows = q("[...document.querySelectorAll('#pane .picklist .row')].map(r => r.textContent)")
+        check("the search starts with the game's title; archive.org's items come back, with their identifiers and download counts",
+              len(rows) == 2 and "widget-pinball-manual" in rows[0] and "90 downloads" in rows[0])
+        shot("30b-library-manual-items")
+        q("[...document.querySelectorAll('#pane .picklist .row')].find(r => r.textContent.startsWith('Widget Pinball Manual')).click()")
+        c.wait("document.querySelector('#pane').textContent.includes('Which PDF?')", 30)
+        files = q("[...document.querySelectorAll('#pane .picklist .row')].map(r => r.textContent)")
+        check("the item's PDFs, biggest first, with their sizes", files[0].startswith("Widget Pinball_text.pdf") and "0.0 MB" in files[0]
+              and files[1].startswith("Widget Pinball.pdf"))
+        q("[...document.querySelectorAll('#pane .picklist .row')].find(r => r.textContent.startsWith('Widget Pinball.pdf')).click()")
+        c.wait("document.querySelector('#pane').textContent.includes('What is it?')", 10)
+        shot("30c-library-manual-kind")
+        pane_tap("MANUAL")
+        left = lambda: int(re.search(r"MISSING \((\d+)\)", text("#lb-body")).group(1))
+        check("the manual downloads, and becomes the game's document: Documents (1), and the game stops being missing (the "
+              "adoption into the library reaches the screen through the live feed)",
+              lib_has("Documents (1)", 40) and "Widget Pinball Manual" in text("#lb-body")
+              and settles(c, "!document.querySelector('#lb-body').textContent.includes('NO MANUAL')", 20) and left() == missing_before - 1)
+        shot("30d-library-manual-fetched")
+        mstop.set()
+        archive.shutdown()
 
         print("CHECK: a dump against MAME, the game's chips, her images and the machine's earlier dumps:")
         c.open(B + "/dash/", 1024, 600)

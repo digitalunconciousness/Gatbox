@@ -650,10 +650,34 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         test. **Not done:** a game added after the seed has its MAME set noted but no chip list until MAME's list is
         built from the library's games too (the chip list is still built from `gatbox-mame-sets.json`): the CHECK says
         "NO CHIP LIST" until then
-  - [ ] B8, manuals on request (⏸ a path unit, shown first)
-  - [ ] ⏸ Install diff, shown first (not made yet): `gatbox-web.service` gets `ReadWritePaths=-/srv/gatbox/library` (it
-        already has the `gatbox-manuals` group), tmpfiles `d /srv/gatbox/library 2775 root gatbox-manuals -`, and the
-        MANIFEST lines already in the bootstrap (`library.py`, `libview.py`, `seed.py`, `libsource.py`, `gatbox-library`)
+  - [x] B8, manuals on request: FIND A MANUAL on a game with no manual (the 7" only). It types the game's title into
+        the keypad, asks archive.org for texts with every word in their title (most downloaded first), lists the PDFs
+        in the item you pick (biggest first), asks what kind it is, and downloads it into the game's folder. gatbox-web
+        never goes online: it writes `request.json` to `/var/spool/gatbox-manuals` and a separate job (`gatbox-manuals
+        --job`, its own user, the same host rules as `gatbox-manuals fetch`: https from archive.org, a real PDF only)
+        answers in `status.json`, which gatbox-web relays to the screen; a finished download becomes the game's
+        `document` in the library (hash, pages, bytes) and the game stops being MISSING. One job at a time (409
+        otherwise); a request or claim older than 30 minutes, left by a dead job, is cleared. Without the job
+        installed there's no spool and every request says so (503); an unseeded deck answers 409. `test-library-web.sh`
+        93 (a fake archive.org on loopback and a runner standing in for the path unit), `test-dash.sh` 151 (screenshots
+        30a–30d); each guard broken on purpose fails a test. The real archive.org's search and item listing were read
+        once to confirm the shapes; no download was made from here. The unit files `backend/gatbox-manuals.path` and
+        `.service` are in the repo marked NOT INSTALLED: the bootstrap doesn't touch them yet
+  - [ ] ⏸ Install diff, shown first (not made yet; nothing here is installed). One review, in this order:
+        1. `bootstrap/files/sysusers-gatbox.conf`: `u gatbox-fetch - "GATBOX manuals job" /nonexistent /usr/sbin/nologin`
+           and `m gatbox-fetch gatbox-manuals` (the manuals folder is group gatbox-manuals, setgid)
+        2. `bootstrap/files/tmpfiles-gatbox.conf`: `d /var/spool/gatbox-manuals 2770 gatbox-fetch gatbox-fetch -` (the
+           job's spool) and `d /srv/gatbox/library 2775 root gatbox-manuals -` (the library's folder: SQLite needs the
+           directory writable for its -wal and -shm files)
+        3. `gatbox-web.service`: `SupplementaryGroups=gatbox-fetch` and `ReadWritePaths=-/var/spool/gatbox-manuals`
+           (it writes a request and reads the answer, nothing else), and `ReadWritePaths=-/srv/gatbox/library`
+        4. New units `gatbox-manuals.path` (PathExists the request) and `gatbox-manuals.service` (oneshot as
+           `gatbox-fetch`, 20 minute timeout, ProtectSystem=strict, writes only the manuals folder and its spool, no
+           devices, no capabilities, AF_INET/INET6/UNIX only). It has no address filter: it must reach the internet,
+           and the Pi's DNS path isn't recorded, so which hosts it may fetch from is the tool's own allowlist
+        5. The MANIFEST lines already in the bootstrap: `library.py`, `libview.py`, `seed.py`, `libsource.py`,
+           `games.py`, `rom_check.py`, `titles.py`, `manual_request.py`, `gatbox-library`, and the title list build
+           (`/usr/local/share/gatbox/mame-titles.json`, from `mame -listxml` once per MAME version)
   - [ ] ⏸ Owner: review the seed plan after B2; see the install diff before anything is installed
 - **The integration plan, phase A (2026-10-28):** `docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md`,
   approved by the owner. Repo-only on this side (nothing installed changes except the guard above).

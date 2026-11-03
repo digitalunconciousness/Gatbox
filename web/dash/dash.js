@@ -1666,7 +1666,8 @@
     add(row, btn(`ALL GAMES (${d.count})`, null, () => pickGame(false)),
         btn(`MISSING (${d.missing})`, d.missing ? "warn" : null, () => pickGame(true), !d.missing));
     if (S.local) add(row, btn("+ ADD GAME", null, addGame), btn("EDIT GAME", null, () => editGame(g), !g),
-                     slug && !g ? btn("FIND GAME (MAME)", "primary", () => findGame(slug)) : null);
+                     slug && !g ? btn("FIND GAME (MAME)", "primary", () => findGame(slug)) : null,
+                     g ? btn("FIND A MANUAL", g.missing ? "primary" : null, () => findManual(g)) : null);
     head.appendChild(row);
     const info = el("div", "lb-game");
     if (g) {
@@ -1739,6 +1740,62 @@
     } catch (e) { fail(e); }
     LB.data = null;
     loadManuals();
+  }
+  // FIND A MANUAL: archive.org, through the manuals service (B8). The Pi's own screen only. The service does the searching and
+  // the downloading as its own user; this asks, waits for each answer, and offers the next choice: the items, then the PDFs in
+  // one, then what kind of document it is. A finished download becomes the game's document in the library.
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  async function manualWait(id, seconds) {
+    const end = Date.now() + seconds * 1000;
+    while (Date.now() < end) {
+      await sleep(1500);
+      let m;
+      try { m = await api("GET", "/api/library/manual"); } catch (e) { continue; }
+      if (m.status && m.status.job === id && (m.status.state === "done" || m.status.state === "stopped")) return m.status;
+    }
+    return null;
+  }
+  async function findManual(g) {
+    const base = `/api/library/games/${encodeURIComponent(g.key)}/manual/`;
+    const q = await keypad({title: "Search archive.org for a manual: words from its title", max: 80, value: g.title});
+    if (!q) return;
+    let id;
+    try { id = (await api("POST", base + "search", {query: q})).id; } catch (e) { return fail(e); }
+    toast("Searching archive.org…", null, 20000);
+    let st = await manualWait(id, 60);
+    if (!st) return toast("archive.org didn't answer in time: is the Pi online?", "warn", 8000);
+    if (st.state === "stopped") return toast("The search failed: " + st.error, "bad", 9000);
+    if (!st.candidates.length) return toast(`Nothing on archive.org with "${q}" in its title: try fewer words.`, "warn", 8000);
+    const item = await pickFrom(`archive.org: ${st.candidates.length} for "${q}"`, st.candidates.map(c => ({
+      key: c.identifier, title: c.title, find: [c.title.toLowerCase(), c.identifier.toLowerCase()],
+      sub: `${c.identifier}${c.downloads ? ` · ${c.downloads} downloads` : ""}`})));
+    if (!item) return;
+    const title = st.candidates.find(c => c.identifier === item).title;
+    try { id = (await api("POST", base + "files", {identifier: item})).id; } catch (e) { return fail(e); }
+    toast("Looking inside it…", null, 20000);
+    st = await manualWait(id, 60);
+    if (!st) return toast("archive.org didn't answer in time.", "warn", 8000);
+    if (st.state === "stopped") return toast("Couldn't list that item: " + st.error, "bad", 9000);
+    if (!st.files.length) return toast("That item has no PDF in it: pick another.", "warn", 8000);
+    let file = st.files[0];
+    if (st.files.length > 1) {
+      const pick = await pickFrom("Which PDF?", st.files.map(f => ({key: f.name, title: f.name, find: [f.name.toLowerCase()],
+                                                                   sub: `${(f.size / 1e6).toFixed(1)} MB`})));
+      if (!pick) return;
+      file = st.files.find(f => f.name === pick);
+    }
+    const mb = (file.size / 1e6).toFixed(1);
+    const kind = await choose(`${file.name}`, `${mb} MB, from archive.org's "${title}". It goes into ${g.title}'s documents. What is it?`,
+                              [["manual", "MANUAL", true], ["schematics", "SCHEMATICS"], ["parts", "PARTS"], ["other", "OTHER"]]);
+    if (!kind) return;
+    try { id = (await api("POST", base + "fetch", {identifier: item, file: file.name, title, kind})).id; } catch (e) { return fail(e); }
+    toast(`Downloading ${file.name} (${mb} MB)…`, null, 10000);
+    st = await manualWait(id, 1200);
+    if (!st) return toast("Still downloading: it shows in the documents when it's done.", "warn", 8000);
+    if (st.state === "stopped") return toast("The download failed: " + st.error, "bad", 10000);
+    LB.data = null;
+    toast(`FETCHED ${st.title}: ${st.pages} page${st.pages === 1 ? "" : "s"}`);
+    if (S.view === "library") loadManuals();
   }
   async function addGame() {
     const cur = mnSlug(), orphan = cur && !gameOf(cur) ? cur : null;       // the machine in view, if it has no game yet

@@ -99,6 +99,7 @@ backend/gatboxweb/libsource.py                  /usr/local/lib/gatbox/gatboxweb/
 backend/gatboxweb/games.py                      /usr/local/lib/gatbox/gatboxweb/games.py              644
 backend/gatboxweb/rom_check.py                  /usr/local/lib/gatbox/gatboxweb/rom_check.py          644
 backend/gatboxweb/titles.py                     /usr/local/lib/gatbox/gatboxweb/titles.py             644
+backend/gatboxweb/manual_request.py             /usr/local/lib/gatbox/gatboxweb/manual_request.py     644
 backend/gatboxweb/manuals.py                    /usr/local/lib/gatbox/gatboxweb/manuals.py            644
 backend/gatboxweb/wifi.py                       /usr/local/lib/gatbox/gatboxweb/wifi.py               644
 backend/gatboxweb/orders.py                     /usr/local/lib/gatbox/gatboxweb/orders.py             644

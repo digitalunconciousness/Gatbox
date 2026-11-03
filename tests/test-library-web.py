@@ -14,6 +14,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -22,6 +23,7 @@ import zlib
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "backend"))
 sys.path.insert(0, os.path.join(REPO, "tests"))
+from fakearchive import ARCHIVE_SEEN, GOOD_PDF, start_archive
 from fakedeck import build_deck, write
 from gatboxlib import library as L
 from gatboxlib import profiles
@@ -47,7 +49,8 @@ def env(**extra):
     e = dict(os.environ, GATBOX_DATA=f"{T}/data", GATBOX_STATE=STATE, STATE_DIRECTORY=STATE, CACHE_DIRECTORY=f"{T}/cache",
              GATBOX_MANUALS=f"{T}/manuals", GATBOX_ROMS=f"{T}/roms", GATBOX_MAME_ROMS=f"{T}/mame-roms.json",
              GATBOX_LIBRARY=LIB, GATBOX_LOGDIR=f"{T}/log", GATBOX_RUNDIR=f"{T}/run", GATBOX_WEB_PORT=str(PORT),
-             GATBOX_SYNC_STATE=f"{T}/sync", MPLCONFIGDIR=f"{T}/cache/mpl", GATBOX_MAME_TITLES=f"{T}/mame-titles.json")
+             GATBOX_SYNC_STATE=f"{T}/sync", MPLCONFIGDIR=f"{T}/cache/mpl", GATBOX_MAME_TITLES=f"{T}/mame-titles.json",
+             GATBOX_MANUALS_SPOOL=f"{T}/mspool")
     e.update(extra)
     return e
 
@@ -168,6 +171,34 @@ def chk(image):
 
 def verdicts(j):
     return {c["against"]: c["verdict"] for c in j["checks"]}
+
+
+ARCHIVE_PORT = 8101
+
+
+def start_manuals_runner(stop):
+    """gatbox-manuals.path: when a request appears in the spool, run the job the way the service would."""
+    tool = os.path.join(REPO, "tools/gatbox-manuals")
+    job_env = dict(env(), GATBOX_ARCHIVE=f"http://127.0.0.1:{ARCHIVE_PORT}", GATBOX_MANUAL_HOSTS="127.0.0.1")
+
+    def run():
+        while not stop.is_set():
+            if os.path.exists(f"{T}/mspool/request.json"):
+                subprocess.run([sys.executable, tool, "--job", f"{T}/mspool/request.json", "--status", f"{T}/mspool/status.json"],
+                               env=job_env, capture_output=True, timeout=120, check=False)
+            time.sleep(0.2)
+    threading.Thread(target=run, daemon=True).start()
+
+
+def job_done(job_id, timeout=40):
+    """The job's status once it has finished the request with this id."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        st = get("/api/library/manual")["status"]
+        if st and st.get("job") == job_id and st.get("state") in ("done", "stopped"):
+            return st
+        time.sleep(0.2)
+    return {}
 
 
 def drop_library():
@@ -510,6 +541,94 @@ def main():
         check("from a phone on the network: link and unlink are 403",
               call("POST", "/api/library/games/widget-wars/machines", {"slug": "ws-9"}, base=B.replace("127.0.0.1", lan))[0] == 403
               and call("DELETE", "/api/library/games/widget-wars/machines/ws-9", base=B.replace("127.0.0.1", lan))[0] == 403)
+
+    print("FIND A MANUAL (a request, the job, the library):")
+    st0 = get("/api/library/manual")
+    check("before the service is installed (no spool): the status says so and every request is 503",
+          st0["spool"] is False and call("POST", "/api/library/games/pin-widget-pinball/manual/search", {"query": "widget pinball"})[0] == 503)
+    os.makedirs(f"{T}/mspool")
+    stop = threading.Event()
+    srv = start_archive(ARCHIVE_PORT)
+    start_manuals_runner(stop)
+    k = "pin-widget-pinball"
+    check("searches that aren't valid: a one-letter query, an identifier that isn't one, a file that isn't a PDF or climbs out, an "
+          "unknown game: 400 / 400 / 400 / 400 / 404",
+          [call("POST", f"/api/library/games/{k}/manual/search", {"query": "x"})[0],
+           call("POST", f"/api/library/games/{k}/manual/files", {"identifier": "bad id"})[0],
+           call("POST", f"/api/library/games/{k}/manual/fetch", {"identifier": "widget-pinball-manual", "file": "notes.txt"})[0],
+           call("POST", f"/api/library/games/{k}/manual/fetch", {"identifier": "widget-pinball-manual", "file": "../evil.pdf"})[0],
+           call("POST", "/api/library/games/nope/manual/search", {"query": "widget"})[0]] == [400, 400, 400, 400, 404])
+    lan = next((a for a in _lan_addrs() if "." in a and not a.startswith("127.")), None)
+    if lan:
+        check("from a phone on the network: search and fetch are 403",
+              call("POST", f"/api/library/games/{k}/manual/search", {"query": "widget pinball"}, base=B.replace("127.0.0.1", lan))[0] == 403
+              and call("POST", f"/api/library/games/{k}/manual/fetch", {"identifier": "x", "file": "a.pdf"}, base=B.replace("127.0.0.1", lan))[0] == 403)
+    c, rq = call("POST", f"/api/library/games/{k}/manual/search", {"query": "Widget Pinball manual"})
+    st = job_done(rq["id"])
+    check("SEARCH: queued (202), the job asks archive.org for items with every word in their title, and the candidates come back "
+          "(an identifier that isn't one is dropped)",
+          c == 202 and st.get("state") == "done" and [x["identifier"] for x in st["candidates"]] == ["widget-pinball-manual", "page-only-item"]
+          and any("title%3A%28Widget+AND+Pinball+AND+manual%29+AND+mediatype%3Atexts" in q for q in ARCHIVE_SEEN))
+    c, rq = call("POST", f"/api/library/games/{k}/manual/files", {"identifier": "widget-pinball-manual"})
+    st = job_done(rq["id"])
+    check("FILES: one item's PDFs, biggest first; a page scan, and a name that climbs out of the item, aren't offered",
+          c == 202 and st.get("state") == "done" and [f["name"] for f in st["files"]] == ["Widget Pinball_text.pdf", "Widget Pinball.pdf"]
+          and st["files"][0]["size"] == 3400)
+    (open(f"{T}/mspool/running.json", "w")).close()
+    c, _ = call("POST", f"/api/library/games/{k}/manual/search", {"query": "widget pinball"})
+    os.remove(f"{T}/mspool/running.json")
+    check("one job at a time: a request while one is running is 409", c == 409)
+    open(f"{T}/mspool/running.json", "w").close()                       # a claim a dead job left, 40 minutes ago
+    dead = time.time() - 40 * 60
+    os.utime(f"{T}/mspool/running.json", (dead, dead))
+    check("a claim left by a job that died (over 30 minutes old) doesn't block for ever: it's cleared and the next request is taken",
+          get("/api/library/manual")["busy"] is False and not os.path.exists(f"{T}/mspool/running.json"))
+    open(f"{T}/mspool/running.json", "w").close()
+    os.utime(f"{T}/mspool/running.json", (dead, dead))
+    c, rq = call("POST", f"/api/library/games/{k}/manual/search", {"query": "widget pinball"})
+    job_done(rq["id"])
+    check("…and a request made while one is left behind goes through (202)", c == 202)
+    before_missing = next(g for g in get("/api/library")["games"] if g["key"] == k)["missing"]
+    c, rq = call("POST", f"/api/library/games/{k}/manual/fetch", {"identifier": "widget-pinball-manual", "file": "Widget Pinball.pdf",
+                                                                 "title": "Widget Pinball Manual", "kind": "manual"})
+    st = job_done(rq["id"])
+    folder = f"{T}/manuals/{k}"
+    check("FETCH: the job downloads the PDF into the game's folder with its sidecar and text, and reports its hash, pages and size",
+          c == 202 and st.get("state") == "done" and st.get("fetched") and st["sha256"] == hashlib.sha256(GOOD_PDF).hexdigest()
+          and st["pages"] == 1 and st["bytes"] == len(GOOD_PDF) and st["doc_id"] == "widget-pinball-manual"
+          and all(os.path.isfile(f"{folder}/widget-pinball-manual.{e}") for e in ("pdf", "json", "txt"))
+          and open(f"{folder}/widget-pinball-manual.pdf", "rb").read() == GOOD_PDF)
+    check("... and gatbox-web makes it the game's document in the library within seconds: it stops being MISSING, and the manuals "
+          "tab lists it",
+          settles(lambda: not next(g for g in get("/api/library")["games"] if g["key"] == k)["missing"], 20) and before_missing
+          and any(d["id"] == "widget-pinball-manual" and d["pages"] == 1 for d in get(f"/api/manuals/{k}")["docs"])
+          and L.Library(LIB, create=False).get("document", f"{k}/widget-pinball-manual")["data"]["sha256"] == hashlib.sha256(GOOD_PDF).hexdigest())
+    check("the document's source is kept: the archive item it came from", L.Library(LIB, create=False).get("document", f"{k}/widget-pinball-manual")["data"]["source"]
+          == "archive.org/details/widget-pinball-manual")
+    c, rq = call("POST", f"/api/library/games/{k}/manual/fetch", {"identifier": "widget-pinball-manual", "file": "Widget Pinball.pdf",
+                                                                 "title": "Widget Pinball Manual"})
+    st = job_done(rq["id"])
+    check("fetching it again under the same title gets its own id; nothing is overwritten",
+          c == 202 and rq["id"] and st.get("doc_id") == "widget-pinball-manual-2" and os.path.isfile(f"{folder}/widget-pinball-manual.pdf"))
+    c, rq = call("POST", f"/api/library/games/{k}/manual/fetch", {"identifier": "page-only-item", "file": "page.pdf", "title": "A page"})
+    st = job_done(rq["id"])
+    check("a download that isn't a PDF (a web page): stopped with the reason, no file left, nothing in the library",
+          st.get("state") == "stopped" and "not a PDF" in st.get("error", "") and not os.path.exists(f"{folder}/a-page.pdf")
+          and not os.path.exists(f"{folder}/a-page.pdf.part") and L.Library(LIB, create=False).get("document", f"{k}/a-page") is None)
+    bad = {"op": "fetch", "folder": "../x", "doc_id": "a", "identifier": "y", "file": "z.pdf"}
+    with open(f"{T}/mspool/request.json", "w") as f:
+        json.dump(dict(bad, id="hand1", at=time.time()), f)
+    st = job_done("hand1")
+    check("a request the service shouldn't have been sent (a folder that climbs out): the job refuses it, writes nothing",
+          st.get("state") == "stopped" and "malformed" in st.get("error", "") and not os.path.exists(f"{T}/manuals/../x"))
+    with open(f"{T}/mspool/status.json", "w") as f:
+        json.dump({"op": "fetch", "state": "stopped", "job": "ghost-job", "key": k, "doc_id": "ghost", "sha256": "ab" * 32,
+                   "pages": 1, "bytes": 5, "title": "Ghost", "kind": "manual", "error": "the download failed"}, f)
+    time.sleep(2.5)
+    check("a fetch that stopped is never made a document, even if its status carries a hash",
+          L.Library(LIB, create=False).get("document", f"{k}/ghost") is None)
+    stop.set()
+    srv.shutdown()
 
     print("limits and retirement in the library reach the logger:")
     lib = L.Library(LIB, create=False)

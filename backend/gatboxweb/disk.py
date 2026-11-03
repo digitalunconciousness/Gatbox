@@ -256,7 +256,7 @@ def _record(write_id, **what):
 def new_checklist():
     """POST /api/disk/checklist/new: a checklist on its own."""
     write_id = uuid.uuid4().hex[:12]
-    _record(write_id, image=None, device=None, target=None)
+    _record(write_id, image=None, device=None, machine=resolved()["machine"], target=None)   # the machine now set
     return checklist(write_id)
 
 
@@ -280,7 +280,7 @@ def checklist(write_id=None):
     rec = b.get(write_id) or {}
     ticks = rec.get("items") or {}
     return {"write": write_id, "image": rec.get("image"), "device": rec.get("device"), "target": rec.get("target"),
-            "at": rec.get("at"),
+            "machine": rec.get("machine"), "at": rec.get("at"),
             "items": [{"when": w, "item": k, "text": text, "done": bool((ticks.get(k) or {}).get("done")),
                        "at": (ticks.get(k) or {}).get("at")} for w, k, text in CHECKLIST]}
 

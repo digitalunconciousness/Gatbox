@@ -13,7 +13,11 @@
   `writes.jsonl`). Each guard was broken on purpose to see a test fail.
 - gatbox-web's `/api/disk` and the DISK tab: a write only from the Pi's own screen, after a passing check
   under 5 minutes old, armed 30 s; a non-blank target needs an extra OVERWRITE IT tap; a stopped write says if the
-  drive was partly written; the swap checklist is kept per write. A phone sees the state, not the controls.
+  drive was partly written; the swap checklist is kept per write. A phone sees the state and can tick the checklist
+  (owner: "phone ticking off works"), but has no READ, WRITE or hold.
+- The 12 V buck powers the Pi in a cabinet when there's no easy AC plug (owner, 11-03). So the READ and WRITE screens
+  say to run the Pi from its wall supply for a swap, since the cabinet gets switched off to pull the drive. The
+  checklist's 5 V line shows the machine's last saved reading, with SAVE READING beside it.
 - The job's units are written and not installed. The udev rule, the two groups, the spool, the store's mount unit
   (UUID from `/etc/gatbox/disks.conf`) and `gddrescue` / `mame-tools` come with Task 4, after Task 0, with the diff
   shown first.

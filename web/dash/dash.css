@@ -184,6 +184,8 @@ button.dk-go{min-height:72px;min-width:220px;font-size:24px}
 button.dk-ack{width:100%;margin:0 0 8px;border-color:var(--warn);color:var(--warn)}
 button.dk-ack.on{background:rgba(255,183,77,.14)}
 .dk-img{margin:6px 0}
+.dk-power{margin:0 0 8px}
+.dk-reading{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:-2px 0 8px 40px}
 .row.dk-tick{display:flex;align-items:center;gap:12px;margin:4px 0}
 div.dk-tick{border:1px solid var(--line);border-radius:8px;background:var(--panel)}
 .dk-tick .dk-t{flex:1;min-width:0}

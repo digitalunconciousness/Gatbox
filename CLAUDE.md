@@ -83,8 +83,10 @@ The bootstrap's MANIFEST maps repo files to installed paths. `--check` (no root)
 wedge) · Waveshare 7inch HDMI LCD (C) (1024×600 IPS, capacitive USB-HID touch) · coin-cell holder on the RTC
 connector J5 with a **non-rechargeable** cell (fitted 2026-09-26/27, BATT_V ~3.13 V) · XinTop XT-U33502 IDE/SATA
 USB dock (own PSU) · a 4 TB Western Digital external drive, **bus-powered**: the disk image store (with the owner from
-2026-11-04) · UUGear MEGA4, used as a plain USB hub that powers the store (no uhubctl, no port switching). A CF reader
-is on order (the current one has a broken pin): read its USB ID on the Pi before code relies on it.
+2026-11-04) · UUGear MEGA4, used as a plain USB hub that powers the store (no uhubctl, no port switching) · a 12 V
+buck converter that powers the Pi in a cabinet when there's no easy AC plug (make and output rating aren't recorded:
+read them off it before anything relies on them). A CF reader is on order (the current one has a broken pin): read
+its USB ID on the Pi before code relies on it.
 **Not owned: don't write code that assumes these, don't ask the owner to test with them:** ADALM2000, uhubctl / any
 USB port power switching, INA226, relays, MAK Strike, GBS-Control, RP2350B bus driver, InfiRay P2 Pro. The build journal
 (`gatbox-journal.md`) is the record of what's owned.

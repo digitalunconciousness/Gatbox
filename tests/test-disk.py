@@ -571,7 +571,8 @@ def web_side(image):
         code, r = call("GET", f"/api/disk/checklist?write={write_id}")
         check("the swap checklist: one per write, made when it's queued: its ten items, none ticked, the image and "
               "the target named", code == 200 and len(r["items"]) == 10 and not any(i["done"] for i in r["items"])
-              and r["image"] == image and r["device"] == "sdh" and r["target"] == "WIDGET WIDGET SSD 64G C")
+              and r["image"] == image and r["device"] == "sdh" and r["target"] == "WIDGET WIDGET SSD 64G C"
+              and r["machine"] == "widget-wars")
         code, r = call("GET", "/api/disk/checklist")
         check("... without a write id: the newest one", code == 200 and r["write"] == write_id)
         code, r = call("POST", "/api/disk/checklist", {"write": write_id, "item": "five_volts", "done": True})

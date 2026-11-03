@@ -103,6 +103,7 @@
     on("mark", m => { if (m.pending) S.pending.push(m); else S.marks.push(m); chartDecor();
                       toast(`MARK ${hms(m.epoch, true)}${m.label ? " · " + m.label : ""}${m.pending ? " (goes into the next file)" : ""}`); });
     on("capture", c => {
+      if (S.view === "disk" && K.list) loadChecklist(K.list.write);       // the checklist's 5 V line
       const to = c.machine === "unassigned" ? "unassigned (no machine set)"
                : c.machine === (S.st && S.st.machine) ? (S.st.machine_name || c.machine) : c.machine;
       toast(`SAVED ${c.label}: ${c.display} → ${to}`);
@@ -2378,8 +2379,9 @@
   // READ images a drive into the image store. WRITE puts a stored image onto another drive: a TARGET CHECK first, then
   // a 3 s hold on the Pi's own screen arms it (gatbox-web refuses a write from anywhere else), and the job writes it
   // and reads it back twice. gatbox-web only lists and queues; gatbox-disk.service is what opens the drives. A phone
-  // sees the drives, the job, the images and the swap checklist; READ, WRITE and the ticks are on the 7" (note §10).
-  const K = {st: null, sig: null, images: null, imgSig: null, list: null, listFor: undefined, mode: "read",
+  // sees the drives, the job, the images and the swap checklist, and can tick it; READ, WRITE and the hold are on the
+  // 7" (note §10, and the owner's 2026-11-03 answer on ticking).
+  const K = {st: null, sig: null, images: null, imgSig: null, list: null, cap: null, listFor: undefined, mode: "read",
              src: null, media: null, machine: null, machineName: null, label: null, image: null, target: null,
              ackFor: null, holding: false, pending: false, expT: null};
   const GB = n => n >= 1e12 ? (n / 1e12).toFixed(2) + " TB" : n >= 1e9 ? (n / 1e9).toFixed(1) + " GB"
@@ -2421,9 +2423,18 @@
     K.sig = sig;
     renderDisk();
   }
+  // The checklist and, for its 5 V line, the last reading saved on its machine (SAVE READING on METER; note §1 row 9)
   function loadChecklist(write) {
     K.listFor = write;
-    api("GET", "/api/disk/checklist" + (write ? "?write=" + write : "")).then(r => { K.list = r; renderDisk(); }).catch(() => {});
+    api("GET", "/api/disk/checklist" + (write ? "?write=" + write : "")).then(async r => {
+      K.list = r;
+      const slug = r.machine && r.machine !== "unassigned" ? r.machine : null;
+      try {
+        const c = await api("GET", "/api/captures" + (slug ? "?machine=" + encodeURIComponent(slug) : ""));
+        K.cap = c.captures.slice(-1)[0] || null;
+      } catch (e) { K.cap = null; }
+      renderDisk();
+    }).catch(() => {});
   }
   function diskNav() {
     const k = K.st, s = (k && k.status) || {}, r = (k && k.request) || {};
@@ -2458,7 +2469,7 @@
       const c = el("div", "card");
       add(c, el("h2", null, "Drives on USB"), driveTiles(st, null, null, 0),
           el("div", "mut", "READ and WRITE are on the Pi's own screen."));
-      add(B, c, checklistCard(false), imagesCard(st));
+      add(B, c, checklistCard(), imagesCard(st));
       return;
     }
     const seg = el("div", "seg");
@@ -2469,7 +2480,7 @@
     }
     B.appendChild(seg);
     if (K.mode === "write") diskWritePanel(B, st);
-    else if (K.mode === "checklist") B.appendChild(checklistCard(true));
+    else if (K.mode === "checklist") B.appendChild(checklistCard());
     else diskReadPanel(B, st);
     if (K.mode !== "checklist") B.appendChild(imagesCard(st));
   }
@@ -2582,8 +2593,12 @@
     }
     return row;
   }
+  // Note §1 row 10: a swap means switching the cabinet off, which would cut a Pi that runs from the cabinet's 12 V buck
+  const powerNote = () => el("div", "warn dk-power",
+    "Run the Pi from its wall supply for this, not the 12 V buck off the cabinet: the cabinet gets switched off to pull the drive.");
   function diskReadPanel(B, st) {
     const p = el("div", "card"), ds = st.disks || [];
+    p.appendChild(powerNote());
     const src = K.src && ds.find(d => d.name === K.src.name && d.role === "ok" && sameDrive(d.identity, K.src.identity));
     if (K.src && !src) K.src = null;                 // taken off, or another drive in its place: pick it again
     add(p, el("h2", null, "1 · SOURCE"),
@@ -2639,6 +2654,7 @@
   }
   function diskWritePanel(B, st) {
     const p = el("div", "card"), ds = st.disks || [], s = st.status || {}, imgs = K.images || [];
+    p.appendChild(powerNote());
     if (K.image && !imgs.some(i => i.image === K.image.image)) K.image = null;
     const tgt = K.target && ds.find(d => d.name === K.target.name && d.role === "ok" && sameDrive(d.identity, K.target.identity));
     if (K.target && !tgt) K.target = null;
@@ -2715,14 +2731,30 @@
   }
   // The swap checklist (note §4.4): it blocks nothing, and each tick keeps its time. One per write; one can be
   // started on its own (a drive written elsewhere, an original put back).
-  function checklistCard(canTick) {
+  function readingLine(L) {
+    const row = el("div", "dk-reading"), k = K.cap, cur = (S.st && S.st.machine) || null;
+    const slug = L.machine && L.machine !== "unassigned" ? L.machine : null;
+    add(row, el("span", k ? null : "mut", k ? `Last saved on this machine: ${k.label} ${savedText(k)} · ${stamp(parseFloat(k.epoch))}`
+                                            : "No reading saved on this machine yet."));
+    if (slug === cur) {                              // SAVE READING saves to the machine the logger has set
+      const b = el("button", "mini", "SAVE READING");
+      b.addEventListener("click", () => {
+        const cap = $("#b-capture");
+        if (cap.disabled) return toast("No live reading to save: the meter is off, or logging has stopped", "warn", 6000);
+        cap.click();
+      });
+      row.appendChild(b);
+    } else row.appendChild(el("span", "mut", "Pick this machine on MACHINE to save a reading to it."));
+    return row;
+  }
+  function checklistCard() {
     const c = el("div", "card"), L = K.list;
     c.appendChild(el("h2", null, "Swap checklist"));
     if (!L) { c.appendChild(el("div", "mut", "Reading the checklist…")); return c; }
-    c.appendChild(el("div", "mut", !L.write ? "None yet: each WRITE starts one." + (canTick ? " NEW CHECKLIST starts one on its own." : "")
+    c.appendChild(el("div", "mut", !L.write ? "None yet: each WRITE starts one. NEW CHECKLIST starts one on its own."
                                    : L.image ? `${base(L.image)} → ${L.device}${L.target ? " (" + L.target + ")" : ""} · ${stamp(L.at)}`
                                    : `on its own · started ${stamp(L.at)}`));
-    const live = canTick && L.write;
+    const live = !!L.write;
     for (const [when, title] of [["before", "Before the swap"], ["after", "After"]]) {
       c.appendChild(el("h3", null, title));
       for (const it of L.items.filter(i => i.when === when)) {
@@ -2732,9 +2764,10 @@
         if (live) row.addEventListener("click", () => api("POST", "/api/disk/checklist", {write: L.write, item: it.item, done: !it.done})
           .then(r => { K.list = r; renderDisk(); }).catch(fail));
         c.appendChild(row);
+        if (it.item === "five_volts") c.appendChild(readingLine(L));
       }
     }
-    if (canTick) {
+    {
       const row = el("div", "btnrow"), nw = el("button", null, "NEW CHECKLIST"), other = el("button", null, "OTHER CHECKLIST");
       row.style.marginTop = "8px";
       nw.addEventListener("click", () => api("POST", "/api/disk/checklist/new", {})

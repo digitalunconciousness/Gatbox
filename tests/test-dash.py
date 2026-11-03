@@ -1254,6 +1254,10 @@ def main():
             q(f"[...document.querySelectorAll('#dk-body .dk-drives button')].find(b => b.textContent.startsWith({json.dumps(name + ' ·')})).click()")
             c.wait(f"[...document.querySelectorAll('#dk-body .dk-drives .tile.on')].some(b => b.textContent.startsWith({json.dumps(name + ' ·')}))", 10)
 
+        # a reading saved earlier on this machine (SAVE READING needs a live meter, which isn't running here)
+        os.makedirs(f"{T}/ctrl/captures", exist_ok=True)
+        with open(f"{T}/ctrl/captures/gauntlet-legends.csv", "w") as f:
+            f.write("iso,epoch,value,unit,mode,profile,label,flags\n2026-11-03T07:00:00,1793700000.000,5.02,V,VDC,rail-5v,CN1,\n")
         click('[data-view="disk"]')
         c.wait("document.querySelectorAll('#dk-body .dk-drives .tile').length === 3", 15)
         tiles = q("[...document.querySelectorAll('#dk-body .dk-drives .tile')].map(t => t.tagName + ' ' + t.textContent)")
@@ -1261,6 +1265,8 @@ def main():
               "CONNECTED" in text("#dk-body .dk-store") and tiles[0].startswith("BUTTON sda · WIDGET WIDGETDRIVE 1000")
               and tiles[1].startswith("DIV sdc") and "IMAGE STORE" in tiles[1] and tiles[2].startswith("DIV sdd")
               and "EMPTY SLOT" in tiles[2] and text("#n-disk-s") == "1 drive")
+        check("READ says to run the Pi from its wall supply, not the cabinet's 12 V buck (note §1, row 10)",
+              "wall supply" in text("#dk-body") and "12 V buck" in text("#dk-body"))
         check("READ is off until the source, the media and a label are picked",
               q("document.querySelector('#dk-body button.dk-go').disabled") and "pick the source" in text("#dk-body"))
         dk_tile("sda")
@@ -1310,6 +1316,7 @@ def main():
         FD.usb_disk("sdh", 8 * MiB, "WIDGET", "WIDGET SSD 64G C", port=8, devnum="8:112", data=fat_card(8 * MiB))
         dk_seg("WRITE")
         c.wait("[...document.querySelectorAll('#dk-body button')].some(b => b.textContent === 'PICK AN IMAGE')", 10)
+        check("WRITE says it too", "wall supply" in text("#dk-body"))
         dk_tap("PICK AN IMAGE")
         c.wait("[...document.querySelectorAll('#pane .picklist .row')].some(r => r.textContent.startsWith('WW-HDD'))", 10)
         q("[...document.querySelectorAll('#pane .picklist .row')].find(r => r.textContent.startsWith('WW-HDD')).click()")
@@ -1352,11 +1359,18 @@ def main():
         c.wait("document.querySelectorAll('#dk-body button.dk-tick').length === 10", 10)
         check("the swap checklist: this write's, ten lines, none ticked", "→ sdh" in text("#dk-body")
               and not q("document.querySelectorAll('#dk-body .dk-tick.done').length"))
+        check("... its 5 V line shows the machine's last saved reading (note §1, row 9), with SAVE READING beside it",
+              settles(c, "document.querySelector('#dk-body').textContent.includes('Last saved on this machine: CN1 5.02 V')", 10)
+              and q("[...document.querySelectorAll('#dk-body button')].some(b => b.textContent === 'SAVE READING')"))
+        q("[...document.querySelectorAll('#dk-body button')].find(b => b.textContent === 'SAVE READING').click()")
+        check("... SAVE READING with no live meter says so, it doesn't do nothing",
+              settles(c, "document.querySelector('#toast').textContent.includes('No live reading to save')", 5))
         q("[...document.querySelectorAll('#dk-body button.dk-tick')].find(b => b.textContent.includes('5 V at the board')).click()")
         c.wait("document.querySelectorAll('#dk-body .dk-tick.done').length === 1", 10)
         cl = api("GET", "/api/disk/checklist")
         check("... a tap ticks a line, with its time, and gatbox-web keeps it",
               [i["item"] for i in cl["items"] if i["done"]] == ["five_volts"])
+        q("document.querySelector('#dk-body .dk-reading').scrollIntoView({block: 'center'})")
         shot("23h-disk-checklist")
         FD.mount_table(store=False)
         dk_seg("READ")
@@ -1375,11 +1389,15 @@ def main():
             settles(c, "document.querySelectorAll('#dk-body .dk-tick').length === 10", 10)
             time.sleep(0.5)
             shot("24-disk-phone")
-            check("from a phone: the state, the drives, the images and the checklist; no READ, WRITE, hold or ticks",
+            check("from a phone: the state, the drives, the images and the checklist; no READ, WRITE or hold",
                   not q("document.querySelector('#dk-body .seg')") and not q("document.querySelector('#dk-body button.hold')")
-                  and not q("document.querySelector('#dk-body button.dk-tick')") and q("document.querySelectorAll('#dk-body div.dk-tick').length") == 10
+                  and q("document.querySelectorAll('#dk-body button.dk-tick').length") == 10
                   and "READ and WRITE are on the Pi's own screen" in text("#dk-body") and "VERIFIED" in text("#dk-body")
                   and not q("[...document.querySelectorAll('#dk-body .dk-drives button')].length"))
+            q("[...document.querySelectorAll('#dk-body button.dk-tick')].find(b => b.textContent.includes('version matches')).click()")
+            check("from a phone: a tap ticks a checklist line, and gatbox-web keeps it (the owner's 2026-11-03 answer)",
+                  settles(c, "document.querySelectorAll('#dk-body .dk-tick.done').length === 2", 10)
+                  and sorted(i["item"] for i in api("GET", "/api/disk/checklist")["items"] if i["done"]) == ["five_volts", "version_match"])
             check("from a phone: no horizontal scroll, and nothing runs past a card's edge",
                   q("document.documentElement.scrollWidth <= 391")
                   and q("[...document.querySelectorAll('#dk-body .card')].every(c => c.scrollWidth <= c.clientWidth + 1)"))

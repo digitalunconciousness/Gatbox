@@ -336,6 +336,12 @@ label, the SSE relay, and `gatbox-mame-roms` keeping disk hashes for every versi
    `GATBOX_SYSFS` are new code. The 12 V buck (§1, row 10) isn't recorded in the repo: if it powers the Pi in a
    cabinet, it belongs in CLAUDE.md's Owned list.
 
+### 9.4 Answered (2026-11-03, after Tasks 5 and 6)
+1. **The 12 V buck** powers the Pi in a cabinet when there's no easy AC plug. So §1 row 10 applies in practice, and the
+   READ and WRITE screens tell the tech to run the Pi from its wall supply for a swap. CLAUDE.md lists the buck.
+2. **The phone can tick the swap checklist** ("phone ticking off works"). It blocks nothing. READ, WRITE and the hold
+   stay on the 7".
+
 ## 10. Tasks (one branch, one PR; small commits, each with a test that fails without it)
 
 **Task 0 ⏸, read-only on the Pi, run by the owner** (`docs/plans/2026-11-02-disk-imaging-task0.sh`):

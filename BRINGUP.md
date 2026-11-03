@@ -609,8 +609,10 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         IMAGE STORE NOT CONNECTED and that the disk service isn't installed; READ and WRITE are refused
   - [x] Task 6, the DISK tab: READ (source → what it is → machine + label → READ → STORED / BAD AREAS + RETRY),
         WRITE (image → target → TARGET CHECK → OVERWRITE IT for a non-blank drive → HOLD 3 S → VERIFIED), the swap
-        checklist, the store's line, the images; a phone sees the state only. `test-disk.sh` 93, `test-dash.sh` 145
-        (DISK: 18, against `tests/fakedisk.py`; screenshots 23a–23i, 24)
+        checklist, the store's line, the images; a phone sees the state and can tick the checklist (owner, 11-03), but
+        has no READ, WRITE or hold. The READ and WRITE screens say to run the Pi from its wall supply, not the cabinet's
+        12 V buck (§1 row 10), and the checklist's 5 V line shows the machine's last saved reading with SAVE READING
+        (§1 row 9). `test-disk.sh` 93, `test-dash.sh` 150 (DISK: 23, against `tests/fakedisk.py`; screenshots 23a–23i, 24)
   - [ ] Task 7: CLAUDE.md (hard rule 6 as §5 words it, Owned, installed list), a journal entry
 - **The integration plan, phase A (2026-10-28):** `docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md`,
   approved by the owner. Repo-only on this side (nothing installed changes except the guard above).

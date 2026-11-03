@@ -585,6 +585,20 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         (−7, 0) and (+6, +11) px, spread ±6–9 px — the two disagree, so no calibration; re-run once the panel
         is in its box (the viewing angle changes). A steady offset → a libinput calibration
         matrix for the WS170120 (a udev rule: shown first, rule 5); scatter only → nothing more.
+- **Disk imaging, phase D2 (branch `disk-imaging`, started 2026-11-03):** the spec is
+  `docs/plans/2026-11-02-disk-imaging.md` (the owner's note; §9 decided). Code goes in where it doesn't wait on the
+  archive or an unread hardware fact (owner: "code slides in where it makes sense").
+  - [ ] Task 0 ⏸ (`docs/plans/2026-11-02-disk-imaging-task0.sh`, read-only): stage 1 now (the dock empty), stage 2 with
+        the 4 TB drive, stage 3 with a drive on the dock. The facts go here before code relies on them
+  - [x] Task 1, the test doubles: a fake sysfs tree, plain files as devices, a fake mount table, `tests/fake-ddrescue`
+  - [x] Task 2, `tools/gatbox-disk` (list, read, retry, check, write), not installed: identity from sysfs, the
+        refusals, the store's mount and marker guard, READ (one pass, RETRY on bad areas, a second read for flash,
+        `<label>_<YYYYmmdd>_<sha1:8>.img`, no duplicates, the archive queue), TARGET CHECK (size, 512-byte sectors, not
+        the source, what's on it now), WRITE (fresh check, re-identified, O_EXCL, fsync, two O_DIRECT read-backs,
+        `writes.jsonl`). `test-disk.sh`: 53, and each of 11 guards broken on purpose fails at least one of them.
+        Still to come once Task 0 shows them: the drive's own serial and CHS, the HDD health line
+  - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
+  - [ ] Tasks 4–7: job mode and install (⏸ system config first), gatbox-web, the DISK tab, docs
 - **The integration plan, phase A (2026-10-28):** `docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md`,
   approved by the owner. Repo-only on this side (nothing installed changes except the guard above).
   - [x] Contract v1 is GATBOX's now: the README takes the hub's 10-26 additions and writes down the Phase 8 extras

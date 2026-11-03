@@ -85,6 +85,20 @@ Installed by the bootstrap, as a diff she sees before it runs:
 | P3 | Where the database lives. | `/srv/gatbox/library/library.sqlite`, next to the manuals. |
 | L3-L5 | Who confirms a limit, key naming, phone editing. | As recommended in the library design §10: the 7" only; title slugs; read-only on a phone. |
 
+## Where the build differs from the design (found while building)
+
+1. **The ROM list carries more.** `rom_list` has each version's year and maker, each ROM's region, status and BIOS, and
+   the version's disks by hash. The design's record was thinner than what the chip list shows and what the disk check
+   needs; without them the readers couldn't come from the library without losing fields (B1).
+2. **Files stay where they are.** The design puts a game's PDFs under `/srv/gatbox/manuals/<model_key>/`. The seed doesn't
+   move anything: each file stays in its roster slug's folder, and the reader finds it through the slug-to-key map the seed
+   keeps. Two cabinets made one game share their manuals without a file moving. Tidying the folders is a later, optional
+   step (B3).
+3. **A confirmation that no longer matches isn't carried.** Today the logger honours a limit confirmed at some numbers
+   even if the manuals list has since changed. The seed carries a confirmation only where the list still says the same
+   thing, and the plan flags every limit that was confirmed at other numbers, because the logger stops using it until it's
+   confirmed again (B2, B3).
+
 ## Risks
 
 1. **A bad seed or a wrong key is permanent** (keys never change). The plan is read-only first and she edits

@@ -1,6 +1,6 @@
 # Disk imaging on the deck: IDE, SATA, CF and SD media — design note
 
-**Status: owner's answers recorded 2026-11-02 and 2026-11-03 (§9). OK'd; §9.3 (found in session 1) awaits her OK.** Its home in the repo
+**Status: owner's answers recorded 2026-11-02 and 2026-11-03 (§9). OK'd, with §9.3 (found in session 1) folded in.** Its home in the repo
 will be `docs/plans/2026-11-02-disk-imaging.md`. Per RULES §3, her OK on this note covers the code, the tests and the
 push.
 
@@ -144,8 +144,9 @@ finished times, the clock label, and a free-text note.
    open (EBUSY) for a disk with anything mounted, and no one can mount it while it's held. It's a guard that doesn't
    depend on the job's own checks.
 4. **Write** the `.img` with `conv=fsync`, through dd or the job's own writer.
-5. **Verify:** `blockdev --flushbufs`, then two O_DIRECT reads of exactly the image's bytes. Both SHA-1s must equal
-   the image's.
+5. **Verify:** two O_DIRECT reads of exactly the image's bytes, after the write's fsync. Both SHA-1s must equal the
+   image's. O_DIRECT already goes past the page cache, so there's no `blockdev --flushbufs` (it would need
+   `CAP_SYS_ADMIN`; §9.3 item 4).
 6. **Log** one line in `<store>/writes.jsonl`, for stopped writes too.
 7. **The rest of a larger target is left untouched.** The result card says so ("3.2 GB written, 124.8 GB beyond it
    untouched").
@@ -171,20 +172,32 @@ Each tick is saved with the write record, with its time. The checklist blocks no
 ## 5. Safety
 
 - **gatbox-web never opens a block device.**
-  - It lists candidates from sysfs, as `devices.py` does, and reads sidecars.
+  - It lists candidates from `/sys/block` and reads sidecars. That's new code: `devices.py` reads
+    `/sys/bus/usb/devices`.
   - **It never serves image bytes.** It's an open web server on the barcade Wi-Fi, and the images are game code. The
     store gets no route.
 - **gatbox-disk can open only whole USB disks:**
   - a udev rule gives group `gatbox-disk` rw on `SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ENV{ID_BUS}=="usb"`;
+  - **two groups** (§9.3 item 3): `gatbox-disk` is the devices' group, and only the job's user holds it. The spool
+    is group `gatbox-disk-queue`, held by the job and gatbox-web. The owner's login joins the queue's group, never the
+    devices', so the CLI hands its work to the job through the spool (or runs under sudo);
   - mmcblk and nvme stay root:disk;
   - the unit: `DevicePolicy=closed`, `DeviceAllow=block-sd rw`, `ProtectSystem=strict`,
-    `ReadWritePaths=/srv/gatbox/disks /var/spool/gatbox-disk`, `IPAddressDeny=any`;
+    `ReadWritePaths=/srv/gatbox/disks /var/spool/gatbox-disk`, `IPAddressAllow=localhost` with `IPAddressDeny=any`
+    (the clock label comes from gatbox-web, as the dump's does; §9.3 item 2), and
+    `AmbientCapabilities=CAP_SYS_RAWIO` with `CapabilityBoundingSet=CAP_SYS_RAWIO` and nothing else (ATA
+    pass-through for the drive's own serial and CHS; §9.3 item 4);
   - plus the job's own refusals and the O_EXCL claim. That's three independent locks.
 - **The image store:**
   - The 4 TB drive is formatted ext4 and mounted by its filesystem UUID at `/srv/gatbox/disks`, through a systemd
-    mount unit with `nofail`. The UUID is site config in `/etc`, not git.
-  - **It must never fall through to the SD card.** The disk service gets `RequiresMountsFor=/srv/gatbox/disks`, and
-    the job checks `os.path.ismount()` plus a marker file on the drive before every read.
+    mount unit with `nofail`. The UUID is site config in `/etc/gatbox/disks.conf`, not git: created empty by
+    tmpfiles like `hub.conf`, and the bootstrap writes the mount unit only when it holds a UUID (§9.3 item 6).
+  - **It must never fall through to the SD card** (§9.3 item 5):
+    - the job checks that the store is a mount point and holds its marker file before every read and write. If not,
+      it reports "IMAGE STORE NOT CONNECTED" and clears the request;
+    - the bare mountpoint on the SD card isn't writable by the job's user;
+    - the service is ordered `After=` the mount unit, but doesn't require it. With `RequiresMountsFor=`, an unplugged
+      drive would fail the service before the job runs, leave `request.json` behind and jam the path unit.
   - Without the drive, the DISK tab says "IMAGE STORE NOT CONNECTED", and READ and WRITE are off.
   - The store drive is shown as IMAGE STORE in the device list, never as a source or target. It's mounted, so the
     refusals and O_EXCL also cover it.
@@ -271,8 +284,9 @@ Each tick is saved with the write record, with its time. The checklist blocks no
     `rrsync -ro /srv/gatbox/disks`.
   - No deck code and no credentials on the deck beyond that one restricted key. It's host changes only (⏸).
   - Phase D replaces it.
-- **Realm:** each image and write record is stamped with its machine's realm (barcade or side work) when it's made,
-  as dumps are. CarnEvil-style customer jobs are side work.
+- **Realm:** each image and write record is stamped with its machine's realm (barcade or side work) when it's made.
+  gatbox-web looks up the machine's hub when it queues the request and puts the realm in `request.json` (dumps don't
+  record one yet; §9.3 item 1). CarnEvil-style customer jobs are side work.
 - **No customer data on the deck:** a record names the machine or asset, nothing else.
 - **Phase C** extension: new `disk_image` and `disk_write` contract items, one change across all three repos.
 
@@ -296,7 +310,7 @@ c. **Reference CHDs:** any CHDs she has go into `_chd/`. The MAME sets on the 4 
 d. **USB layout:** as recommended, adjusted for the bus-powered store (§3): the dock on a Pi USB 3 port, the MEGA4 on
    the other with the store on it, and the DMM adapter and touch on the Pi's own USB 2 ports. `lsusb -t` confirms it.
 
-### 9.3 Found in session 1 (2026-11-03): recommended, waiting for her OK
+### 9.3 Found in session 1 (2026-11-03): decided ("9.3 as recommended"), and folded into §4, §5, §8 and §10
 Checked against the code at HEAD. Everything else matched: the spool and path unit, one job at a time, the 30 s arm
 and 5-minute check window, the screen-only write, the 20-minute timeout, the archive's naming, the sidecar's clock
 label, the SSE relay, and `gatbox-mame-roms` keeping disk hashes for every version.
@@ -344,6 +358,11 @@ Paste them into BRINGUP before any code depends on them.
 **Before the reformat ⏸:** the owner copies the MAME sets off the 4 TB drive (on the laptop). The format commands are
 written from Task 0's identity of that drive (model and serial), never from a `/dev` name.
 
+**When the code goes in** (owner, 2026-11-03: "code slides in where it makes sense"): the parts that need neither
+the archive nor an unread hardware fact come first. That's Tasks 1 and 2: the fakes, identity from sysfs, the store
+guard, READ, TARGET CHECK and WRITE, all against files. The chdman parser in Task 3 waits for Task 0's real output.
+Task 4's udev and auto-mount rules wait for stages 2 and 3.
+
 **Task 1, test doubles:**
 - a fake sysfs tree (`GATBOX_SYSFS`);
 - regular files standing in for devices;
@@ -361,8 +380,9 @@ written from Task 0's identity of that drive (model and serial), never from a `/
 listing named from `mame-roms.json`.
 
 **Task 4, job mode and install:**
-- `gatbox-disk.path/.service`, the store's mount unit (UUID from a git-ignored site file), the udev rule (group and
-  auto-mount), sysusers, tmpfiles, `mame-tools` and `gddrescue` in the apt list, and the bootstrap MANIFEST;
+- `gatbox-disk.path/.service`, the store's mount unit (UUID from `/etc/gatbox/disks.conf`), the udev rule (group and
+  auto-mount), sysusers (the two groups), tmpfiles (the spool, `disks.conf`, the unwritable bare mountpoint),
+  `mame-tools` and `gddrescue` in the apt list, and the bootstrap MANIFEST;
 - **system config is shown to the owner, ⏸, before install (hard rule 5).**
 
 **Task 5, gatbox-web:** the routes in §6, SSE `disk`, and the loopback gate.
@@ -375,7 +395,8 @@ listing named from `mame-roms.json`.
 - screenshots of the 7" and a phone (RULES §3.4).
 
 **Task 7, docs:**
-- CLAUDE.md: hard rule 6 as in §5; the dock, the 4 TB store and the MEGA4 under Owned; the installed list;
+- CLAUDE.md: hard rule 6 as in §5; the dock, the 4 TB store and the MEGA4 under Owned (and the 12 V buck, if it powers
+  the Pi in a cabinet); the installed list;
 - BRINGUP: progress, Task 0 facts, the homelab pull ⏸ (if 9.2 b);
 - a journal entry.
 
@@ -386,7 +407,9 @@ listing named from `mame-roms.json`.
 - a mounted partition → refused (the O_EXCL claim too); a 0-byte slot → not listed;
 - an mmcblk or nvme device in the fake sysfs → never listed, never opened;
 - the image store → listed as IMAGE STORE, never a source or target;
-- the store not mounted (no marker) → READ and WRITE refused, nothing written under the mountpoint;
+- the store not mounted (no marker) → READ and WRITE refused with "IMAGE STORE NOT CONNECTED", nothing written under
+  the mountpoint;
+- a request's realm → kept in the sidecar and the `writes.jsonl` line;
 - HDD: exactly one read; flash: a second read that differs → stopped, "flaky";
 - ddrescue bad areas → stopped with the summary; RETRY resumes the same map;
 - a write verify mismatch → stopped, with a `writes.jsonl` line;

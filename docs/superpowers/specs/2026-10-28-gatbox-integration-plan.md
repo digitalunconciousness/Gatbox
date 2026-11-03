@@ -682,7 +682,8 @@ the two differ, the note wins.
 
 **What it does.**
 - Reads an IDE, SATA, CF or SD drive, through a USB dock or a CF reader on the Pi, to an image on
-  the image-store drive: a 4 TB drive mounted at `/srv/gatbox/disks`.
+  the image-store drive: the owner's 4 TB external hard drive (2026-11-03), mounted at
+  `/srv/gatbox/disks`.
 - Verifies the image, and checks it against MAME's CHDs (`chdman info`).
 - Writes an image back to a disk, armed at the Pi like a burn.
 - Fills each image's sidecar `archive` field and adds it to `archive-queue.jsonl`. **Uploading is
@@ -708,6 +709,12 @@ the two differ, the note wins.
   targets on the 7".
 - **The udev rule, units, sysusers and tmpfiles go through the bootstrap,** and the owner sees the
   diff first (hard rule 5).
+- **Power.** The Pi 5's USB ports share 1.6 A in all, even with its 5 A supply and
+  `usb_max_current_enable=1`. The T48, the meter's adapter, the scanner and the touch screen are
+  on them too. A bus-powered hard drive spinning up beside a bus-powered dock could brown the bus
+  out in the middle of an image. So Task 0 also records whether the drive and the dock have their
+  own power supplies, and `vcgencmd get_throttled` with both running. If either runs off the bus,
+  the design note says how it's powered (its own supply, or a powered hub).
 
 **Tests.** `tests/test-disk.sh`, like `test-dump.sh`. No test opens a real block device: a fake
 sysfs tree, plain files as devices, and `tests/fake-ddrescue`. Fixtures are invented (Widget Wars),
@@ -728,4 +735,5 @@ with no customer, no site, no real roster, no images and no hashes of anyone's d
 - Task 0's output, since every hardware fact comes from it (the dock's USB ID, UAS or usb-storage,
   what the desktop does with an inserted card);
 - the §9.2 answers;
-- the image-store drive's UUID, as site config.
+- the image-store drive's UUID, as site config;
+- whether the 4 TB drive and the dock have their own power supplies.

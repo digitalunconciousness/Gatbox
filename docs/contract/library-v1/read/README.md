@@ -41,7 +41,8 @@ back, a game and everything that names it (its documents, MAME set, ROM list, li
   copy**: start again from 0 and replace what you hold.
 
 `examples/changes-response.json` is a first page, `changes-response-last.json` the last, `changes-response-empty.json` an
-answer with nothing new.
+answer with nothing new, and `changes-response-all.json` every record of two games at once: one of each kind, a tombstone
+among them.
 
 ### A record
 

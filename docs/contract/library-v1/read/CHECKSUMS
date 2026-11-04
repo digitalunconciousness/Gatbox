@@ -6,7 +6,8 @@
 # finds. Edit GATBOX's copy, then regenerate there with:
 #   bash docs/contract/checksums.sh --write docs/contract/library-v1/read
 
-a5fb312befd5b4ba5460f988c1a56c1a9cd86297abd29eeecdb7da3313dd3bea  README.md
+4b65d744379948dd4ec5e7216892f0d8fc8a62548b410a8b567c98934aed44b4  README.md
+86cc794aa109163b7789922c741bb73fd6489593ddfa2bedecd72fa74c1c57c3  examples/changes-response-all.json
 f4b7612be457f94817070842933b7918de03b8cc9e815c4d778a625ce133bdab  examples/changes-response-empty.json
 fd8725858ec956a7b0b8b5111b7b34cfa5eccfdf6907a51dd266560823eb44be  examples/changes-response-filtered.json
 f737ed2509d200fc01a2da03b5cd838a17304298ad68da28845e37073325b9d2  examples/changes-response-last.json

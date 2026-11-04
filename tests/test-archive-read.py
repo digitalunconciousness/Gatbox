@@ -115,6 +115,7 @@ def run(tmp):
         "changes-response-filtered.json": "/api/v1/library/changes?since=8&limit=1&models=widget-wars",
         "changes-response-last.json": "/api/v1/library/changes?since=8&limit=4&models=widget-wars",
         "changes-response-empty.json": "/api/v1/library/changes?since=11&limit=4&models=widget-wars",
+        "changes-response-all.json": "/api/v1/library/changes?since=0&limit=500&models=widget-wars,pin-comet-run",
     }
     if WRITE:
         os.makedirs(EX, exist_ok=True)

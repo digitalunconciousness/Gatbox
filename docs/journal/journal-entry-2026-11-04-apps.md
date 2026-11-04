@@ -22,7 +22,7 @@
   That is reasoned, not tried in a real browser here (headless Chromium has no PDF viewer to check).
 - Tests: cabcrawl 69 library tests, whole suite 2027 passed, 1 skipped, 1 failed (the sibling-checkout contract diff); Tech Tracker 57 library tests, whole suite 606 passed, 6 skipped, 1 failed (the sibling-checkout contract diff) on PostgreSQL; this repo's `test-archive-read.py` 19 (the real archive reproduces every
   example). Each app's stub archive starts from the contract's own examples, and one test per app asks it the contract's own requests
-  and compares the answers, so a stub can't drift from the real archive. Guards broken on purpose: 33 in cabcrawl, 36 in the Tech Tracker; every one fails a test, except two in the Tech Tracker that cannot change behaviour (the manual route's own login check is redundant with the app's global login gate, and its limit data has no "confirmed by" to leak). Eleven first survived and each got a test.
+  and compares the answers, so a stub can't drift from the real archive. Guards broken on purpose: 33 in cabcrawl, 36 in the Tech Tracker; every one fails a test, except two in the Tech Tracker that cannot change behaviour (the manual route's own login check is redundant with the app's global login gate, and its limit data has no "confirmed by" to leak). Six first survived and each got a test.
 - Two mistakes of mine the checks found in what I had already pushed or committed: the read contract's example manual was a `.pdf` that
   the archive's test generated and `.gitignore` swallowed, so it never reached this repository while CHECKSUMS listed it, and the apps'
   shared privacy check refuses a `.pdf` by rule; it is `examples/manual.pdf.b64` now, written by the test and checked against the PDF
@@ -38,3 +38,11 @@
   mint a reader token at the archive, put the address and token in the app's environment, read the two unit files, install the timer,
   and link the machines. The apps' own dashboards do not show the pull's state beyond the page text and `pull_library.py --status`.
 - Owner, next: the D3 and D4 install diffs and `archive/RUNBOOK.md` are still the gate; the apps' steps follow the archive being up.
+- Getting it to merge: phase B, phase C and phase D all touch gatbox-web's import line and the dashboard's DUMP list, so the
+  four branches conflicted with each other (disk-imaging too: it conflicts with all three in `server.py` and the dashboard files and
+  is not in this chain). I merged `phase-c-roms` into `phase-b-library` (two hunks) and that into `phase-d-archive` (two more;
+  the dashboard merged on its own). Both keep everything each side added: the CHECK button and the SENT badge, burns under dumps,
+  the roms status file and the library block of `status.json`. Every test script passes on the merge except the ones that already
+  failed here for the environment (bootstrap and rtc-guard, clock-label, two in web-api) and the archive layout test's 50 console
+  errors, which the unmerged D branch gives too (a resource the sandbox can't serve). The two contract diffs against the siblings
+  went away, because phase C's contract is in this repo now.

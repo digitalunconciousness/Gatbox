@@ -151,11 +151,21 @@ set `ARCHIVE_PRIVATE_BIND=<CONTAINER_IP>:8081` and `ARCHIVE_PRIVATE_ALLOW=<APPS_
 `bash archive/install.sh` again, and the apps use `http://<CONTAINER_IP>:8081` with their reader token. That listener answers
 reader tokens only, read-only, and no pages.
 
-## 6. The deck (comes with phase D3)
+## 6. The deck
 
-The deck needs `/etc/gatbox/archive.conf` (mode 600, root): the archive's address, the deck's device token, and the
-service token's Client ID and Secret. The sync service loads it as a credential, which is a change to a systemd unit, so it
-is shown to you as a diff first and not applied until you say so. This page will carry the exact file when D3 lands.
+The deck needs `/etc/gatbox/archive.conf` (mode 600, root), four lines:
+
+```
+ARCHIVE_URL=https://<HOSTNAME>
+ARCHIVE_TOKEN=<the deck's device token from step 5>
+ARCHIVE_ACCESS_ID=<the service token's Client ID from step 3>
+ARCHIVE_ACCESS_SECRET=<the service token's Client Secret from step 3>
+```
+
+The bootstrap creates the file empty (`bash bootstrap/gatbox-bootstrap.sh`, after you have read what it changes with
+`--check`); fill it with `sudo nano /etc/gatbox/archive.conf`. The sync service loads it as a credential, which is a change
+to a systemd unit, so BRINGUP.md shows it to you as a diff first ("the D3 install diff") and it is not applied until you
+say so. With no file, or an empty one, nothing here runs and the deck behaves as before.
 
 The first sync is a dry run (`GATBOX_SYNC_DRYRUN=1`): it prints what it would send and fetch, changes nothing, and you read
 it before the real one.

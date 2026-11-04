@@ -1,7 +1,8 @@
 # Phase D: the archive — short spec
 
-Status: **proposed, waiting for the owner's OK** (it covers the code and the push in all three repos, integration plan
-§10; merging, deploying, installing and everything on Proxmox and Cloudflare stay hers).
+Status: **approved by the owner, 2026-11-04 ("OK as written")**. It covers the code and the push in all three repos
+(integration plan §10); merging, deploying, installing and everything on Proxmox and Cloudflare stay hers. D1 and D2 are
+built on `phase-d-archive`; D3 is next.
 
 This is the build plan for phase D of `docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md` (§4). The design
 behind it is `2026-10-28-shared-game-library-design.md` (§2 where the library lives, §4 the protocol, §5 sync and
@@ -101,10 +102,17 @@ Nothing below is done by an agent. The RUNBOOK writes each step out as exact com
   has passed Access, and only there is the Access identity header trusted for "who changed this". A second, optional
   listener on the node's private address answers **reader tokens only, read-only, with no identity**. The deck's writes
   name themselves by device token; a service-token request carries no user email, which the archive doesn't need.
-  Cloudflare's exact Access settings and headers are **checked against its documentation when D1 is built**; what I've
-  confirmed now is that a service token is sent as `CF-Access-Client-Id` and `CF-Access-Client-Secret`
-  ([docs](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/)), and
-  that a request body is capped at 100 MB on the Free and Pro plans, so the 8 MiB parts stay well under it.
+  Cloudflare's settings were **checked against its documentation when D1 was built (2026-11-04)**. A service token is sent
+  as `CF-Access-Client-Id` and `CF-Access-Client-Secret`, expires on the duration chosen and has to be refreshed
+  ([docs](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/)); a request
+  body is capped at 100 MB on the Free and Pro plans, so the 8 MiB parts stay well under it. **A correction to the
+  design:** Access sends its token in `Cf-Access-Jwt-Assertion`
+  ([docs](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/)),
+  and the current documentation names no `Cf-Access-Authenticated-User-Email` header. So the archive reads the `email` claim
+  of that JWT. It does not verify the signature (no crypto library, and it never calls out for Cloudflare's keys); Cloudflare's
+  application-token page says an origin reached through a tunnel need not validate the token, which holds only while every
+  route to that port is behind the Access application. The RUNBOOK makes that a rule and says to create the Access
+  application before the tunnel route. A service token's JWT has no email, which is fine: the deck is its device token.
 - **The read-side contract is vendored into the apps** (see above), where the design kept it Gatbox-only.
 - **ROM lists for later games** are built by a path unit, as the design lists, and close phase B's one open gap.
 - **Not in phase D:** disk images (the plan's separate disk phase: they're gigabytes and get their own dataset, the deck

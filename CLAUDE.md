@@ -171,3 +171,10 @@ read by the owner first). The logger never opens it: gatbox-web exports the conf
 LIBRARY replaces MANUALS on the 7" (games, MISSING, ADD/EDIT, title search over MAME's list, CHECK with known-good marks,
 FIND A MANUAL through a spool job). An unseeded deck behaves as before. Spec `docs/plans/2026-11-03-phase-b-library.md`;
 the install diff she has not seen yet is in BRINGUP.md.
+
+**Phase D (the archive), D1 and D2 built 2026-11-04 on `phase-d-archive` (stacked on `phase-b-library`), not installed:**
+`archive/` is a stdlib server in its own Debian 13 container (the deck's own `library.py` plus a content-addressed file
+store, `backend/gatboxlib/filestore.py`), reached through a Cloudflare tunnel with Access in front, with phone pages for
+her partner (games, manuals and a PDF viewer, limits that arrive unconfirmed, facts, upload, add and edit). The deck, the
+apps and Cloudflare are the next slices (D3 on); her steps are `archive/RUNBOOK.md`. Spec
+`docs/plans/2026-11-04-phase-d-archive.md`.

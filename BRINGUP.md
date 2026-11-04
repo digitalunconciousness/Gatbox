@@ -679,6 +679,35 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
            `games.py`, `rom_check.py`, `titles.py`, `manual_request.py`, `gatbox-library`, and the title list build
            (`/usr/local/share/gatbox/mame-titles.json`, from `mame -listxml` once per MAME version)
   - [ ] ⏸ Owner: review the seed plan after B2; see the install diff before anything is installed
+- **Phase D, the archive (branch `phase-d-archive`, stacked on `phase-b-library`, from 2026-11-04):** spec
+  `docs/plans/2026-11-04-phase-d-archive.md`, approved by the owner ("OK as written"; it covers the code and the push,
+  merging, installing and everything on Proxmox and Cloudflare stay hers). Repo-only: nothing installed on the deck
+  changes, and nothing is installed anywhere until she runs `archive/RUNBOOK.md`. D1 to D3 go to her as a unit (with a
+  dry run on her real library) before D4 on.
+  - [x] D1, the server (`archive/`): stdlib, over the deck's own `gatboxlib/library.py` and a new content-addressed
+        file store (`gatboxlib/filestore.py`, resumable 8 MiB parts, one implementation for the archive and the deck's
+        loopback calls). `GET /api/v1/library/changes|digest`, `PUT /api/v1/library/records` (up to 100 compare-and-set
+        writes), phase C's file calls (begin, parts, finish, read with Range; 400 MB). Tokens `gbx_<id>.<secret>`
+        (scrypt-hashed, mode 600) for the deck (device) and one per app (reader: `models=` filter, manuals only, never a
+        ROM image, no writes). Two listeners: the tunnel one (localhost) takes people through Cloudflare Access, and the
+        private one (optional) takes reader tokens only. The unit is sandboxed (`IPAddressDeny=any`, `ProtectSystem=strict`).
+        `archive/install.sh` is idempotent, refuses a data directory that isn't a mount point, and works offline once
+        installed. `test-archive.sh` 96, `test-archive-install.sh` 29
+  - [x] D2, the pages (phone-first, Synthwave): games and search, a game (documents, rail limits, facts, MAME set and
+        ROM list, dumped images and their verdicts), the PDF viewer (page images by `pdftoppm`, cached), upload a PDF,
+        add a game (the key shown before saving), edit game / document / fact / limit with the revision the form was
+        opened at: a disagreement shows both versions and keeps what was typed. A limit added there arrives unconfirmed
+        and CONFIRM stays on the 7". Forms carry an HMAC CSRF field; the CSP allows only the archive's own script, style
+        and fonts. `test-archive-pages.sh` 84, `test-archive-layout.sh` 304 (headless Chromium: no sideways scroll at 195,
+        320, 390, 768 and 1280 px, every control at least 44 px, no CSP violation, the pinned fonts load, a visible focus
+        ring); screenshots of every page at every width were read
+  - [x] Cloudflare facts read from its documentation on 2026-11-04 (the RUNBOOK uses them): Access sends its token in
+        `Cf-Access-Jwt-Assertion` and the docs name **no** `Cf-Access-Authenticated-User-Email` header, so the archive
+        reads the JWT's `email` claim (unverified: only the tunnel can reach that port, which the RUNBOOK makes a rule); a
+        service token's JWT has no email; a service token is sent as `CF-Access-Client-Id` / `CF-Access-Client-Secret`,
+        expires on the duration chosen and must be refreshed; create the Access application before the tunnel route
+  - [ ] D3, the deck's sync (gatbox-sync library step, conflicts, loopback file calls, dry run)
+  - [ ] ⏸ Owner: run `archive/RUNBOOK.md` when D3 is shown and she wants it
 - **The integration plan, phase A (2026-10-28):** `docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md`,
   approved by the owner. Repo-only on this side (nothing installed changes except the guard above).
   - [x] Contract v1 is GATBOX's now: the README takes the hub's 10-26 additions and writes down the Phase 8 extras

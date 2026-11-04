@@ -79,7 +79,8 @@ A document's PDF, named by its SHA-256. Ask for at most 8 MiB at a time with `Ra
 `Content-Range: bytes <first>-<last>/<total>` (`examples/files-range-response.txt`), `Accept-Ranges: bytes`, an `ETag`
 of the hash, and the PDF's type. Without `Range` the whole file comes back with `200`. A range outside the file is `416`.
 The bytes hash to the name: **check the SHA-256 of what was joined before keeping it**, and keep a partial download so a
-cut-off one can resume from the byte it reached. `examples/manual.pdf` is the file the examples' document names.
+cut-off one can resume from the byte it reached. `examples/manual.pdf.b64` is the file the examples' document names, as base64 (the repositories refuse a `.pdf` file by rule): decode it
+and it hashes to the document's `sha256`.
 
 ## What an app does, in short
 

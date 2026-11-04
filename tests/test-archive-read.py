@@ -7,6 +7,7 @@ neither end can drift from the other. Every game, name and byte here is invented
     python3 tests/test-archive-read.py            check
     python3 tests/test-archive-read.py --write    regenerate examples/ from the real server (then CHECKSUMS: docs/contract/checksums.sh --write DIR)
 """
+import base64
 import hashlib
 import http.client
 import importlib.util
@@ -119,8 +120,8 @@ def run(tmp):
     }
     if WRITE:
         os.makedirs(EX, exist_ok=True)
-        with open(os.path.join(EX, "manual.pdf"), "wb") as f:
-            f.write(pdf)
+        with open(os.path.join(EX, "manual.pdf.b64"), "wb") as f:       # base64: the repositories refuse a .pdf file by rule
+            f.write(base64.encodebytes(pdf))
         for name, path in asks.items():
             code, _, body = get(port, path, token)
             assert code == 200, (name, code, body)
@@ -169,8 +170,9 @@ def run(tmp):
     check("a range of a manual: 206 with the headers the example names", code == 206 and got == text and body == pdf[:128])
     code, _, body = get(port, f"/api/v1/files/{sha}", token)
     check("without Range, the whole file, and it hashes to its name", code == 200 and hashlib.sha256(body).hexdigest() == sha
-          and body == open(os.path.join(EX, "manual.pdf"), "rb").read())
+          and body == base64.b64decode(open(os.path.join(EX, "manual.pdf.b64"), "rb").read()))
     check("the example document names exactly that file", json.load(open(os.path.join(EX, "changes-response.json")))["records"][1]["data"]["sha256"] == sha)
+    check("the committed example file decodes to that same PDF", base64.b64decode(open(os.path.join(EX, "manual.pdf.b64"), "rb").read()) == pdf)
     code, _, _ = get(port, f"/api/v1/files/{sha}", token, f"bytes={len(pdf) + 10}-")
     check("a range outside the file is 416", code == 416)
     rom = arc.files.put_file(b"rom image bytes that a reader must never get")

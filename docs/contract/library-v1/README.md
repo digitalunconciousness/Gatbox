@@ -1,7 +1,8 @@
 # The library format, v1
 
 What the deck and, later, the archive both store and exchange. It is **Gatbox's own** and not part of contract v1:
-the apps never see it, and it isn't vendored. Both ends run `backend/gatboxlib/library.py`, so the format can't
+the apps never see the writes or the merge. The **read side** (`read/`) is what an app needs to keep a read-only copy,
+and each app vendors that directory byte-identical (see `read/README.md`). Both ends run `backend/gatboxlib/library.py`, so the format can't
 drift; `library-vectors.json` is what any other implementation must reproduce. The design is
 `docs/superpowers/specs/2026-10-28-shared-game-library-design.md`.
 

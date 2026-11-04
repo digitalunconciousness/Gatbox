@@ -45,6 +45,22 @@ for sib in $siblings; do
 done
 [ "$found" = 0 ] && echo "  skip  no sibling checkout found"
 
+echo "the library's read side (docs/contract/library-v1/read), vendored by each app at contract/library-v1:"
+R="$REPO/docs/contract/library-v1/read"
+check "it has its README, examples and CHECKSUMS" '[ -f "$R/README.md" ] && [ -f "$R/CHECKSUMS" ] && [ -d "$R/examples" ]'
+check "every file matches CHECKSUMS, and CHECKSUMS covers every file" 'bash "$REPO/docs/contract/checksums.sh" "$R" >/dev/null'
+check "a regenerated CHECKSUMS is the one committed" '
+  cp -r "$R" "$T/read" && bash "$REPO/docs/contract/checksums.sh" --write "$T/read" >/dev/null &&
+  cmp -s "$R/CHECKSUMS" "$T/read/CHECKSUMS"'
+check "the real archive reproduces every example (tests/test-archive-read.py)" 'python3 "$REPO/tests/test-archive-read.py" >/dev/null'
+lfound=0
+for sib in $siblings; do
+  [ -f "$sib/contract/library-v1/CHECKSUMS" ] || continue
+  lfound=$((lfound + 1))
+  check "$sib/contract/library-v1 is the same as docs/contract/library-v1/read" 'diff -r "$R" "$sib/contract/library-v1" >/dev/null'
+done
+[ "$lfound" = 0 ] && echo "  skip  no sibling checkout has the library's read side yet"
+
 echo "the uid rules, computed here and compared with the hub's examples:"
 # If these disagree, every item GATBOX sends is a row the hub cannot match again.
 check "rail_session uid reproduces the example" 'py "

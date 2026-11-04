@@ -74,6 +74,77 @@ h = lambda s: hashlib.sha256(s.encode()).hexdigest()[:32]
 assert h(f\"{p}|reading|{f}|{e:.3f}\") != h(f\"{p}|reading|{f}|{e:.6f}\")
 "'
 
+echo "ROM images (capability roms): the example image, the files calls and the two items:"
+check "the example image is what its hashes say (hex in JSON, never a .bin in git)" 'py "
+import hashlib, json, zlib
+i = json.load(open(\"$C/examples/rom-image.json\"))
+b = bytes.fromhex(i[\"hex\"])
+assert len(b) == i[\"size\"] == 32
+assert hashlib.sha1(b).hexdigest() == i[\"sha1\"] and hashlib.sha256(b).hexdigest() == i[\"sha256\"]
+assert format(zlib.crc32(b) & 0xFFFFFFFF, \"08x\") == i[\"crc32\"]
+"'
+check "the files examples describe that image, cut at 8 MiB" 'py "
+import json
+E = \"$C/examples/\"
+i, j = json.load(open(E + \"rom-image.json\")), lambda n: json.load(open(E + n))
+assert j(\"files-begin-request.json\") == {\"sha256\": i[\"sha256\"], \"size\": 32}
+b = j(\"files-begin-response.json\")
+assert (b[\"state\"], b[\"part_size\"], b[\"parts\"], b[\"have\"]) == (\"open\", 8 * 1024 * 1024, 1, []), b
+assert j(\"files-part-response.json\")[\"have\"] == [0]
+for n in (\"files-begin-response-stored.json\", \"files-finish-response.json\"):
+    assert j(n) == {\"state\": \"stored\", \"sha256\": i[\"sha256\"], \"size\": 32}, n
+"'
+check "the README's numbers for a file are the examples' (8 MiB parts, 32 MiB files)" 'py "
+import json, re
+r = open(\"$C/README.md\", encoding=\"utf-8\").read()
+assert \"33554432\" in r and \"8388608\" in r and \"32 MiB\" in r
+assert json.load(open(\"$C/examples/files-begin-response.json\"))[\"part_size\"] == 8388608
+"'
+check "rom_dump and burn uids reproduce the examples (burn: created at exactly 3 places)" 'py "
+import hashlib, json
+r = json.load(open(\"$C/examples/rom-ingest-request.json\"))
+pub = r[\"device\"]
+h = lambda s: hashlib.sha256(s.encode()).hexdigest()[:32]
+d = next(i for i in r[\"items\"] if i[\"kind\"] == \"rom_dump\")
+b = next(i for i in r[\"items\"] if i[\"kind\"] == \"burn\")
+assert d[\"uid\"] == h(f\"{pub}|rom_dump|{d[\"machine\"]}|{d[\"label\"]}|{d[\"sha1\"]}\"), d[\"uid\"]
+assert b[\"uid\"] == h(f\"{pub}|burn|{b[\"machine\"]}|{b[\"image_sha1\"]}|{b[\"created\"]:.3f}\"), b[\"uid\"]
+assert b[\"uid\"] != h(f\"{pub}|burn|{b[\"machine\"]}|{b[\"image_sha1\"]}|{b[\"created\"]:.6f}\"), \"the rule has teeth\"
+"'
+check "the items name the example image, and carry what the contract says" 'py "
+import json
+E = \"$C/examples/\"
+img = json.load(open(E + \"rom-image.json\"))
+items = json.load(open(E + \"rom-ingest-request.json\"))[\"items\"]
+d = next(i for i in items if i[\"kind\"] == \"rom_dump\")
+b = next(i for i in items if i[\"kind\"] == \"burn\")
+assert (d[\"sha256\"], d[\"sha1\"], d[\"crc32\"], d[\"size\"]) == (img[\"sha256\"], img[\"sha1\"], img[\"crc32\"], 32)
+assert (b[\"image\"], b[\"image_sha1\"], b[\"size\"]) == (img[\"sha256\"], img[\"sha1\"], 32)
+assert d[\"reads\"] == 2 and d[\"identical\"] is True and d[\"clock\"][\"source\"] in (\"ntp\", \"rtc\", \"unverified\", \"unknown\")
+assert b[\"state\"] in (\"verified\", \"stopped\") and \"error\" in b and \"order\" not in d and \"order\" not in b
+assert len(d[\"label\"]) <= 40 and len(d[\"part\"]) <= 64 and len(b[\"part\"]) <= 64
+"'
+check "the replies list both items in order: created, then duplicate" 'py "
+import json
+E = \"$C/examples/\"
+req = json.load(open(E + \"rom-ingest-request.json\"))[\"items\"]
+for name, status in ((\"rom-ingest-response.json\", \"created\"), (\"rom-ingest-response-duplicate.json\", \"duplicate\")):
+    r = json.load(open(E + name))
+    assert r[\"received\"] == 2 and [(x[\"uid\"], x[\"kind\"], x[\"status\"]) for x in r[\"results\"]] == [(i[\"uid\"], i[\"kind\"], status) for i in req], name
+"'
+check "the read-back example carries the same items" 'py "
+import json
+E = \"$C/examples/\"
+items = json.load(open(E + \"rom-ingest-request.json\"))[\"items\"]
+m = json.load(open(E + \"machine-dumps-response.json\"))
+assert m[\"machine\"] == \"widget-wars\" and m[\"dumps\"] == [i for i in items if i[\"kind\"] == \"rom_dump\"] and m[\"burns\"] == [i for i in items if i[\"kind\"] == \"burn\"]
+"'
+check "the README names the capability, the five calls and both uid rules" 'py "
+r = open(\"$C/README.md\", encoding=\"utf-8\").read()
+for t in (\"\\\"roms\\\"\", \"/api/v1/files\", \"/parts/<n>\", \"/finish\", \"/machines/<slug>/dumps\", \"rom_dump      sha256(\", \"burn          sha256(\"):
+    assert t in r, t
+"'
+
 echo "report.verdict, the one definition:"
 check "no window (bench, free) has no verdict"  'py "
 from gatboxweb import report

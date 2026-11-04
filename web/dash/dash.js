@@ -864,9 +864,12 @@
         d.appendChild(sp);
       }
     };
-    let cp = null, cpErr = null, dumps = null;
+    let cp = null, cpErr = null, dumps = null, burns = [];
     try { cp = await api("GET", "/api/captures?machine=" + encodeURIComponent(e.slug)); } catch (x) { cpErr = x; }
-    try { dumps = (await api("GET", "/api/dumps?machine=" + encodeURIComponent(e.slug))).dumps; } catch (x) { /* none */ }
+    try {
+      const r = await api("GET", "/api/dumps?machine=" + encodeURIComponent(e.slug));
+      dumps = r.dumps; burns = r.burns || [];
+    } catch (x) { /* none */ }
     if (stale()) return;
     const saved = d => {
       if (cpErr) return d.appendChild(el("div", "bad", String(cpErr.message)));
@@ -875,7 +878,7 @@
         d.appendChild(el("div", null, `${k.iso.replace("T", " ")}  ${k.label}  ${savedText(k)}  (${modeLabel(k.mode)}${k.flags ? ", " + k.flags : ""})`));
     };
     const dumpsInto = d => {
-      if (dumps) dumpList(d, dumps); else d.appendChild(el("div", "mut", "No dump archive on this Pi yet."));
+      if (dumps) { dumpList(d, dumps); burnList(d, burns); } else d.appendChild(el("div", "mut", "No dump archive on this Pi yet."));
     };
     if (!BOX) {
       details(c); critical(c); rails(c);
@@ -898,7 +901,7 @@
     await fold(r, "mc-details", "DETAILS", ["risks", "faults", "parts", "PM"].join(" · "), details, loadMachine);
     await fold(r, "mc-saved", "SAVED READINGS", cp ? n(cp.captures.length, "reading") : "", saved, loadMachine);
     await fold(r, "mc-rom", "ROM CHIPS (MAME)", rom, d => mameSection(d, e.slug, true), loadMachine);
-    await fold(r, "mc-dumps", "DUMPS", dumps ? n(dumps.length, "dump") : "", dumpsInto, loadMachine);
+    await fold(r, "mc-dumps", "DUMPS", dumps ? n(dumps.length, "dump") + (burns.length ? " · " + n(burns.length, "burn") : "") : "", dumpsInto, loadMachine);
     B.appendChild(r);
     swap();
   }
@@ -1411,6 +1414,9 @@
         ? `${h.last.created} new, ${h.last.duplicate} already there${h.last.rejected ? `, ${h.last.rejected} refused` : ""}`
         : "nothing yet", h.last && h.last.rejected ? "bad" : null],
       ["sent in all", h.sent_total != null ? String(h.sent_total) : "-"],
+      ...(h.roms_waiting != null || h.roms_parked ? [["dumps and burns",
+        (h.roms_waiting ? `${h.roms_waiting} waiting` : "none waiting") + (h.roms_parked ? `, ${h.roms_parked} refused` : ""),
+        h.roms_parked ? "bad" : h.roms_waiting ? "warn" : null]] : []),
     ];
     // What no hub was sent (Phase 8): a machine two rosters claim, one no roster has, a hub file refused.
     const routing = hb ? [
@@ -2296,6 +2302,7 @@
   // Reads only: nothing on this screen writes to a chip (hard rule 6).
   const D = {part: null, label: null, family: null, parts: null, fams: null, st: null, chip: null};
   async function loadDump() {
+    D.open = null;                                   // the machine's open orders are asked afresh each time the tab opens
     try {
       const [st, pl] = await Promise.all([api("GET", "/api/dump"), D.fams ? null : api("GET", "/api/dump/parts")]);
       D.st = st;
@@ -2305,8 +2312,44 @@
   }
   function onDump(st) { D.st = st; if (S.view === "dump") renderDump(); }
   function dumpReq(extra) {
-    const body = Object.assign({part: D.part, label: D.label}, D.machine ? {machine: D.machine} : {}, extra || {});
+    const body = Object.assign({part: D.part, label: D.label}, D.machine ? {machine: D.machine} : {}, D.order ? {order: D.order} : {},
+                               extra || {});
     return api("POST", "/api/dump", body).then(() => toast(`DUMP queued: ${D.part} · ${D.label}`)).catch(fail);
+  }
+  // FOR ORDER: the order this dump or burn is for, listed on that order at the hub. The hubs never guess a link, so it is
+  // the machine's one open order when there is exactly one (a tap clears it), a pick when there are several, and nothing
+  // when there are none (the row isn't there). Open orders are the cached ones, as of the last sync.
+  function orderRow(p, slug) {
+    if (!slug) return;
+    if (D.orderFor !== slug) { D.orderFor = slug; D.order = null; D.orderPicked = false; D.open = null; }
+    const row = el("div", "btnrow");
+    row.style.cssText = "align-items:center;margin-top:6px";
+    p.appendChild(row);
+    const draw = () => {
+      clear(row);
+      const open = D.open || [];
+      row.style.display = open.length ? "" : "none";
+      const cur = open.find(o => o.id === D.order);
+      const b = el("button", cur ? "on" : null, cur ? `FOR ORDER #${cur.id} ✕` : "FOR ORDER: NONE");
+      b.addEventListener("click", async () => {
+        if (cur) { D.order = null; D.orderPicked = true; return draw(); }
+        const k = await choose("FOR WHICH ORDER?", "It is listed on that order at the hub, with the image.",
+                               [...open.map(o => [String(o.id), `#${o.id} ${String(o.issue || "").slice(0, 40)}`]), ["none", "NO ORDER"]]);
+        if (k === null) return;
+        D.orderPicked = true; D.order = k === "none" ? null : Number(k);
+        draw();
+      });
+      row.appendChild(b);
+      if (cur) row.appendChild(el("span", "mut", String(cur.issue || "").slice(0, 60)));
+    };
+    if (D.open) return draw();
+    api("GET", "/api/orders/open?machine=" + encodeURIComponent(slug)).then(r => {
+      if (D.orderFor !== slug) return;
+      D.open = r.open || [];
+      if (D.open.length === 1 && !D.orderPicked) D.order = D.open[0].id;
+      if (!D.open.some(o => o.id === D.order)) D.order = null;
+      draw();
+    }).catch(() => {});
   }
   async function pickDumpMachine() {
     let R;
@@ -2440,6 +2483,7 @@
       mrow.appendChild(back);
     }
     p.appendChild(mrow);
+    orderRow(p, D.machine || (S.st && S.st.machine));
     const seg = el("div", "seg");
     seg.style.margin = "8px 0";
     for (const [k, t] of [["read", "READ"], ["burn", "BURN"]]) {
@@ -2482,7 +2526,7 @@
     L.appendChild(el("h2", null, "Dumps for this machine"));
     B.appendChild(L);
     api("GET", "/api/dumps" + (D.machine ? "?machine=" + encodeURIComponent(D.machine) : ""))
-      .then(r => dumpList(L, r.dumps, D.machine || (S.st && S.st.machine) || "unassigned")).catch(() => {});
+      .then(r => { dumpList(L, r.dumps, D.machine || (S.st && S.st.machine) || "unassigned"); burnList(L, r.burns || []); }).catch(() => {});
   }
   // the part: family tiles (lit for a size: the MAME chip's, or the image's) → minipro's exact names; or SEARCH
   function partSection(p, size) {
@@ -2558,7 +2602,7 @@
   function burnReq(path) {
     // D.byes: the part the owner confirmed a non-JEDEC pinout for; it covers that part only, never a later CHANGE
     const body = Object.assign({image: D.bimage.image, part: D.part}, D.machine ? {machine: D.machine} : {},
-                               D.byes && D.byes === D.part ? {yes: true} : {});
+                               D.order ? {order: D.order} : {}, D.byes && D.byes === D.part ? {yes: true} : {});
     return api("POST", path, body)
       .then(() => toast(path.endsWith("/blank") ? `BLANK CHECK queued: ${D.part}` : `BURN armed: ${D.bimage.name} → ${D.part}`))
       .catch(e => { fail(e); renderDump(); });       // a refused burn: a fresh hold button replaces the spent one
@@ -2638,6 +2682,14 @@
     }
     return c;
   }
+  // Where a dump or a burn stands with the hubs, as gatbox-sync last left it: SENT TO <hub>, WAITING, HELD or REFUSED, in
+  // words (never only a colour), with the reason under it for everything but sent. Nothing at all if the sync hasn't said.
+  function sentBadge(r, s) {
+    if (!s) return;
+    const tone = {sent: "ok", waiting: "warn", held: "mut", refused: "bad"}[s.state] || "mut";
+    r.firstChild.after(el("span", "tag " + tone, s.state === "sent" ? "SENT" + (s.hub ? " TO " + s.hub : "") : String(s.state).toUpperCase()));
+    if (s.state !== "sent" && s.reason) r.appendChild(el("div", s.state === "refused" ? "bad" : "mut", s.reason));
+  }
   function dumpList(box, list, machine) {
     if (!list.length) { box.appendChild(el("div", "mut", "None yet.")); return; }
     for (const d of list.slice(0, 20)) {
@@ -2646,6 +2698,20 @@
       add(r, el("b", null, d.label + " "), el("span", d.match ? "tag ok" : "tag warn", d.match ? "MATCH" : "NO MATCH"),
           el("div", "mut", `${(d.matches[0] && d.matches[0].set + "/" + d.matches[0].rom) || ""} ${d.part} · ${(d.date || "").slice(0, 16).replace("T", " ")} · ${d.sha1.slice(0, 8)}`),
           d.file ? checkButton(`${machine}/${d.file}`) : null);
+      sentBadge(r, d.sent);
+      box.appendChild(r);
+    }
+  }
+  function burnList(box, list) {
+    if (!list || !list.length) return;
+    box.appendChild(el("h3", null, "Burns"));
+    for (const b of list.slice(0, 20)) {
+      const r = el("div");
+      r.style.margin = "4px 0";
+      const when = b.epoch ? new Date(b.epoch * 1000).toISOString().slice(0, 16).replace("T", " ") + " UTC" : "";
+      add(r, el("b", null, b.part + " "), el("span", b.state === "verified" ? "tag ok" : "tag bad", String(b.state).toUpperCase()),
+          el("div", "mut", `${b.image || "image gone"} · ${when}${b.vpp ? " · VPP " + b.vpp : ""}${b.error ? " · " + b.error : ""}`));
+      sentBadge(r, b.sent);
       box.appendChild(r);
     }
   }

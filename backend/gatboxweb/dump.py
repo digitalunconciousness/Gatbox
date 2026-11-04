@@ -20,7 +20,7 @@ import uuid
 
 from gatboxlib import profiles
 
-from . import config, devices, roster
+from . import config, devices, hubs, orders, romsync, roster
 from .live import LIVE
 from .meter import Bad, resolved
 
@@ -116,9 +116,23 @@ def request(body):
     machine = body.get("machine") or resolved()["machine"] or "unassigned"
     if machine != "unassigned" and machine not in (roster.slugs() or set()):
         raise Bad(404, f"not in the roster: {machine!r}")
-    return _queue({"part": part, "label": label.strip(), "machine": machine,
-                   "ignore_id": body.get("ignore_id") is True, "keep_blank": body.get("keep_blank") is True,
-                   "yes": body.get("yes") is True})
+    return _queue(dict({"part": part, "label": label.strip(), "machine": machine,
+                        "ignore_id": body.get("ignore_id") is True, "keep_blank": body.get("keep_blank") is True,
+                        "yes": body.get("yes") is True}, **_order(body, machine)))
+
+
+def _order(body, machine):
+    """{"order": id} when the request names an order, else {}. The order is the hub's own id for one of this machine's
+    open orders as of the last sync (the 7" offers only those): the hubs never guess a link, so a made-up or stale one is
+    refused here, and the dump or burn is listed on that order at the hub (contract v1, `order`)."""
+    order = body.get("order")
+    if order is None:
+        return {}
+    if isinstance(order, bool) or not isinstance(order, int):
+        raise Bad(400, "order: the hub's number for the order")
+    if machine == "unassigned" or order not in {o.get("id") for o in orders.hub_open(machine)}:
+        raise Bad(400, f"order {order} isn't open for {machine} as of the last sync with its hub")
+    return {"order": order}
 
 
 def _queue(fields, check=None):
@@ -198,7 +212,8 @@ def _burn_fields(body):
     machine = body.get("machine") or resolved()["machine"] or "unassigned"
     if machine != "unassigned" and machine not in (roster.slugs() or set()):
         raise Bad(404, f"not in the roster: {machine!r}")
-    return {"image": image, "part": part, "machine": machine, "yes": body.get("yes") is True}
+    return dict({"image": image, "part": part, "machine": machine, "yes": body.get("yes") is True},
+                **_order(body, machine))
 
 
 def blank_request(body):
@@ -226,7 +241,7 @@ def dumps(slug):
     """GET /api/dumps?machine=: the archive's sidecars for a machine, newest first."""
     if slug != "unassigned" and slug not in (roster.slugs() or set()):
         raise Bad(404, f"not in the roster: {slug!r}")
-    out = []
+    out, states = [], hubs.rom_states()
     for side in glob.glob(os.path.join(config.ROMS, slug, "*.json")):
         try:
             with open(side, encoding="utf-8") as f:
@@ -234,11 +249,26 @@ def dumps(slug):
         except (OSError, ValueError):
             continue
         ri = j.get("romident") or {}
-        out.append({"file": os.path.basename(side)[:-5] + ".bin", "label": j.get("label"), "part": j.get("part"),
+        name = os.path.basename(side)[:-5] + ".bin"
+        out.append({"file": name, "label": j.get("label"), "part": j.get("part"),
                     "size": j.get("size"), "sha1": j.get("sha1"), "crc32": j.get("crc32"), "date": j.get("date"),
                     "epoch": j.get("epoch"), "match": ri.get("match"), "matches": ri.get("matches", []),
-                    "blank": j.get("blank"), "id_check": j.get("id_check")})
+                    "blank": j.get("blank"), "id_check": j.get("id_check"),
+                    "sent": states.get(f"dump:{slug}/{name}")})
     return sorted(out, key=lambda x: x.get("epoch") or 0, reverse=True)
+
+
+def burns(slug, limit=20):
+    """GET /api/dumps?machine= (its "burns"): this machine's burns, newest first, each with where it stands with the hubs
+    (the same words as a dump's: sent, waiting, held, refused). Read from burns.jsonl, which only gatbox-dump writes."""
+    states, out = hubs.rom_states(), []
+    for b in romsync.burns():
+        if b.get("machine") == slug:
+            out.append({"key": b["key"], "epoch": b["epoch"], "state": b.get("state"), "part": b.get("part"),
+                        "image": os.path.basename(b["image"]) if b.get("image") else None, "size": b.get("size"),
+                        "vpp": b.get("vpp"), "blank_ok": b.get("blank_ok"), "error": b.get("error"),
+                        "sent": states.get(b["key"])})
+    return sorted(out, key=lambda x: x["epoch"], reverse=True)[:limit]
 
 
 def watch():

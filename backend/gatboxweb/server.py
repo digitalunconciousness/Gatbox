@@ -20,8 +20,8 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from . import (captures, config, devices, dump, games, libsource, mame, manual_request, manuals, meter, orders, phone,
-               report, rom_check, roster, sessions, system, titles, wifi)
+from . import (captures, config, devices, dump, games, hubs, libsource, mame, manual_request, manuals, meter, orders,
+               phone, report, rom_check, romsync, roster, sessions, system, titles, wifi)
 from .live import LIVE
 from .meter import Bad
 
@@ -513,7 +513,36 @@ def api_dump_parts(h, m, q):
 
 def api_dumps(h, m, q):
     slug = q1(q, "machine") or meter.resolved()["machine"] or "unassigned"
-    h.json(200, {"machine": slug, "dumps": dump.dumps(slug)})
+    h.json(200, {"machine": slug, "dumps": dump.dumps(slug), "burns": dump.burns(slug)})
+
+
+def _loopback(h):
+    """The sync reads below hand out ROM images: gatbox-sync on 127.0.0.1 and nobody on the deck's Wi-Fi."""
+    if not h.is_local():
+        raise Bad(403, "this is read by gatbox-sync on the Pi itself")
+
+
+def api_sync_dumps(h, m, q):
+    _loopback(h)
+    h.json(200, {"dumps": romsync.dumps()})
+
+
+def api_sync_burns(h, m, q):
+    _loopback(h)
+    h.json(200, {"burns": romsync.burns()})
+
+
+def api_sync_image(h, m, q):
+    _loopback(h)
+    h.send(200, romsync.image_part(q1(q, "name"), q1(q, "part", "0")), "application/octet-stream")
+
+
+def api_orders_open(h, m, q):
+    """GET /api/orders/open?machine=: what the machine's hub had open for it at the last sync (FOR ORDER on DUMP and BURN)."""
+    slug = q1(q, "machine") or ""
+    if not hubs.good_slug(slug):
+        raise Bad(400, "machine: a roster slug")
+    h.json(200, {"machine": slug, "open": orders.hub_open(slug)})
 
 
 def api_devices(h, m, q):
@@ -869,6 +898,7 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("POST", r"/api/captures", api_captures_post),
     ("GET", r"/api/devices", api_devices),
     ("GET", r"/api/orders", api_orders_get),
+    ("GET", r"/api/orders/open", api_orders_open),
     ("POST", r"/api/orders", api_orders_post),
     ("POST", r"/api/orders/tag", api_orders_tag),
     ("DELETE", r"/api/orders/(?P<uid>[^/]+)", api_orders_delete),
@@ -879,6 +909,9 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("POST", r"/api/dump", api_dump_post),
     ("GET", r"/api/dump/parts", api_dump_parts),
     ("GET", r"/api/dumps", api_dumps),
+    ("GET", r"/api/sync/dumps", api_sync_dumps),
+    ("GET", r"/api/sync/burns", api_sync_burns),
+    ("GET", r"/api/sync/image", api_sync_image),
     ("GET", r"/api/burn/images", api_burn_images),
     ("POST", r"/api/burn/blank", api_burn_blank),
     ("POST", r"/api/burn", api_burn),

@@ -236,6 +236,17 @@ def setup():
     with open(f"{T}/roms/gauntlet-legends/LEGEND15-U10_aaaaaaaa.json", "w") as f:
         json.dump({"label": "LEGEND15-U10", "part": "27C040@DIP32", "sha1": "a" * 40, "date": "2026-09-29T10:00:00-05:00",
                    "romident": {"match": True, "matches": [{"set": "gauntleg", "rom": "legend15.u10", "description": "x"}]}}, f)
+    # a burn for the same machine, and where gatbox-sync says the dump and the burn stand (roms-status.json): the dump is waiting
+    # for a hub, the burn went to WORKSHOP
+    with open(f"{T}/roms/burns.jsonl", "w") as f:
+        f.write(json.dumps({"epoch": 1790000400.0, "state": "verified", "image": f"{T}/roms/gauntlet-legends/LEGEND15-U10_aaaaaaaa.bin",
+                            "sha1": "a" * 40, "size": 524288, "part": "27C040@DIP32", "vpp": "13V", "machine": "gauntlet-legends",
+                            "blank_ok": True, "error": None}) + "\n")
+    os.makedirs(f"{T}/sync", exist_ok=True)
+    with open(f"{T}/sync/roms-status.json", "w") as f:
+        json.dump({"at": 1790000500.0, "items": {
+            "dump:gauntlet-legends/LEGEND15-U10_aaaaaaaa.bin": {"state": "waiting", "hub": "WORKSHOP", "reason": "no hub reachable"},
+            f"burn:1790000400.000:{'a' * 40}": {"state": "sent", "hub": "WORKSHOP"}}}, f)
     # a made-up 3-page manual for Gauntlet Legends (the fetch tool's output: PDF + sidecar + text) and its spec sheet
     import matplotlib
     matplotlib.use("Agg")
@@ -528,6 +539,13 @@ def main():
               "ROM CHIPS (MAME)" in text("#mc-body").upper()       # the 7" fold's title is in capitals
               and all(s_ in text("#mc-body") for s_ in ("1 OF 2 DUMPED", "← LEGEND15-U10", "not a T48 job",
                                                      "512 KB · 27C040 / 27C4001 or 27C4096 / 27C400")))
+        open_fold("DUMPS")
+        c.wait("document.querySelector('#mc-body').textContent.includes('LEGEND15-U10')", 10)
+        check("machine: the dump says WAITING with the reason, the burn says SENT TO WORKSHOP",
+              all(s_ in text("#mc-body") for s_ in ("WAITING", "no hub reachable", "Burns", "VERIFIED", "SENT TO WORKSHOP", "27C040@DIP32")))
+        q("document.querySelector('#v-machine').scrollTop = 10000")
+        time.sleep(0.4)
+        shot("14b-machine-dumps-sent")
         # A redraw (every state event) used to empty the page first: it jumped to the top under the finger.
         q("(() => { const v = document.querySelector('#v-machine'); v.scrollTop = 250;"
           " document.querySelector('#mc-body').firstChild.dataset.old = '1'; })()")
@@ -780,6 +798,18 @@ def main():
               and q("[...document.querySelectorAll('#du-body .tile.on')].map(t => t.firstChild.textContent).join('|')")
               == "27C040 / 27C4001|27C4096 / 27C400" and "1 · PART" in text("#du-body"))
         shot("17-dump-chip")
+        check("FOR ORDER: the machine's one open order is preselected, with its issue",
+              settles(c, "document.querySelector('#du-body').textContent.includes('FOR ORDER #412')")
+              and "Rail sags under load" in text("#du-body"))
+        shot("17b-dump-for-order")
+        q("[...document.querySelectorAll('#du-body button')].find(b => b.textContent.startsWith('FOR ORDER #412')).click()")
+        check("a tap clears it", settles(c, "document.querySelector('#du-body').textContent.includes('FOR ORDER: NONE')"))
+        q("[...document.querySelectorAll('#du-body button')].find(b => b.textContent.startsWith('FOR ORDER: NONE')).click()")
+        c.wait("document.querySelector('#sheet:not(.hide)') && document.querySelector('#pane').textContent.includes('FOR WHICH ORDER?')", 10)
+        check("and a tap on NONE offers the open orders, and NO ORDER",
+              "#412" in text("#pane") and "NO ORDER" in text("#pane"))
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent.startsWith('#412')).click()")
+        check("picking it puts it back", settles(c, "document.querySelector('#du-body').textContent.includes('FOR ORDER #412')"))
         api("DELETE", "/api/machine")
         c.wait("!document.querySelector('#du-body').textContent.includes('CHIP: legend12')", 10)
         check("no machine: the chip and its label go with it", not q("document.querySelectorAll('#du-body .tile.on').length")
@@ -1144,7 +1174,8 @@ def main():
                           "hubs": [{"name": "default", "label": "ALPHA", "capabilities": [], "ok": True, "queued": 0,
                                     "hub": "https://a.example", "at": time.time(), "sent_total": 2},
                                    {"name": "bravo", "label": "BRAVO", "capabilities": ["jobs"], "ok": True, "queued": 0,
-                                    "hub": "https://b.example", "at": time.time(), "sent_total": 1}],
+                                    "hub": "https://b.example", "at": time.time(), "sent_total": 1,
+                                    "roms_waiting": 2, "roms_parked": 1}],
                           "held": [], "conflicts": [{"machine": "gauntlet", "hubs": ["ALPHA", "BRAVO"]}], "refused": []})
         w("hub.json", {"name": "default", "label": "ALPHA", "capabilities": []})
         w("roster.json", {"machines": [{"slug": "gauntlet-legends", "name": "Gauntlet Legends"},
@@ -1167,6 +1198,9 @@ def main():
         check("system: the conflict, in its own tile",
               settles(c, "[...document.querySelectorAll('#sy-grid .card')].some(c => c.textContent.includes('Hub routing')"
                          " && c.textContent.includes('gauntlet: on ALPHA and BRAVO'))"))
+        check("system: a hub's tile counts its dumps and burns waiting and refused",
+              settles(c, "[...document.querySelectorAll('#sy-grid .card')].some(c => c.textContent.includes('Hub · BRAVO')"
+                         " && c.textContent.includes('2 waiting, 1 refused'))"))
         shot("19-system-hubs")
         click('[data-view="machine"]')
         c.wait("!document.querySelector('#mc-pick').disabled", 10)

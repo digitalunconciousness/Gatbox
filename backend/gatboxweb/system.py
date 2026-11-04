@@ -228,6 +228,7 @@ SYNC_STATE = hubs.SYNC_STATE
 def _hub_line(st):
     return {"ok": st.get("ok"), "url": st.get("hub"), "at": st.get("at"),
             "queued": st.get("queued"), "sent_total": st.get("sent_total"),
+            "roms_waiting": st.get("roms_waiting"), "roms_parked": st.get("roms_parked"),
             "error": st.get("error"),
             "last": {"created": st.get("last_created"),
                      "duplicate": st.get("last_duplicate"),

@@ -189,6 +189,11 @@ class Dump:
                 if old.get("sha1") == self.info["sha1"]:
                     self.info["archived"] = {"path": side[:-5] + ".bin", "new": False}
                     self.step("archive", "already archived as " + os.path.basename(side[:-5]) + ".bin")
+                    if self.info.get("order") is not None and old.get("order") != self.info["order"]:
+                        # The same bytes are the same dump, here and at the hub (which keeps one record per dump), so a
+                        # chip read again can't be listed on a new order. Say so rather than drop the link quietly.
+                        self.step("archive", f"not linked to order #{self.info['order']}: this chip was archived before, "
+                                  "and the same bytes are the same dump")
                     # the .bin is never rewritten; a sidecar whose identification never ran (MAME missing) gets this one
                     if (old.get("romident") or {}).get("match") is None and self.info["romident"].get("match") is not None:
                         old.update(romident=self.info["romident"],
@@ -215,12 +220,15 @@ class Dump:
 
     def sidecar(self):
         i = self.info
-        return {"part": i["part"], "label": i["label"], "machine": i["machine"], "size": i["size"], "sha1": i["sha1"],
+        side = {"part": i["part"], "label": i["label"], "machine": i["machine"], "size": i["size"], "sha1": i["sha1"],
                 "crc32": i["crc32"], "romident": i["romident"], "reads_compared": i["reads_compared"],
                 "identical": i["identical"], "blank": i["blank"], "pin_check": i.get("pin_check"),
                 "id_check": i.get("id_check"), "date": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
                 "epoch": round(time.time(), 3), "clock": clock_source(), "programmer": programmer(),
                 "tool": "gatbox-dump"}
+        if i.get("order") is not None:                       # the order it was made for (the dashboard's FOR ORDER)
+            side["order"] = i["order"]
+        return side
 
 
 def device(part):
@@ -337,9 +345,17 @@ class Burn(Dump):
                 "size": i.get("size"), "part": self.part, "vpp": i.get("vpp"), "machine": self.machine,
                 "blank_ok": i.get("blank_ok"), "armed": i.get("armed"), "error": i.get("error"),
                 "programmer": programmer(), "tool": "gatbox-dump --burn"}
+        if i.get("order") is not None:                       # the order it was made for (the dashboard's FOR ORDER)
+            line["order"] = i["order"]
         os.makedirs(ROMS, exist_ok=True)
         with open(os.path.join(ROMS, "burns.jsonl"), "a") as f:
             f.write(json.dumps(line) + "\n")
+
+
+def order_of(req):
+    """{"order": id} from a request that names one (the hub's own number, checked by gatbox-web), else {}."""
+    order = req.get("order")
+    return {"order": order} if isinstance(order, int) and not isinstance(order, bool) and order > 0 else {}
 
 
 def romident(data):
@@ -398,7 +414,7 @@ def run_job(request, status):
         part, label, machine = str(req.get("part", "")), str(req.get("label", "")), str(req.get("machine") or "unassigned")
         d = Dump(part, label, machine, bool(req.get("ignore_id")), bool(req.get("keep_blank")), status,
                  say=lambda m: print("gatbox-dump:" + m, flush=True))
-        d.info.update(non_jedec_ok=bool(req.get("yes")), job=req.get("id"), requested_at=req.get("at"))
+        d.info.update(non_jedec_ok=bool(req.get("yes")), job=req.get("id"), requested_at=req.get("at"), **order_of(req))
         try:
             if not LABEL.match(label) or (machine != "unassigned" and not SLUG.match(machine)):
                 raise Stop("bad request: label or machine", "gatbox-web validates these; this shouldn't happen")
@@ -439,7 +455,7 @@ def burn_job(req, status):
     machine = str(req.get("machine") or "unassigned")
     d = Burn(image, part, machine, arm=req.get("armed") if op == "burn" else None, status=status,
              say=lambda m: print("gatbox-dump:" + m, flush=True))
-    d.info.update(op=op, non_jedec_ok=bool(req.get("yes")), job=req.get("id"), requested_at=req.get("at"))
+    d.info.update(op=op, non_jedec_ok=bool(req.get("yes")), job=req.get("id"), requested_at=req.get("at"), **order_of(req))
     try:
         if not in_archive(image):
             raise Stop("that image isn't in the dump archive", "pick one from the archive (or put it in /srv/gatbox/roms/_images)")

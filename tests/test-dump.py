@@ -145,6 +145,31 @@ def main():
     check("the request is claimed and gone; status done, MATCH, archived",
           code == 0 and not os.path.exists(f"{sp}/request.json") and not os.path.exists(f"{sp}/running.json")
           and st["state"] == "done" and st["romident"]["match"] and st["job"] == "j1" and len(files("m10")) == 2)
+    side = lambda label: json.load(open(__import__("glob").glob(f"{T}/roms/m10/{label}_*.json")[0]))
+    check("a dump made for no order has no order in its sidecar", "order" not in side("JOB-1"))
+    open(f"{T}/rom2.bin", "wb").write(os.urandom(262144))                          # a different chip: a new dump
+    json.dump({"id": "j1b", "part": "TMS27C020@DIP32", "label": "JOB-ORD", "machine": "m10", "order": 412},
+              open(f"{sp}/request.json", "w"))
+    code, out = dump("--job", f"{sp}/request.json", "--status", f"{sp}/status.json", FAKE_ROM=f"{T}/rom2.bin",
+                     FAKE_MAME_MATCH="epr-x.ic1 sonic SegaSonic")
+    check("a dump made for an order carries it into its sidecar (the hub lists it on that order)",
+          code == 0 and json.load(open(f"{sp}/status.json"))["state"] == "done" and side("JOB-ORD")["order"] == 412)
+    json.dump({"id": "j1c", "part": "TMS27C020@DIP32", "label": "JOB-AGAIN", "machine": "m10", "order": 413},
+              open(f"{sp}/request.json", "w"))
+    code, out = dump("--job", f"{sp}/request.json", "--status", f"{sp}/status.json", FAKE_ROM=f"{T}/rom2.bin",
+                     FAKE_MAME_MATCH="epr-x.ic1 sonic SegaSonic")
+    st = json.load(open(f"{sp}/status.json"))
+    check("the same chip read again for another order says it can't be linked, and the archive is untouched",
+          st["state"] == "done" and st["archived"]["new"] is False and "not linked to order #413" in str(st["steps"])
+          and side("JOB-ORD")["order"] == 412 and not __import__("glob").glob(f"{T}/roms/m10/JOB-AGAIN_*"))
+    for n, bad in enumerate(("412", True, 0, -3, 4.5)):
+        json.dump({"id": f"j1x{n}", "part": "TMS27C020@DIP32", "label": f"JOB-X{n}", "machine": "m10", "order": bad},
+                  open(f"{sp}/request.json", "w"))
+        open(f"{T}/rom-x{n}.bin", "wb").write(os.urandom(262144))
+        dump("--job", f"{sp}/request.json", "--status", f"{sp}/status.json", FAKE_ROM=f"{T}/rom-x{n}.bin",
+             FAKE_MAME_MATCH="epr-x.ic1 sonic SegaSonic")
+    check("an order that isn't a positive whole number is never written into a sidecar",
+          all("order" not in side(f"JOB-X{n}") for n in range(5)))
     json.dump({"id": "j2", "part": "27C020@DIP32", "label": "JOB-2", "machine": "m10"}, open(f"{sp}/request.json", "w"))
     code, out = dump("--job", f"{sp}/request.json", "--status", f"{sp}/status.json", FAKE_ID="mismatch")
     st = json.load(open(f"{sp}/status.json"))
@@ -331,6 +356,12 @@ def burn_jobs(sp):
           and burns()[-1]["machine"] == "m10")
     check("... and the request is used up (claimed once)", not os.path.exists(f"{sp}/request.json")
           and not os.path.exists(f"{sp}/running.json"))
+    check("a burn made for no order has no order in its log line", "order" not in burns()[-1])
+    chip()
+    now = time.time()
+    code, st = job({"id": "b6o", "op": "burn", "image": image, "part": "27C020@DIP32", "machine": "m10", "order": 7,
+                    "armed": {"by": "screen", "at": now, "until": now + 30}})
+    check("a burn made for an order carries it into its log line", st["state"] == "done" and burns()[-1]["order"] == 7)
     chip()
     now = time.time()
     code, st = job({"id": "b7", "op": "burn", "image": image, "part": "27C020@DIP32",

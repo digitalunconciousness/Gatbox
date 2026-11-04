@@ -155,7 +155,9 @@ M0–M7 done 2026-09-29 (the first real burn from the 7″ that evening); M8 on 
 use; 5 (network: three ways onto a new Wi-Fi, hotspot recovery) and 6 (orders from the bench)
 merged 2026-10-06. The contract both sides share is `docs/contract/v1/`, vendored from the
 tracker and checksum-tested in both repos. `gatbox-sync` pushes finished sessions, orders and
-session tags on a 2-minute timer and caches the roster and open orders for the 7″.
+session tags on a 2-minute timer and caches the roster and open orders for the 7″. From phase C (built 2026-11-03, not
+installed: `docs/plans/2026-11-03-phase-c-roms.md`) it also sends each dump and burn, image first, to the hub whose roster
+has the machine, and the 7″ says where each one stands (SENT / WAITING / HELD / REFUSED).
 Phase 6 installed on the Pi and the tracker side deployed 2026-10-07; both bench exits passed
 on hardware that day — a real join from the Wi-Fi card, and an order typed on the 7″ reaching
 the work queue with its trace attached.

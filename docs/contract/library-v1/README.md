@@ -52,6 +52,10 @@ Every field is stored: an optional one that's left out takes its default. Unknow
 
 ## The feed and the digest
 
-`changes(since, limit)` returns the records changed after a cursor, oldest first, with the next `cursor` and `more`.
+`changes(since, limit)` returns the records changed after a cursor, oldest first, with the next `cursor`, `more` and `head`
+(the newest cursor the library has: a reader holding a cursor above it knows the library was rebuilt or restored from an
+older copy, and starts again from 0).
 A record changed twice shows once, at its latest revision. `digest()` is `{count, digest}` over every record,
-tombstones included: two libraries with the same history agree.
+tombstones included: two libraries with the same history agree. `content_digest()` is the same over `(kind, id, hash,
+deleted)` with the revisions left out: the deck and the archive number a record's revisions independently, so they
+compare this one (`GET /api/v1/library/digest?content=1`), and two libraries with the same content agree.

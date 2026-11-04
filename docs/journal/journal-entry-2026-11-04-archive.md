@@ -1,6 +1,6 @@
-## 2026-11-04: Phase D, D1 and D2 built: the archive (repo only, nothing installed)
+## 2026-11-04: Phase D, D1 to D3 built: the archive and the deck's sync (repo only, nothing installed)
 - Owner: "OK as written". Spec `docs/plans/2026-11-04-phase-d-archive.md`; branch `phase-d-archive`, stacked on
-  `phase-b-library`. Built D1 (the server) and D2 (its pages). D3 (the deck's sync) is next; D1 to D3 go to her as a unit,
+  `phase-b-library`. Built D1 (the server), D2 (its pages) and D3 (the deck's sync). D1 to D3 go to her as a unit,
   with a dry run on her real library, before D4 on.
 - The archive is a stdlib server in its own container, running the deck's own `library.py` over a content-addressed file
   store. It speaks the library protocol (changes, records, digest) and phase C's file calls. Tokens are hashed, one for
@@ -20,6 +20,18 @@
   fetched for real once and checked against their checksums), layout 304 in headless Chromium. Three guards first went
   uncaught (a token with the right id and the wrong secret, a raw `../` out of the fonts folder, a 500 page); each got a
   test.
-- Not done: D3 to D7. Not installed anywhere. Her steps are in `archive/RUNBOOK.md`: the Proxmox container, the install
-  script, the Access application and its two policies, the tunnel, the tokens.
-- Owner, next: nothing yet; D3 comes to her with the dry run.
+- D3, the deck's sync. Per record, the deck's version, the archive's and the last version both held decide: push, pull,
+  agreed, or a conflict. A conflict (both changed it, an edit against a removal, two versions with no history) writes
+  nothing on either side and is kept with both versions and what they started from. Every write is a compare-and-set
+  on the revision the run saw, so a record that moved meanwhile is judged again, never forced. Thrown-away state, a
+  rebuilt deck, or an archive restored from an older backup means "compare everything from the start". Manuals go
+  both ways by hash in 8 MiB parts and resume. gatbox-sync reaches the deck's library only through gatbox-web's new
+  loopback-only routes, so it never opens the library or writes the manuals folder. The first run is a dry run that
+  prints the plan.
+- Mistakes the tests caught on the way: the base was settled from a record a side hadn't changed (so a quiet record
+  forgot what it had agreed), and a restored archive wasn't noticed because the saved cursor lagged the deck's own
+  writes (the fix keeps each library's newest cursor at the end of a run and compares it at the start).
+- Not done: D4 to D7 (the 7" CONFLICTS screen and the choice it records, every dump as a file to send, the apps' copies).
+  Not installed anywhere. Her steps are `archive/RUNBOOK.md` (Proxmox, Cloudflare, tokens) and, on the deck, the install
+  diff in BRINGUP.md (three files in the bootstrap's manifest, one tmpfiles line, two lines in `gatbox-sync.service`).
+- Owner, next: read the D1 to D3 summary, the install diff and, when she wants it, the dry run on her real library.

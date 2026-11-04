@@ -373,14 +373,18 @@ class Library:
         return None
 
     def changes(self, since=0, limit=500):
-        """Records changed after the cursor, oldest first: {records, cursor, more}. A record changed twice shows once,
-        at its latest revision."""
+        """Records changed after the cursor, oldest first: {records, cursor, more, head}. A record changed twice shows once,
+        at its latest revision. `head` is the newest cursor this library has: a reader whose saved cursor is above it knows
+        the library was rebuilt, or restored from an older copy, and starts again from 0."""
         limit = max(1, min(int(limit), 500))
         with closing(self._conn()) as c:
             rows = c.execute("SELECT * FROM records WHERE seq>? ORDER BY seq LIMIT ?", (int(since), limit + 1)).fetchall()
         more = len(rows) > limit
         rows = rows[:limit]
-        return {"records": [self._rec(r) for r in rows], "cursor": rows[-1]["seq"] if rows else int(since), "more": more}
+        with closing(self._conn()) as c:
+            head = c.execute("SELECT COALESCE(MAX(seq), 0) FROM records").fetchone()[0]
+        return {"records": [self._rec(r) for r in rows], "cursor": rows[-1]["seq"] if rows else int(since), "more": more,
+                "head": head}
 
     def digest(self):
         """{count, digest} over every record, tombstones too: two libraries with the same history agree."""
@@ -389,6 +393,17 @@ class Library:
             rows = c.execute("SELECT kind, id, rev, hash, deleted FROM records ORDER BY kind, id").fetchall()
         for r in rows:
             h.update(f"{r['kind']}\t{r['id']}\t{r['rev']}\t{r['hash']}\t{r['deleted']}\n".encode())
+        return {"count": len(rows), "digest": h.hexdigest()}
+
+    def content_digest(self):
+        """{count, digest} over (kind, id, hash, deleted), leaving revisions out. The deck and the archive number a record's
+        revisions independently (the archive sees only the latest of several edits), so they compare this one: two
+        libraries holding the same content agree whatever order the edits reached each."""
+        h = hashlib.sha256()
+        with closing(self._conn()) as c:
+            rows = c.execute("SELECT kind, id, hash, deleted FROM records ORDER BY kind, id").fetchall()
+        for r in rows:
+            h.update(f"{r['kind']}\t{r['id']}\t{r['hash']}\t{r['deleted']}\n".encode())
         return {"count": len(rows), "digest": h.hexdigest()}
 
     def counts(self):

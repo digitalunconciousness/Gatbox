@@ -82,9 +82,23 @@ status.json at the top is the whole run; with one hub its keys are what they alw
 `phase` (as_found | during | as_left) goes only to a hub whose health lists the "jobs"
 capability, and only as one of those three. The tracker lists none, so it never sees the field.
 
+The game library (phase D3). With /etc/gatbox/archive.conf filled in, the same run also syncs the deck's game library with
+the archive, both ways, after the hubs' work (so a slow file never holds up a session or an order):
+
+    ARCHIVE_URL=https://archive.example      https, or http on loopback (tests)
+    ARCHIVE_TOKEN=gbx_<public_id>.<secret>   the deck's device token (gatbox-archive token add deck --role device)
+    ARCHIVE_ACCESS_ID=...                    Cloudflare Access service token, when the archive is behind Access
+    ARCHIVE_ACCESS_SECRET=...
+
+The merge, the conflicts and the files are gatboxlib/libsync.py; its state is state/library/ (cursors, the agreed base,
+conflicts.json for the 7"). The library block of status.json says what happened. GATBOX_SYNC_DRYRUN prints the plan and writes
+nothing. The archive refusing the token (revoked, or the Access service token expired) is exit 1: a person has to act. An
+archive that is simply out of reach is not.
+
 Environment (the unit sets CREDENTIALS_DIRECTORY and STATE_DIRECTORY; tests set the rest):
     GATBOX_SYNC_CONF      read the default hub's config from this path instead of the credential
     GATBOX_SYNC_CONF_DIR  read hubs.d from this directory (with GATBOX_SYNC_CONF alone: none)
+    GATBOX_SYNC_ARCHIVE_CONF   read the archive's config from this path instead of the credential
     GATBOX_SYNC_WEB       gatbox-web's base URL (default http://127.0.0.1)
     GATBOX_SYNC_MAX       sessions per run, per hub (default 10)
     GATBOX_SYNC_ONCE      ignore the ledger: send everything eligible (for a forced re-push)
@@ -100,6 +114,11 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+# The game library's sync with the archive lives in gatboxlib (shared with gatbox-web); a checkout has it beside this file,
+# an install in /usr/local/lib/gatbox. The hubs' part above imports nothing from it, and with no archive.conf nothing here runs.
+_here = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.environ.get("GATBOX_LIB") or (_here if os.path.isdir(os.path.join(_here, "gatboxlib")) else "/usr/local/lib/gatbox"))
 
 WEB = os.environ.get("GATBOX_SYNC_WEB", "http://127.0.0.1").rstrip("/")
 STATE = os.environ.get("STATE_DIRECTORY", "/var/lib/gatbox-sync").split(":")[0]
@@ -201,8 +220,9 @@ def parse_conf(text):
     return conf
 
 
-def read_conf():
-    """(hubs, refused). Each hub: {name, label, urls, token, dev, dir}.
+def read_conf(keep_going=False):
+    """(hubs, refused). Each hub: {name, label, urls, token, dev, dir}. With no hub at all it exits 0, unless `keep_going` (an
+    archive is configured: the library still has work to do), when it returns two empty lists.
 
     Exits 0 -- not 1 -- when there is no hub at all: a Pi that has never been given a token is
     not broken, it just has nothing to do, and a timer that fails every two minutes for the
@@ -254,12 +274,61 @@ def read_conf():
     if not hubs and any(r.get("fatal") for r in refused):
         sys.exit(1)
     if not hubs and not refused:
+        if keep_going:
+            return hubs, refused
         if missing and not entries:
             log(f"no hub config at {missing[0]} ({missing[1]}); nothing to do")
         elif incomplete and not entries:
             log(f"{incomplete}: HUB_URLS and HUB_TOKEN are both required; nothing to do")
         sys.exit(0)
     return hubs, refused
+
+
+def archive_path():
+    if os.environ.get("GATBOX_SYNC_ARCHIVE_CONF"):
+        return os.environ["GATBOX_SYNC_ARCHIVE_CONF"]
+    creds = os.environ.get("CREDENTIALS_DIRECTORY")
+    if creds:
+        return os.path.join(creds, "archive")
+    if os.environ.get("GATBOX_SYNC_CONF"):
+        return None                       # a test with its own hub config never picks up this machine's archive.conf
+    return "/etc/gatbox/archive.conf"
+
+
+def archive_conf():
+    """{url, token, access_id, access_secret} when the deck has an archive configured, else None (and there is no library
+    step at all, as before this existed). A config that is there but wrong is said so in the journal and skipped."""
+    path = archive_path()
+    if path is None:
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            conf = parse_conf(fh.read())
+    except OSError:
+        return None
+    if not conf:
+        return None                       # tmpfiles leaves an empty placeholder: "none"
+    url, token = conf.get("ARCHIVE_URL", "").rstrip("/"), conf.get("ARCHIVE_TOKEN", "")
+    host = urllib.parse.urlsplit(url).hostname or ""
+    if not (url.startswith("https://") or (url.startswith("http://") and host in ("127.0.0.1", "localhost", "::1"))):
+        log(f"{path}: ARCHIVE_URL must be an https:// address; the library is not synced")
+        return None
+    if device_id(token) is None:
+        log(f"{path}: ARCHIVE_TOKEN is not of the form gbx_<public_id>.<secret>; the library is not synced")
+        return None
+    return {"url": url, "token": token, "access_id": conf.get("ARCHIVE_ACCESS_ID", ""),
+            "access_secret": conf.get("ARCHIVE_ACCESS_SECRET", "")}
+
+
+def library_step(conf, started):
+    """The game library's sync with the archive (gatboxlib.libsync): one pass, after the hubs'. -> the status block, or None."""
+    from gatboxlib import libsync
+    deck = libsync.Deck(WEB, timeout=WEB_TIMEOUT)
+    archive = libsync.Archive(conf["url"], conf["token"], conf["access_id"], conf["access_secret"], timeout=POST_TIMEOUT)
+    left = RUN_BUDGET - (time.monotonic() - started)
+    log(f"gatbox-sync: library, archive {conf['url']}" + (" (dry run)" if DRYRUN else ""))
+    return libsync.run(deck, archive, os.path.join(STATE, "library"), dryrun=DRYRUN,
+                       deadline=time.monotonic() + max(left, 20.0), log=log)
 
 
 def device_id(token):
@@ -605,9 +674,16 @@ def guard(h, hubs, batch, sessions, outbox):
 
 def main():
     started = time.monotonic()
-    hubs, refused = read_conf()
+    arch = archive_conf()
+    hubs, refused = read_conf(keep_going=bool(arch))
     rc = 1 if any(r.get("fatal") for r in refused) else 0
     multi = len(hubs) > 1
+    if not hubs and arch:
+        # An archive and no hub: the library is the whole job. status.json says so for the SYSTEM tile.
+        lib = library_step(arch, started)
+        if not DRYRUN:
+            save("status.json", {"at": time.time(), "ok": bool(lib and lib.get("ok")), "hubs": [], "refused": refused, "library": lib})
+        return 1 if lib and lib.get("refused_by_archive") else rc
 
     for h in hubs:
         name = "" if not multi else f"hub {h['name']} ({h['label']}), "
@@ -706,9 +782,15 @@ def main():
         rc = max(rc, h_rc)
         if st is not None:
             statuses.append(st)
+    lib = library_step(arch, started) if arch else None
+    if lib and lib.get("refused_by_archive"):
+        rc = 1                    # the archive refused the deck's token: only a person can fix that
     if DRYRUN:
         return rc
-    save("status.json", combine(hubs, statuses, held, conflicts, refused, waiting, blocked))
+    out = combine(hubs, statuses, held, conflicts, refused, waiting, blocked)
+    if lib is not None:
+        out["library"] = lib
+    save("status.json", out)
     return rc
 
 

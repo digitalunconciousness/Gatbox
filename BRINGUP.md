@@ -706,7 +706,29 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         reads the JWT's `email` claim (unverified: only the tunnel can reach that port, which the RUNBOOK makes a rule); a
         service token's JWT has no email; a service token is sent as `CF-Access-Client-Id` / `CF-Access-Client-Secret`,
         expires on the duration chosen and must be refreshed; create the Access application before the tunnel route
-  - [ ] D3, the deck's sync (gatbox-sync library step, conflicts, loopback file calls, dry run)
+  - [x] D3, the deck's two-way sync (built 2026-11-04, not installed). `gatboxlib/libsync.py` is the merge: per record the
+        deck's, the archive's and the last agreed state decide push, pull, agreed or CONFLICT (both changed it, an edit against
+        a removal, two versions with no history): a conflict writes nothing on either side and is kept, with both versions
+        and what they started from, in `state/library/conflicts.json` for the 7". Every write is a compare-and-set against
+        the revision the run saw, so a record that moved meanwhile is judged again next run and never forced; a refused
+        write stays pending. State thrown away, a rebuilt deck or an archive restored from an older backup (a library's
+        `head` going down) means "compare both from the start": identical records agree, differing ones are conflicts.
+        `gatbox-sync` runs it after the hubs when `/etc/gatbox/archive.conf` has an address and a device token (and the
+        Cloudflare service token pair); with none, nothing changes. `GATBOX_SYNC_DRYRUN=1` prints the plan and writes
+        nothing. The archive refusing the token (revoked, or the Access service token expired) is exit 1; out of reach is
+        not. Manuals go both ways by their SHA-256 in 8 MiB parts, resumable: gatbox-web's new loopback-only
+        `/api/library/sync/*` (`gatboxweb/libsync_api.py`) is the sync's only door into the deck, so the sync never writes
+        `/srv/gatbox/manuals` and never opens the library. A manual that comes down is placed in its game's folder with the
+        sidecar an upload makes and never over a file that's there. A limit the partner changed arrives unconfirmed and the
+        logger's export drops it at once. `status.json` has a `library` block (pending, conflicts, `identical` by a
+        revision-free content digest). `test-libsync.sh` 48, `test-sync-library.sh` 39 (real archive, real gatbox-web,
+        real gatbox-sync), `test-library.sh` 61, `test-sync.sh` 137 unchanged; 22 of 22 guards broken on purpose fail a test (four first went uncaught and got tests)
+  - [ ] ⏸ Owner: the D3 install diff (system config, rule 5; nothing is applied until she says). In `bootstrap/gatbox-bootstrap.sh`'s
+        MANIFEST: `gatboxlib/filestore.py`, `gatboxlib/libsync.py`, `gatboxweb/libsync_api.py` (gatbox-web restarts when it
+        installs them). In `bootstrap/files/tmpfiles-gatbox.conf`: `f /etc/gatbox/archive.conf 0600 root root -` (empty, like
+        hub.conf, because a missing credential file fails the unit). In `backend/gatbox-sync.service`:
+        `ConditionFileNotEmpty=|/etc/gatbox/archive.conf` (the job also runs when only an archive is set up) and
+        `LoadCredential=archive:/etc/gatbox/archive.conf`. `bash bootstrap/gatbox-bootstrap.sh --check` lists exactly these
   - [ ] ⏸ Owner: run `archive/RUNBOOK.md` when D3 is shown and she wants it
 - **The integration plan, phase A (2026-10-28):** `docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md`,
   approved by the owner. Repo-only on this side (nothing installed changes except the guard above).

@@ -225,6 +225,16 @@ def main():
     b.put("game", "widget-wars", dict(GAME, notes="n2"), 2)
     check("... and stop agreeing when a record differs", a.digest() != b.digest())
     check("counts by kind, and the file's size", a.counts() == {"game": 1} and a.size() > 0)
+    c = fresh()
+    c.put("game", "widget-wars", GAME, 0, uid="c-1")
+    c.put("game", "widget-wars", dict(GAME, notes="n"), 1, uid="c-2")
+    d = fresh()
+    d.put("game", "widget-wars", dict(GAME, notes="n"), 0, uid="d-1")              # the same content in one edit: revision 1, not 2
+    check("the content digest ignores revisions: one edit and two edits to the same content agree, the full digest does not",
+          c.content_digest() == d.content_digest() and c.digest() != d.digest() and c.content_digest()["count"] == 1)
+    d.put("document", "widget-wars/m", {"model_key": "widget-wars", "doc_id": "m", "title": "M", "kind": "manual"}, 0, uid="d-2")
+    check("... and sees a record the other lacks, and a tombstone", c.content_digest() != d.content_digest()
+          and (d.put("document", "widget-wars/m", None, 1, uid="d-3", deleted=True), d.content_digest() != c.content_digest())[1])
 
     print("two writers on one file:")
     lib = seeded()

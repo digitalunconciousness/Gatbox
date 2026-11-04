@@ -274,7 +274,8 @@ def changes(h, m, q):
 @route("GET", r"/api/v1/library/digest")
 def digest(h, m, q):
     h.who()
-    h.json(200, h.archive.lib.digest())
+    lib = h.archive.lib
+    h.json(200, lib.content_digest() if (q.get("content") or [""])[0] == "1" else lib.digest())
 
 
 @route("PUT", r"/api/v1/library/records")

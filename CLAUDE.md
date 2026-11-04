@@ -172,11 +172,15 @@ LIBRARY replaces MANUALS on the 7" (games, MISSING, ADD/EDIT, title search over 
 FIND A MANUAL through a spool job). An unseeded deck behaves as before. Spec `docs/plans/2026-11-03-phase-b-library.md`;
 the install diff she has not seen yet is in BRINGUP.md.
 
-**Phase D (the archive), D1 to D4 built 2026-11-04 on `phase-d-archive` (stacked on `phase-b-library`), not installed:**
+**Phase D (the archive), D1 to D7 built 2026-11-04 on `phase-d-archive` (stacked on `phase-b-library`), not installed:**
 `archive/` is a stdlib server in its own Debian 13 container (the deck's own `library.py` plus a content-addressed file
 store, `backend/gatboxlib/filestore.py`), reached through a Cloudflare tunnel with Access in front, with phone pages for
 her partner (games, manuals and a PDF viewer, limits that arrive unconfirmed, facts, upload, add and edit). `gatbox-sync` syncs
 the deck's library with it both ways (`gatboxlib/libsync.py`: a conflict writes nothing and waits side by side on the 7" under
 LIBRARY → CONFLICTS; manuals and dump images go up as files), and gatbox-web gains loopback-only `/api/library/sync/*`. The
-apps are the next slices (D5 on); her steps are `archive/RUNBOOK.md`. Spec
-`docs/plans/2026-11-04-phase-d-archive.md`.
+apps' side is built too: cabcrawl (`phase-d-library`) and the Tech Tracker (`phase/13-library`) each keep a **read-only copy**
+of the games their machines name, read every ten minutes with a reader token (`models=` for their own keys, replace, tombstones,
+manuals in 8 MiB parts that resume, a restored archive re-read from 0), and show the game's manual, limits and facts on the
+machine / asset page. The format they read is `docs/contract/library-v1/read/`, vendored byte-identical into both with drift
+tests (this repo's `test-archive-read.py` makes the real archive reproduce every example; their stubs start from the same
+files). Her steps are `archive/RUNBOOK.md` and each app's RUNBOOK. Spec `docs/plans/2026-11-04-phase-d-archive.md`.

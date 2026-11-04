@@ -753,6 +753,25 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         spool, no network, no devices, no capabilities, 20 minute timeout). 5. MANIFEST lines already made in the bootstrap:
         `libconflicts.py`, `mame_request.py` (gatbox-web imports them, so they must install with it). Until 1 to 4 are in, a
         game added after the seed simply has no chip list (SYSTEM says how many, and that the job isn't installed), as before
+  - [x] D5 to D7, the apps' side (built 2026-11-04, nothing installed or deployed; each app on its own branch, stacked on its phase C
+        branch). **The contract:** `docs/contract/library-v1/read/` (README, an example of every request and answer, `manual.pdf`,
+        CHECKSUMS), vendored byte-identical into cabcrawl and the Tech Tracker at `contract/library-v1/` with a checksum test and a
+        sibling-checkout drift test in each. `test-archive-read.py` (19) makes the real archive reproduce every example. **cabcrawl**
+        (`phase-d-library`): `Game.model_key` + `library_record` / `library_state` (Alembic, registered in `check_schema.py`),
+        `scripts/pull_library.py` on a ten-minute timer with a reader token (`models=` its own keys, replace, tombstones, a retired game
+        followed, PDFs in 8 MiB parts that resume, a restored archive re-read from 0), the machine page's "Manual and limits", a Library
+        page for any signed-in role, `scripts/link_model_keys.py` (from the seed plan; dry run first), and the roster carries each
+        machine's key. **Tech Tracker** (`phase/13-library`): the same on PostgreSQL (migration 0027 with `grant_app()` and the
+        expected grants, one-row `library_state`), PDFs in its file store, the asset page's section with "Edit it in the library" for
+        owners and techs. Tests: cabcrawl 69 library tests (whole suite 2027 passed, 1 skipped, 1 failed), Tech Tracker 57 (606 passed, 6 skipped, 1 failed); the one failure in each is the sibling-checkout contract diff;
+        every guard broken on purpose fails a test (two in the Tech Tracker cannot change behaviour). The example manual ships as
+        `examples/manual.pdf.b64`, because the repositories refuse a `.pdf`; the pull never follows a redirect with the token
+  - [ ] ⏸ Owner, per app (read the two unit files first; none is installed): mint a reader token at the archive
+        (`gatbox-archive token add NAME --role reader`), put the archive's address and the token in the app's environment
+        (`LIBRARY_ARCHIVE_URL`, `LIBRARY_ARCHIVE_TOKEN`, and the Access service token pair through the tunnel), deploy the release
+        (cabcrawl's migration adds `game.model_key` and two tables; the Tech Tracker's 0027 adds two), install the timer
+        (cabcrawl: `deploy/RUNBOOK.md`, "the game library"; Tech Tracker: `deploy/RUNBOOK.md` §12), then link the machines
+        (cabcrawl: `link_model_keys.py` with the seed plan; the Tech Tracker's assets already carry `model_key`)
 - **The integration plan, phase A (2026-10-28):** `docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md`,
   approved by the owner. Repo-only on this side (nothing installed changes except the guard above).
   - [x] Contract v1 is GATBOX's now: the README takes the hub's 10-26 additions and writes down the Phase 8 extras

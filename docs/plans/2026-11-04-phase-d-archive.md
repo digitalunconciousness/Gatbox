@@ -2,7 +2,8 @@
 
 Status: **approved by the owner, 2026-11-04 ("OK as written")**. It covers the code and the push in all three repos
 (integration plan §10); merging, deploying, installing and everything on Proxmox and Cloudflare stay hers. D1 to D4 are
-built on `phase-d-archive`; D5 (the apps) is next.
+built on `phase-d-archive`; D5 and D6 (the apps) on `phase-d-library` in cabcrawl and `phase/13-library` in the Tech Tracker,
+D7 (the read side's contract and its drift tests) in all three. Nothing is installed or deployed.
 
 This is the build plan for phase D of `docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md` (§4). The design
 behind it is `2026-10-28-shared-game-library-design.md` (§2 where the library lives, §4 the protocol, §5 sync and

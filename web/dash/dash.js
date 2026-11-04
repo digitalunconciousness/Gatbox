@@ -1379,11 +1379,13 @@
     tile("Library", [
       ["games", lb.seeded ? `${lb.games}${lb.missing ? ` · ${lb.missing} missing a manual` : ""}` : "not set up yet", lb.seeded ? null : "mut"],
       ...(lb.seeded ? [["documents", `${lb.fetched} on the Pi of ${lb.documents} listed`], ["limits", `${lb.confirmed} confirmed of ${lb.limits}`],
-                       ["ROM images", String(lb.images)]] : []),
+                       ["ROM images", String(lb.images)],
+                       ...(lb.no_chips ? [["chip lists", `${lb.no_chips} game${lb.no_chips > 1 ? "s" : ""} without one (${lb.chip_job ? "being made" : "MAME's job isn't installed"})`, "warn"]] : [])] : []),
       ["size on the Pi", `${sz((lb.manuals_bytes || 0) + (lb.roms_bytes || 0) + (lb.db_bytes || 0))} · manuals ${sz(lb.manuals_bytes)}, ROM images ${sz(lb.roms_bytes)}`
                          + (lb.seeded ? `, library ${sz(lb.db_bytes)}` : "")],
       ["room on /srv", lb.free == null ? "not there yet" : `${(lb.free / 1e9).toFixed(1)} GB free${lb.low ? " · LOW: make room before the next manual or dump" : ""}`,
-       lb.low ? "bad" : null]]);
+       lb.low ? "bad" : null],
+      ...syncRows(lb.sync, lb.seeded)]);
     const lg = d.logger || {};
     const lt = tile("Logger", [
       ["service", lg.running ? "running" : "NOT RUNNING", lg.running ? "ok" : "bad"],
@@ -1597,6 +1599,20 @@
   const srcLabel = s => !s ? "" : s === "actual" ? "this machine's actual" : s.startsWith("manual:") ? "the manual, confirmed"
                           : s === "specs file" ? "specs file" : s;
   const OTHER_RAILS = ["+5V", "+12V", "-5V", "+3.3V", "-12V", "+25V"];
+  // SYSTEM's Library tile, the archive's half: how the last sync went, what is waiting, conflicts, and whether both libraries hold
+  // the same. Nothing is shown for a deck with no archive configured except one line saying so.
+  function syncRows(sy, seeded) {
+    if (!sy || !sy.configured) return [["archive", seeded ? "not set up: no archive configured" : "not set up", "mut"]];
+    const min = sy.at ? Math.max(0, Math.round((Date.now() / 1000 - sy.at) / 60)) : null, when = min == null ? "never" : min < 1 ? "just now" : `${min} min ago`;
+    const rows = [["archive", sy.refused ? "TOKEN REFUSED: a person has to act"
+                   : sy.ok ? `synced ${when}${sy.dryrun ? " (a dry run: nothing changed)" : ""}` : `${sy.error || "not reachable"} · last tried ${when}`,
+                   sy.ok ? "ok" : "bad"]];
+    if (sy.waiting != null) rows.push(["edits waiting", sy.waiting ? `${sy.waiting} to go up at the next sync` : "none", sy.waiting ? "warn" : null]);
+    if (sy.files_to_send != null) rows.push(["files moving", `${sy.files_to_send} to send · ${sy.files_to_fetch || 0} to fetch`, sy.files_to_send || sy.files_to_fetch ? "warn" : null]);
+    rows.push(["conflicts", sy.conflicts ? `${sy.conflicts}: LIBRARY → CONFLICTS` : "none", sy.conflicts ? "bad" : null]);
+    if (sy.identical != null) rows.push(["identical", sy.identical ? "yes: both libraries hold the same" : "not yet", sy.identical ? "ok" : "warn"]);
+    return rows;
+  }
   async function loadManuals() {
     const B = $("#lb-body"), slug = mnSlug();
     LB.data = null;                                  // fresh each time: a seed or an import from the command line shows at once
@@ -1664,7 +1680,8 @@
     row.style.cssText = "align-items:center;margin-top:8px";
     const btn = (label, cls, f, off) => { const b = el("button", cls, label); b.disabled = !!off; b.addEventListener("click", f); return b; };
     add(row, btn(`ALL GAMES (${d.count})`, null, () => pickGame(false)),
-        btn(`MISSING (${d.missing})`, d.missing ? "warn" : null, () => pickGame(true), !d.missing));
+        btn(`MISSING (${d.missing})`, d.missing ? "warn" : null, () => pickGame(true), !d.missing),
+        d.conflicts ? btn(`CONFLICTS (${d.conflicts})`, "warn", loadConflicts) : null);
     if (S.local) add(row, btn("+ ADD GAME", null, addGame), btn("EDIT GAME", null, () => editGame(g), !g),
                      slug && !g ? btn("FIND GAME (MAME)", "primary", () => findGame(slug)) : null,
                      g ? btn("FIND A MANUAL", g.missing ? "primary" : null, () => findManual(g)) : null);
@@ -1672,7 +1689,8 @@
     const info = el("div", "lb-game");
     if (g) {
       add(info, el("b", null, g.title), el("span", "mut", ` ${[g.mfr, g.year].filter(Boolean).join(" ")} · key ${g.key} · ${docsLine(g)}`
-          + (g.machines.length ? ` · machines: ${g.machines.map(m => m.name).join(", ")}` : " · no machine")));
+          + (g.machines.length ? ` · machines: ${g.machines.map(m => m.name).join(", ")}` : " · no machine")),
+          g.conflicts ? conflictBadge(g.conflicts) : null);
       if (g.why && g.missing) info.appendChild(el("div", "warn", "Why no manual: " + g.why));
     } else if (slug) {
       info.appendChild(el("div", "warn", `${machineName(slug)} has no game in the library yet. ` + (S.local ? "FIND GAME (MAME) searches MAME's list; ALL GAMES picks one; + ADD GAME types it in."
@@ -1687,7 +1705,8 @@
     const pick = await pickFrom(onlyMissing ? `Missing a manual (${games.length})` : `Which game? (${games.length})`, games.map(g => ({
       key: g.key, title: g.title, find: [g.title.toLowerCase(), g.key, (g.mfr || "").toLowerCase()],
       sub: [g.mfr, g.year].filter(Boolean).join(" ") + (onlyMissing ? ` · ${g.why || "no reason noted"}` : ` · ${docsLine(g)}`)
-           + (g.machines.length ? "" : " · no machine"), subCls: g.missing ? "warn" : null})), (gameOf(mnSlug()) || {}).key);
+           + (g.machines.length ? "" : " · no machine") + (g.conflicts ? ` · CONFLICT${g.conflicts > 1 ? ` ×${g.conflicts}` : ""}` : ""),
+      subCls: g.missing || g.conflicts ? "warn" : null})), (gameOf(mnSlug()) || {}).key);
     if (!pick) return;
     const g = games.find(x => x.key === pick), cur = mnSlug();
     if (S.local && cur && !gameOf(cur)) {
@@ -1827,7 +1846,7 @@
       loadManuals();
     } catch (e) { fail(e); }
   }
-  async function editGame(g) {
+  async function editGame(g, then) {              // `then`: where to go after (a conflict's EDIT returns to the conflict)
     if (!g) return;
     const what = await choose(`Edit ${g.title}`, `Key ${g.key} stays as it is.`,
                               [["title", "TITLE"], ["mfr", "MAKER"], ["year", "YEAR"], ["notes", "NOTES"]]);
@@ -1843,8 +1862,98 @@
       await api("PUT", `/api/library/games/${encodeURIComponent(g.key)}`, body);
       LB.data = null;
       toast(`${g.title}: ${what} saved`);
-      loadManuals();
-    } catch (e) { fail(e); LB.data = null; loadManuals(); }
+      (then || loadManuals)();
+    } catch (e) { fail(e); LB.data = null; (then || loadManuals)(); }
+  }
+  // --- CONFLICTS: the deck and the archive both changed a record (docs/plans/2026-11-04-phase-d-archive.md, D4) ----------
+  // gatbox-sync never overwrites either side: it keeps the record with both versions and what they started from. Here each
+  // one is BEFORE / THIS DECK / THE ARCHIVE with the fields that differ lit, and she keeps one version (or, for a game,
+  // EDITs the deck's first). The choice is a note for the sync (POST /api/library/conflicts/resolve) that applies it on its
+  // next run, and only if both sides still hold what she was looking at. The Pi's own screen only; a phone reads.
+  const CONFLICT_KIND = {game: "GAME", document: "DOCUMENT", fact: "FACT", rail_limit: "LIMIT", mame: "MAME SET", rom_list: "ROM LIST", rom_image: "ROM IMAGE"};
+  const conflictBadge = n => {
+    const b = el("button", "mini warn", n > 1 ? `CONFLICT ×${n}` : "CONFLICT");
+    b.style.marginLeft = "10px";
+    b.addEventListener("click", loadConflicts);
+    return b;
+  };
+  const keepWord = k => k === "deck" ? "THIS DECK'S" : "THE ARCHIVE'S";
+  const whoWhen = side => !side ? "nothing" : side.deleted ? "REMOVED" : [side.by, side.at ? new Date(side.at * 1000).toISOString().slice(0, 10) : ""].filter(Boolean).join(" · ") || "changed";
+  function conflictSummary(c) {
+    if (c.deck && c.deck.deleted) return "this deck removed it; the archive changed it";
+    if (c.archive && c.archive.deleted) return "the archive removed it; this deck changed it";
+    const n = c.fields.filter(f => f.differs).length;
+    return n ? `${n} field${n > 1 ? "s" : ""} differ: ${c.fields.filter(f => f.differs).map(f => f.label).slice(0, 4).join(", ")}` : "both changed it";
+  }
+  async function loadConflicts() {
+    const B = $("#lb-body");
+    let d;
+    try { d = await api("GET", "/api/library/conflicts"); } catch (e) { return fail(e); }
+    const head = el("div", "card"), row = el("div", "btnrow");
+    const back = el("button", null, "◂ LIBRARY");
+    back.addEventListener("click", () => { LB.data = null; loadManuals(); });
+    add(row, back);
+    add(head, row, el("h2", null, `Conflicts (${d.count})`),
+        el("div", "mut", d.count ? "The deck and the archive both changed these since they last agreed. Nothing has been overwritten on either side: open one and keep a version."
+                                 : "None. The deck and the archive agree, or the sync hasn't found a difference."));
+    const list = el("div", "card");
+    for (const c of d.conflicts) {
+      const b = el("button", "row");
+      add(b, el("b", null, c.name + " "), el("span", "badge warn", CONFLICT_KIND[c.kind] || c.kind.toUpperCase()),
+          c.chosen ? el("span", "badge ok", `KEEPING ${keepWord(c.chosen)} · APPLIES AT THE NEXT SYNC`) : null,
+          el("div", "mut", conflictSummary(c)));
+      b.addEventListener("click", () => openConflict(c.key));
+      list.appendChild(b);
+    }
+    add(clear(B), head, d.count ? list : null);
+  }
+  async function openConflict(key) {
+    let d;
+    try { d = await api("GET", "/api/library/conflicts"); } catch (e) { return fail(e); }
+    const c = d.conflicts.find(x => x.key === key);
+    if (!c) { toast("That conflict is gone: the deck and the archive agree now.", null, 5000); return loadConflicts(); }
+    const act = await sheet(`CONFLICT · ${c.name}`, (pane, done) => {
+      const row = el("div", "btnrow"), btn = (label, cls, k) => { const b = el("button", cls, label); b.addEventListener("click", () => done(k)); return b; };
+      if (S.local) add(row, btn("KEEP THIS DECK'S", c.chosen === "deck" ? "primary" : null, "deck"), btn("KEEP THE ARCHIVE'S", c.chosen === "archive" ? "primary" : null, "archive"),
+                       c.editable ? btn("EDIT THIS DECK'S", null, "edit") : null);
+      pane.appendChild(row);
+      pane.appendChild(el("div", S.local ? "mut" : "warn", S.local
+        ? "Both changed this since they last agreed, so neither was kept automatically. KEEP puts that version on both sides at the next sync." + (c.editable ? " EDIT changes this deck's version first." : "")
+        : "Settle conflicts on the Pi's own screen."));
+      if (c.chosen) pane.appendChild(el("div", "ok", `Chosen: ${keepWord(c.chosen)} version. The sync applies it on its next run.`));
+      for (const [side, label] of [["deck", "THIS DECK"], ["archive", "THE ARCHIVE"]])
+        if (c[side] && c[side].deleted) pane.appendChild(el("div", "warn", `${label} REMOVED IT.`));
+      const t = el("table", "t cf-t"), hr = el("tr");
+      for (const h of ["", c.base ? "BEFORE" : "BEFORE (not known)", "THIS DECK", "THE ARCHIVE"]) hr.appendChild(el("th", null, h));
+      t.appendChild(hr);
+      const who = el("tr", "cf-who");
+      add(who, el("td"), el("td", "mut", c.base ? "what both held" : "no earlier agreement"), el("td", "mut", whoWhen(c.deck)), el("td", "mut", whoWhen(c.archive)));
+      t.appendChild(who);
+      for (const f of c.fields) {
+        const tr = el("tr"), cell = (v, lit, changed) => {
+          const td = el("td", lit ? "cf-lit" : null);
+          td.appendChild(el("span", v == null ? "mut" : null, v == null ? "(removed)" : v));
+          if (changed) td.appendChild(el("div", "cf-tag", "CHANGED"));
+          return td;
+        };
+        add(tr, el("td", "rail", f.label), el("td", "mut", f.base == null ? "—" : f.base), cell(f.deck, f.differs, f.deck_changed), cell(f.archive, f.differs, f.archive_changed));
+        t.appendChild(tr);
+      }
+      if (!c.fields.length) t.appendChild(el("tr", null, "")).appendChild(el("td", "mut", "No field to compare: one side removed it."));
+      const wrap = el("div"); wrap.style.overflowX = "auto"; wrap.appendChild(t);
+      pane.appendChild(wrap);
+    });
+    if (act === "edit") {
+      const dd = c.deck_data || {};
+      return editGame({key: c.id, title: dd.title || c.name, mfr: dd.mfr || "", year: dd.year, notes: dd.notes || "", rev: c.deck.rev}, () => openConflict(key));
+    }
+    if (act === "deck" || act === "archive") {
+      try {
+        const r = await api("POST", "/api/library/conflicts/resolve", {key: c.key, keep: act, deck: c.deck_state, archive: c.archive_state});
+        toast(`${c.name}: keeping ${keepWord(act)} version. ${r.note}`, null, 6000);
+      } catch (e) { fail(e); }
+    }
+    loadConflicts();
   }
   // --- CHECK: one dump against MAME, the game's chips, her images and the machine's earlier dumps (B6) -----------------
   // The server does the comparing (GET /api/library/check) and says each result in words and a level; this draws them and,

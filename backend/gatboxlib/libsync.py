@@ -295,22 +295,23 @@ def view(rec, held, side, base, rev_key):
     return None, 0, None
 
 
-def resolve(state, key, keep, deck_state, archive_state):
-    """A person's choice for a conflict, as the 7" records it: only if both sides still hold what she was shown.
-    keep="deck": rewrite the base as the archive's version, so the deck's is now the only change and is pushed.
-    keep="archive": rewrite the base as the deck's version, so the archive's is the only change and is pulled.
-    Returns True when it applied, False when the conflict had moved on (she'll see the new one)."""
-    held = state.held.get(key)
-    if not held or held["why"] != "conflict":
+def resolve(state, plan, key, keep, seen_deck, seen_archive, log=None):
+    """A person's choice for a conflict, as the 7" records it ({key, keep, deck, archive}: the two states she was shown). It
+    applies only if both sides still hold exactly those (judged on this run's own plan, so a record she EDITed on the deck
+    is judged as edited); otherwise it is not applied and she will see the conflict as it is now.
+    keep="deck": the base is rewritten as the archive's version, so the deck's is now the only change and is pushed.
+    keep="archive": the base is rewritten as the deck's version, so the archive's is the only change and is pulled.
+    -> True when it applied."""
+    item = next((i for i in plan["conflict"] if i["key"] == key), None)
+    if item is None or keep not in ("deck", "archive") or item["ds"] != seen_deck or item["as"] != seen_archive:
         return False
-    if state_of(held["deck"]) != deck_state or state_of(held["archive"]) != archive_state:
-        return False
-    if keep not in ("deck", "archive"):
-        return False
-    other = held["archive"] if keep == "deck" else held["deck"]
-    state.base[key] = {"s": state_of(other), "dr": held["deck"]["rev"] if held["deck"] else 0,
-                       "ar": held["archive"]["rev"] if held["archive"] else 0, "data": _base_data(other)}
-    held["why"] = "resolved"                      # the next judgement uses the snapshots in it: now a push or a pull, not a conflict
+    other, state_str = (item["archive"], item["as"]) if keep == "deck" else (item["deck"], item["ds"])
+    item["base"] = state.base[key] = {"s": state_str, "dr": item["dr"], "ar": item["ar"], "data": _base_data(other)}
+    verdict = classify(state_str, item["ds"], item["as"])
+    plan["conflict"].remove(item)
+    plan[verdict].append(item)
+    side = "deck" if verdict == "push" else "archive"
+    plan[verdict].sort(key=lambda i: order_of(i[side]))
     return True
 
 
@@ -526,8 +527,9 @@ def run(deck, archive, state_dir, dryrun=False, deadline=None, log=print, now=ti
     state = State(state_dir)
     status = {"at": now(), "ok": True, "dryrun": bool(dryrun)}
     try:
-        _apply_resolutions(deck, state, log, dryrun)
         plan = plan_pass(deck, archive, state, log)
+        used, applied = _resolutions(deck, state, plan, log, dryrun)
+        status["resolved"] = applied
         status["plan"] = describe(plan)
         for bucket, side, word in (("push", "deck", "send"), ("pull", "archive", "fetch")):
             for item in plan[bucket]:
@@ -541,6 +543,8 @@ def run(deck, archive, state_dir, dryrun=False, deadline=None, log=print, now=ti
                                "to_fetch": len(listed.get("want", []))}
             return status
         done = apply_plan(deck, archive, state, plan, log, now)
+        if used:
+            deck.resolutions_done(used)
         # Forward past everything this pass judged. What it could not settle (a conflict, a refusal, a record that moved)
         # is in `held` and judged again from there, so nothing is lost by the cursor having moved on.
         state.deck_cursor, state.archive_cursor = plan["dcur"], plan["acur"]
@@ -572,16 +576,22 @@ def _identical(deck, archive, state):
         return None
 
 
-def _apply_resolutions(deck, state, log, dryrun):
-    """Her choices from the 7" (read through gatbox-web, which can't write this folder), applied if the conflict is as she saw it."""
+def _resolutions(deck, state, plan, log, dryrun):
+    """Her choices from the 7" (read through gatbox-web, which can't write this folder), applied to the plan if the conflict is as
+    she saw it. -> (the keys to clear from the 7"'s file, how many applied). A dry run says what it would do and changes nothing."""
     try:
         rows = deck.resolutions()
     except Unreachable:
-        return
-    done = []
+        return [], 0
+    used, applied = [], 0
     for r in rows:
-        ok = resolve(state, r["key"], r["keep"], r.get("deck"), r.get("archive")) if not dryrun else False
-        log(f"  resolution {r['key']}: keep {r['keep']}" + ("" if ok else " (not applied: it changed since she looked, or this is a dry run)"))
-        done.append(r["key"])
-    if done and not dryrun:
-        deck.resolutions_done(done)
+        if dryrun:
+            item = next((i for i in plan["conflict"] if i["key"] == r["key"]), None)
+            ok = bool(item and item["ds"] == r.get("deck") and item["as"] == r.get("archive"))
+        else:
+            ok = resolve(state, plan, r["key"], r["keep"], r.get("deck"), r.get("archive"))
+            used.append(r["key"])
+            applied += ok
+        log(f"  resolution {r['key']}: keep {r['keep']}" + ("" if ok else " (not applied: it changed since she looked)")
+            + (" (dry run: not applied)" if dryrun and ok else ""))
+    return used, applied

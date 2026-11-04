@@ -180,6 +180,15 @@ a.btnlink{display:inline-flex;align-items:center;justify-content:center;min-heig
 .lb-note{margin-top:8px}
 button.warn{color:var(--warn);border-color:var(--warn)}
 
+/* CONFLICTS: BEFORE / THIS DECK / THE ARCHIVE, the fields that differ lit and each side's change named in words too */
+table.cf-t{margin-top:10px}
+table.cf-t td{padding:6px 10px 6px 8px;overflow-wrap:anywhere;max-width:340px}
+table.cf-t .cf-who td{padding-top:0}
+table.cf-t td.cf-lit{border:1px solid var(--cyan);background:rgba(125,250,255,.07)}
+.cf-tag{font:12px var(--mono);letter-spacing:.08em;color:var(--cyan)}
+html.box .cf-tag{font-size:14px}
+html.box table.cf-t{font-size:15px}
+
 /* hold-to-act (EXIT KIOSK, SHUT DOWN) */
 .hold{position:relative;overflow:hidden}
 .hold::after{content:"";position:absolute;left:0;bottom:0;height:4px;width:0;background:var(--bad)}

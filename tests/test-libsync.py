@@ -345,6 +345,20 @@ def run(tmp):
     check("her choice, made about the version before that, is not applied to this one: the partner's 2005 is never overwritten by a choice she didn't make about it",
           st["conflicts"] == 1 and r.arc.lib.get("game", "widget-wars")["data"]["year"] == 2005 and r.deck.done == ["game|widget-wars"])
 
+    r = Rig(tmp, "resolve6")
+    game(r.deck, "widget-wars", year=1998)
+    game(r.arc, "widget-wars", year=1999)
+    r.sync()
+    seen = r.conflicts()[0]
+    new_hash = edit(r.deck, "game", "widget-wars", year=2020)["hash"]        # EDIT on the 7": her own version, before any run notices
+    r.deck.asked = [{"key": "game|widget-wars", "keep": "deck", "deck": new_hash, "archive": seen["archive"]["hash"]}]
+    st = r.sync(dryrun=True)
+    check("a dry run says what the choice would do and applies nothing (the choice stays for the real run)",
+          st["resolved"] == 0 and any("dry run: not applied" in ln for ln in r.log) and r.deck.done == [] and r.arc.lib.get("game", "widget-wars")["data"]["year"] == 1999)
+    st = r.sync()
+    check("EDIT then keep, in one run: the record she wrote is the one the archive ends up with (judged as edited, not as the conflict she saw)",
+          st["resolved"] == 1 and r.arc.lib.get("game", "widget-wars")["data"]["year"] == 2020 and r.same() and st["conflicts"] == 0)
+
     print("state thrown away, a rebuilt deck, an archive restored from an older copy:")
     r = Rig(tmp, "lostall")
     game(r.deck, "widget-wars")

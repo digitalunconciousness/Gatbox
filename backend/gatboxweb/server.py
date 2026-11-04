@@ -20,8 +20,8 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from . import (captures, config, devices, dump, games, libsource, libsync_api, mame, manual_request, manuals, meter, orders,
-               phone, report, rom_check, roster, sessions, system, titles, wifi)
+from . import (captures, config, devices, dump, games, libconflicts, libsource, libsync_api, mame, mame_request, manual_request,
+               manuals, meter, orders, phone, report, rom_check, roster, sessions, system, titles, wifi)
 from .live import LIVE
 from .meter import Bad
 
@@ -147,6 +147,22 @@ def post_control(h, m, q):
     h.log_line(f"control: {action}")
     LIVE.emit("state", meter.state(full=False))
     h.send(303, b"", extra=[("Location", "/?" + h.url.query if h.url.query else "/")])
+
+
+def api_library_mame(h, m, q):
+    """GET /api/library/mame: the chip-list job for games added after the seed (spool installed? busy? who's waiting?)."""
+    h.json(200, mame_request.status())
+
+
+def api_library_conflicts(h, m, q):
+    h.json(200, libconflicts.listing())
+
+
+def api_library_conflict_choose(h, m, q):
+    """POST /api/library/conflicts/resolve {key, keep, deck, archive}: the Pi's own screen only."""
+    out = libconflicts.choose(h.body(), h.is_local())
+    h.log_line(f"library: conflict {out['key']}: keep the {out['keep']}'s")
+    h.json(200, out)
 
 
 # --- the library sync's door (gatbox-sync, on loopback): see libsync_api -----------------------------------------------------------
@@ -964,6 +980,9 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("POST", r"/api/library/games/(?P<key>[^/]+)/manual/search", api_manual_search),
     ("POST", r"/api/library/games/(?P<key>[^/]+)/manual/files", api_manual_files),
     ("POST", r"/api/library/games/(?P<key>[^/]+)/manual/fetch", api_manual_fetch),
+    ("GET", r"/api/library/mame", api_library_mame),
+    ("GET", r"/api/library/conflicts", api_library_conflicts),
+    ("POST", r"/api/library/conflicts/resolve", api_library_conflict_choose),
     ("GET", r"/api/library/sync/changes", sync_changes),
     ("PUT", r"/api/library/sync/records", sync_records),
     ("GET", r"/api/library/sync/digest", sync_digest),
@@ -1116,6 +1135,7 @@ def main():
     dump.watch()
     libsource.watch()                                      # the logger's flat export follows the game library
     manual_request.watch()                                 # a manual fetched on request becomes a library document
+    mame_request.watch()                                   # a game with a MAME set and no chip list gets one from the job
     threading.Thread(target=_warm, name="warm", daemon=True).start()
     ThreadingHTTPServer.allow_reuse_address = True
     ThreadingHTTPServer.daemon_threads = True

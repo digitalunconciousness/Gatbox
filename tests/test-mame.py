@@ -116,6 +116,40 @@ def main():
     check("back as it was: up to date again", tool("--check", out).returncode == 0)
     check("no MAME at all: stale, not a crash", tool("--check", out, GATBOX_MAME="/nonexistent/mame").returncode == 1)
 
+    print("the library's chip-list job (gatbox-mame-roms --job):")
+    spool = f"{T}/mamespool"
+    os.makedirs(spool)
+    req, ans = f"{spool}/request.json", f"{spool}/status.json"
+    r = tool("--job", req, "--status", ans)
+    check("no request in the spool: nothing to do, exit 0, no answer written", r.returncode == 0 and not os.path.exists(ans))
+    json.dump({"id": "job1", "sets": ["sonic", "nosuchset"]}, open(req, "w"))
+    r = tool("--job", req, "--status", ans)
+    st = json.load(open(ans)) if os.path.exists(ans) else {}
+    check("a request: claimed (the request file is gone, no claim left), answered with MAME's version and each set's versions, parent first",
+          r.returncode == 0 and st.get("job") == "job1" and st.get("state") == "done" and st.get("mame") == "0.276 (mame0276)"
+          and [v["name"] for v in st["sets"]["sonic"]["versions"]] == ["sonic", "sonicp"] and st["sets"]["sonic"]["versions"][0]["parent"] is True
+          and not os.path.exists(req) and not os.path.exists(f"{spool}/running.json"))
+    check("the ROMs are hashes only (name, size, CRC, SHA-1), a set MAME lacks is listed as missing, the answer is group-writable",
+          st["sets"]["sonic"]["versions"][0]["roms"][0]["sha1"] == "8f173cd5c7c817dcccdcad9be5781cfaa081d73e" and st["missing"] == ["nosuchset"]
+          and oct(os.stat(ans).st_mode & 0o777) == "0o664")
+    for bad in (["../etc/passwd"], ["Sonic"], [], "sonic", ["a" * 41], [f"s{i}" for i in range(201)]):
+        json.dump({"id": "bad", "sets": bad}, open(req, "w"))
+        r = tool("--job", req, "--status", ans)
+        st = json.load(open(ans))
+        if not (r.returncode == 1 and st["state"] == "stopped" and "sets" not in st and "error" in st):
+            break
+    else:
+        bad = None
+    check("a request that isn't what gatbox-web writes (a path, capitals, none, a string, a long name, too many) is refused before MAME runs: stopped, with the reason", bad is None)
+    open(req, "w").write("{not json")
+    r = tool("--job", req, "--status", ans)
+    check("a request that isn't JSON: stopped, exit 1, the claim removed", r.returncode == 1 and json.load(open(ans))["state"] == "stopped"
+          and not os.path.exists(f"{spool}/running.json"))
+    json.dump({"id": "nomame", "sets": ["sonic"]}, open(req, "w"))
+    r = tool("--job", req, "--status", ans, GATBOX_MAME="/nonexistent/mame")
+    check("no MAME at all: stopped with the reason in the answer, and no traceback (a clean exit, not a crash)",
+          r.returncode == 1 and json.load(open(ans))["state"] == "stopped" and "Traceback" not in r.stderr and "mame" in json.load(open(ans))["error"].lower())
+
     print("the archive ticks (terminal):")
     sidecar("segasonic-the-hedgehog", "EPR-15781C", SONIC_18)
     sidecar("unassigned", "EPR-15787C", SONIC_17)

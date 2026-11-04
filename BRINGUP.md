@@ -730,6 +730,29 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         `ConditionFileNotEmpty=|/etc/gatbox/archive.conf` (the job also runs when only an archive is set up) and
         `LoadCredential=archive:/etc/gatbox/archive.conf`. `bash bootstrap/gatbox-bootstrap.sh --check` lists exactly these
   - [ ] ⏸ Owner: run `archive/RUNBOOK.md` when D3 is shown and she wants it
+  - [x] D4, on the 7" and the rest of the deck's side (built 2026-11-04, not installed). **LIBRARY → CONFLICTS**: each conflict
+        the sync kept (`state/library/conflicts.json`) as BEFORE / THIS DECK / THE ARCHIVE, the fields that differ lit and each
+        side's change named in words too (CHANGED), a removal said as one (THE ARCHIVE REMOVED IT), the deck side as the library
+        holds it now. KEEP THIS DECK'S / KEEP THE ARCHIVE'S, and for a game EDIT THIS DECK'S (maker, title, year, notes) first.
+        A choice is a note (`library-resolutions.json`, the Pi's own screen only) that the sync reads over loopback and applies
+        on its next run **only if both sides still hold the states she was shown**; it is judged on that run's own plan, so a
+        game she just EDITed is judged as edited. A **CONFLICT** badge sits on the game's header, in ALL GAMES and in the bar
+        (CONFLICTS (n)). **SYSTEM's Library tile** gains the archive's half: how the last sync went (the token being refused is
+        said as "a person has to act"), edits waiting to go up, files to send and fetch, conflicts, and whether the two
+        libraries are identical. **Every dump image** is now a `rom_image` record (B6 already) and a file to send: the sync
+        uploads each by SHA-256 beside the manuals; they only go up, and an app's reader token is told there is no such file.
+        **ROM lists for games added after the seed**: gatbox-web asks (a spool request, one at a time, a set not asked again
+        within a day) and `gatbox-mame-roms --job` answers from MAME's driver list, hashes only, no network; gatbox-web makes
+        the game's `rom_list` (create-only). `test-library-web.sh` 121, `test-libsync.sh` 50, `test-sync-library.sh` 42,
+        `test-mame.sh` 37, `test-dash.sh` 164 (needs matplotlib: run here in a venv; screenshots 31a-31f, 32a-32b); 15 of 15 guards broken on purpose fail a test (one first went uncaught and got a stricter test)
+  - [ ] ⏸ Owner: the D4 install diff (shown first; the two new units are in the repo marked NOT INSTALLED). 1.
+        `bootstrap/files/sysusers-gatbox.conf`: `g gatbox-mame -` (the chip-list spool's group). 2. `bootstrap/files/tmpfiles-gatbox.conf`:
+        `d /var/spool/gatbox-mame 2770 root gatbox-mame -`. 3. `gatbox-web.service`: `SupplementaryGroups=gatbox-mame` and
+        `ReadWritePaths=-/var/spool/gatbox-mame` (it writes a request and reads the answer, nothing else). 4. New units
+        `gatbox-mame-roms.path` (PathExists the request) and `gatbox-mame-roms.service` (oneshot, DynamicUser, writes only its
+        spool, no network, no devices, no capabilities, 20 minute timeout). 5. MANIFEST lines already made in the bootstrap:
+        `libconflicts.py`, `mame_request.py` (gatbox-web imports them, so they must install with it). Until 1 to 4 are in, a
+        game added after the seed simply has no chip list (SYSTEM says how many, and that the job isn't installed), as before
 - **The integration plan, phase A (2026-10-28):** `docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md`,
   approved by the owner. Repo-only on this side (nothing installed changes except the guard above).
   - [x] Contract v1 is GATBOX's now: the README takes the hub's 10-26 additions and writes down the Phase 8 extras

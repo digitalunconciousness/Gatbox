@@ -146,7 +146,7 @@ def _sha_of(path):
     try:
         with open(sidecar, encoding="utf-8") as f:
             sha = json.load(f).get("sha256")
-        if isinstance(sha, str) and SHA.match(sha):
+        if isinstance(sha, str) and SHA.match(sha) and not path.endswith(".bin"):       # a dump's bytes are hashed, not trusted to a sidecar
             return sha
     except (OSError, ValueError, AttributeError):
         pass
@@ -195,11 +195,41 @@ def index(lib):
     return out
 
 
+def images(lib):
+    """{sha256: path} for every ROM image the library lists (a rom_image's id is its bytes' SHA-256) that is in the dump archive:
+    <machine>/<label>_<sha1:8>.bin and _images/*.bin. These only go up: a rebuilt deck's dump archive is not refilled by the sync."""
+    wanted = {r["id"] for r in lib.all("rom_image")}
+    out = {}
+    if not wanted:
+        return out
+    for pattern in ("*", "_images"):
+        base = config.ROMS
+        try:
+            folders = [os.path.join(base, n) for n in sorted(os.listdir(base))] if pattern == "*" else [os.path.join(base, "_images")]
+        except OSError:
+            continue
+        for folder in folders:
+            try:
+                names = sorted(os.listdir(folder))
+            except OSError:
+                continue
+            for n in names:
+                p = os.path.join(folder, n)
+                if n.endswith(".bin") and not n.startswith(".") and os.path.isfile(p):
+                    try:
+                        sha = _sha_of(p)
+                    except OSError:
+                        continue
+                    if sha in wanted:
+                        out.setdefault(sha, p)
+    return out
+
+
 def files():
     lib = _lib()
     adopt_staged(lib)
     idx = index(lib)
-    have = {sha: os.path.getsize(p) for sha, p in idx.items()}
+    have = {sha: os.path.getsize(p) for sha, p in {**images(lib), **idx}.items()}
     want, seen = [], set()
     for d in lib.all("document"):
         x = d["data"]
@@ -212,7 +242,7 @@ def files():
 def read_range(sha, header):
     """(bytes, start, end, total) of one part of a manual the deck holds."""
     lib = _lib()
-    path = index(lib).get(sha) if SHA.match(sha) else None
+    path = (index(lib).get(sha) or images(lib).get(sha)) if SHA.match(sha) else None
     if path is None:
         raise Bad(404, "no such file here")
     total = os.path.getsize(path)

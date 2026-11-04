@@ -241,6 +241,9 @@ def run(arc, urlbase, token):
     a = subprocess.run([sys.executable, TOOL, "seed", "--apply", f"{T}/plan.json"], env=env(), capture_output=True, text=True, check=False)
     check("the invented deck is seeded", p.returncode == 0 and a.returncode == 0, p.stdout + p.stderr + a.stdout + a.stderr)
     shutil.rmtree(f"{SYNC}/library", ignore_errors=True)
+    from gatboxlib import library as L
+    check("gatbox-web adopts the invented deck's dumps as ROM image records within seconds",
+          settles(lambda: L.Library(f"{T}/lib/library.sqlite", create=False).counts().get("rom_image", 0) >= 2, 30))
     deck_games = web("GET", "/api/library")[1]["games"]
     r = script(urlbase, token, dryrun=True)
     check("the dry run prints the plan, line by line, and says nothing was changed",
@@ -258,6 +261,24 @@ def run(arc, urlbase, token):
     manual = next(d for d in arc.lib.all("document") if d["data"]["doc_id"] == "widget-wars-manual")
     sha = manual["data"]["sha256"]
     check("the deck's manual went up with it, byte for byte", arc.files.size(sha) is not None and open(arc.files.path(sha), "rb").read() == open(f"{T}/manuals/widget-wars/widget-wars-manual.pdf", "rb").read())
+    images = [r["id"] for r in arc.lib.all("rom_image")]
+    on_deck = {}
+    for dp, _, fs in os.walk(f"{T}/roms"):
+        for f in fs:
+            if f.endswith(".bin"):
+                data = open(os.path.join(dp, f), "rb").read()
+                on_deck[hashlib.sha256(data).hexdigest()] = data
+    check("every dump image the deck holds went up as a file under its SHA-256, byte for byte, beside its record",
+          len(images) >= 2 and all(i in on_deck and arc.files.size(i) == len(on_deck[i]) and open(arc.files.path(i), "rb").read() == on_deck[i]
+                                   for i in images), f"{len(images)} images, {len(on_deck)} files")
+    reader = arc.tokens.add("an-app", "reader")
+    req = urllib.request.Request(f"{urlbase}/api/v1/files/{images[0]}", headers={"Authorization": f"Bearer {reader}"})
+    try:
+        urllib.request.urlopen(req, timeout=20)
+        got = 200
+    except urllib.error.HTTPError as e:
+        got = e.code
+    check("and an app's reader token is told there is no such file (a ROM image never leaves the deck and the archive)", got == 404)
     check("the run says the libraries are identical", st["identical"] is True and web("GET", "/api/library/sync/digest")[1] == arc.lib.content_digest())
     check("the confirmed limit went up as confirmed (the 7\"'s own CONFIRM)", any(r["data"]["confirmed"] for r in arc.lib.all("rail_limit")))
     r = script(urlbase, token)

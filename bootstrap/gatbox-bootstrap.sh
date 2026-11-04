@@ -99,6 +99,8 @@ backend/gatboxweb/dump.py                       /usr/local/lib/gatbox/gatboxweb/
 backend/gatboxweb/mame.py                       /usr/local/lib/gatbox/gatboxweb/mame.py               644
 backend/gatboxweb/libsource.py                  /usr/local/lib/gatbox/gatboxweb/libsource.py          644
 backend/gatboxweb/libsync_api.py                /usr/local/lib/gatbox/gatboxweb/libsync_api.py        644
+backend/gatboxweb/libconflicts.py                /usr/local/lib/gatbox/gatboxweb/libconflicts.py        644
+backend/gatboxweb/mame_request.py                /usr/local/lib/gatbox/gatboxweb/mame_request.py        644
 backend/gatboxweb/games.py                      /usr/local/lib/gatbox/gatboxweb/games.py              644
 backend/gatboxweb/rom_check.py                  /usr/local/lib/gatbox/gatboxweb/rom_check.py          644
 backend/gatboxweb/titles.py                     /usr/local/lib/gatbox/gatboxweb/titles.py             644

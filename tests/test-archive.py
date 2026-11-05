@@ -376,6 +376,20 @@ def run(tmp):
           and "REVOKED" in subprocess.run(cli + ["token", "list"], env=env, capture_output=True, text=True).stdout)
     r = subprocess.run(cli + ["status"], env=env, capture_output=True, text=True)
     check("status reads the library", r.returncode == 0 and "library" in r.stdout)
+    # Run as root against a data directory another user owns, the way the RUNBOOK's token commands are run in the container:
+    # what it writes must stay that user's, or the service (not root) can no longer read the token file and every token fails.
+    import pwd
+    nobody = pwd.getpwnam("nobody") if os.geteuid() == 0 else None
+    if nobody:
+        owned = f"{tmp}/owned"
+        os.makedirs(owned)
+        os.chmod(tmp, 0o755)
+        os.chown(owned, nobody.pw_uid, nobody.pw_gid)
+        r = subprocess.run(cli + ["token", "add", "deck", "--role", "device"], env=dict(env, ARCHIVE_DATA=owned), capture_output=True, text=True)
+        made = [os.path.join(d, f) for d, _, fs in os.walk(owned) for f in fs]
+        check("as root, token add works against a data directory another user owns", r.returncode == 0 and "gbx_" in r.stdout)
+        check("and everything it wrote belongs to that user, not root", bool(made) and all(os.stat(x).st_uid == nobody.pw_uid for x in made))
+        check("the token file is mode 600", any(os.path.basename(x).startswith("tokens") and os.stat(x).st_mode & 0o777 == 0o600 for x in made))
     srv_env = dict(env, ARCHIVE_TUNNEL_BIND="127.0.0.1:18741")
     p = subprocess.Popen(cli + ["serve"], env=srv_env, stderr=subprocess.PIPE, text=True)
     try:

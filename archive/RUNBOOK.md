@@ -141,6 +141,13 @@ gatbox-archive token add tracker --role reader
 gatbox-archive token list
 ```
 
+Run them as root in the container, with the code updated first (`cd ~/Gatbox && git pull && bash archive/install.sh`). The command
+carries on as the archive's own user, which owns `/srv/archive`, before it opens anything, so the token file belongs to the
+service and not to root. (A token file made by root is unreadable to the service, and every token then fails with no error
+anywhere.) If your shell says `gatbox-archive: command not found`, its PATH lacks `/usr/local/bin`: use the full path,
+`/usr/local/bin/gatbox-archive`, or open a fresh root shell. On a copy of the code from before this change, run each command as
+`runuser -u gatbox-archive -- /usr/local/bin/gatbox-archive token add ...` instead.
+
 Each token is printed once and stored only as a hash. Copy it when it appears. A lost one is revoked and replaced:
 `gatbox-archive token revoke <name>`, then add it again under a new name. A reader token sees only the games its app asks
 for, can read manuals, and is never given a ROM image.
@@ -183,5 +190,6 @@ it before the real one.
 | The pages say "Not signed in" | The request didn't come through the tunnel, or `ARCHIVE_PEOPLE` doesn't list that email |
 | The deck's sync fails with an authorization error | The Cloudflare service token expired (step 3), or the device token was revoked (step 5) |
 | Upload says a PDF is too large | The pages take 90 MB a PDF (Cloudflare's request limit is 100 MB); the deck's own uploads go in 8 MiB parts and are not limited by it |
+| `gatbox-archive: command not found` | The shell's PATH lacks `/usr/local/bin`: use `/usr/local/bin/gatbox-archive` |
 | Pages show a plain font | The fonts couldn't be fetched at install time; run `bash archive/install.sh` again with internet |
 | `install.sh` says `/srv/archive` is not a mount point | The data volume from step 1 isn't mounted; check `pct config <VMID>` |

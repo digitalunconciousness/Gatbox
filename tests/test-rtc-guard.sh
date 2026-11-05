@@ -40,8 +40,14 @@ out=$(GATBOX_RTC_CHARGE=CR2032 bash "$BOOT" 2>&1); rc=$?
 check "GATBOX_RTC_CHARGE=CR2032 refused"      '[ $rc = 1 ] && [[ $out == *"accepts only ML2020"* ]]'
 out=$(GATBOX_RTC_CHARGE=ml2020 bash "$BOOT" 2>&1); rc=$?
 check "GATBOX_RTC_CHARGE=ml2020 refused (exact)" '[ $rc = 1 ] && [[ $out == *"accepts only ML2020"* ]]'
-out=$(GATBOX_RTC_CHARGE=ML2020 bash "$BOOT" 2>&1); rc=$?
-check "GATBOX_RTC_CHARGE=ML2020 passes the check (then needs root)" '[[ $out == *"run with sudo"* ]]'
+# ML2020 is the one value that is let through, so the script goes on to its root check. As root it would go on past
+# that too and run for real, so this is not run as root.
+if [ "$(id -u)" = 0 ]; then
+    echo "  skip  GATBOX_RTC_CHARGE=ML2020 passes the check (this is root: the script would go on to install)"
+else
+    out=$(GATBOX_RTC_CHARGE=ML2020 bash "$BOOT" 2>&1); rc=$?
+    check "GATBOX_RTC_CHARGE=ML2020 passes the check (then needs root)" '[[ $out == *"run with sudo"* ]]'
+fi
 
 echo "rtc guard: $pass passed, $fail failed"
 [ "$fail" = 0 ]

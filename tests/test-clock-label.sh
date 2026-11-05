@@ -9,13 +9,16 @@ T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/rtc0"; : > "$T/rtc0-dev"
 pass=0; fail=0
 
-# case <name> <expect-prefix> <ntp yes|no> <rtc since_epoch|-> <stamp "epoch iso"|-> [dev-readable 1|0]
+# case <name> <expect-prefix> <ntp yes|no> <rtc since_epoch|-> <stamp "epoch iso"|-> [/dev/rtc0: 1 readable | 0 mode 000 | m missing]
 case_() {
     local name=$1 want=$2 ntp=$3 rtc=$4 stamp=$5 dev=${6:-1} got
-    rm -f "$T/rtc0/since_epoch" "$T/stamp"
+    # Root reads a mode-000 file, so that case means nothing as root. The logger itself runs as root, where "unreadable"
+    # is a device that is not there: the "missing" case, which holds for every user.
+    if [ "$dev" = 0 ] && [ "$(id -u)" = 0 ]; then printf '  skip  %-44s (this is root: it reads a mode-000 file)\n' "$name"; return; fi
+    rm -f "$T/rtc0/since_epoch" "$T/stamp" "$T/rtc0-dev"
     [ "$rtc" = - ] || echo "$rtc" > "$T/rtc0/since_epoch"
     [ "$stamp" = - ] || echo "$stamp" > "$T/stamp"
-    chmod "$([ "$dev" = 1 ] && echo 644 || echo 000)" "$T/rtc0-dev"
+    if [ "$dev" != m ]; then : > "$T/rtc0-dev"; chmod "$([ "$dev" = 0 ] && echo 000 || echo 644)" "$T/rtc0-dev"; fi
     got=$(GATBOX_NTP_SYNCED=$ntp GATBOX_RTC_SYSFS="$T/rtc0" GATBOX_RTC_DEV="$T/rtc0-dev" GATBOX_RTC_STAMP="$T/stamp" \
           GATBOX_NTP_FLAG="$T/none" bash "$LOGGER" --clock-label)
     if [[ $got == "$want"* ]]; then pass=$((pass + 1)); printf '  ok    %-44s %s\n' "$name" "$got"
@@ -33,7 +36,8 @@ case_ "system != RTC: RTC 1 h behind"              "unverified ("   no  $((now -
 case_ "RTC went backwards past the stamp"          "unverified ("   no  "$now"           "$((now + 600)) later"
 case_ "RTC 5 s off: still trusted"                 "rtc ("          no  $((now + 5))     "$hour_ago $iso_ago"
 case_ "RTC 7 s off: not trusted"                   "unverified ("   no  $((now + 7))     "$hour_ago $iso_ago"
-case_ "/dev/rtc0 unreadable"                       "unverified ("   no  "$now"           "$hour_ago $iso_ago" 0
+case_ "/dev/rtc0 unreadable (mode 000)"            "unverified ("   no  "$now"           "$hour_ago $iso_ago" 0
+case_ "/dev/rtc0 missing"                          "unverified ("   no  "$now"           "$hour_ago $iso_ago" m
 case_ "garbage stamp"                              "unverified ("   no  "$now"           "not-a-number x"
 case_ "garbage since_epoch"                        "unverified ("   no  "12a4"           "$hour_ago $iso_ago"
 case_ "no RTC sysfs at all"                        "unverified ("   no  -                "$hour_ago $iso_ago"

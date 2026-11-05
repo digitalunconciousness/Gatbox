@@ -50,7 +50,7 @@ def open_library(src, create):
     try:
         return library.Library(path, create=create)
     except OSError as e:
-        sys.exit(f"can't open {path}: {e.strerror}. The install makes that folder; run the install first, as the owner.")
+        sys.exit(f"can't open {path}: {e.strerror}. The install makes that folder (tmpfiles.d); run `bash bootstrap/gatbox-bootstrap.sh` first, as the owner.")
 
 
 def main():

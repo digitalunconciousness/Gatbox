@@ -81,6 +81,12 @@ check "and an empty hub.conf 600 root, no content" 'grep -qE "^f /etc/gatbox/hub
 check "the unit loads hub.conf and hubs.d"       'grep -qx "LoadCredential=hub:/etc/gatbox/hub.conf" "$SYNCU" && grep -qx "LoadCredential=hubs:/etc/gatbox/hubs.d" "$SYNCU"'
 check "and runs when either has something (OR)"  'grep -qx "ConditionFileNotEmpty=|/etc/gatbox/hub.conf" "$SYNCU" && grep -qx "ConditionDirectoryNotEmpty=|/etc/gatbox/hubs.d" "$SYNCU" && ! grep -q "^ConditionPathExists" "$SYNCU"'
 check "--check reports hubs.d"                   'grep -q "/etc/gatbox/hubs.d (tmpfiles.d" "$BOOT"'
+# The game library (phase B): gatbox-library creates library.sqlite under /srv/gatbox/library, which only the install can make
+# (/srv/gatbox is root's). Without these, `seed --apply` stops with "Permission denied".
+WEBU="$REPO/backend/gatbox-web.service"
+check "tmpfiles creates the library folder 2775 root:gatbox-manuals" 'grep -qE "^d /srv/gatbox/library +2775 +root +gatbox-manuals" "$TMPF"'
+check "the bootstrap makes it, and --check reports it"  'grep -q "! -d /srv/gatbox/library" "$BOOT" && grep -q "/srv/gatbox/library (tmpfiles.d" "$BOOT"'
+check "gatbox-web may write there (and is in the group)" 'grep -qx "ReadWritePaths=-/srv/gatbox/library" "$WEBU" && grep -qx "SupplementaryGroups=gatbox-manuals" "$WEBU"'
 
 bash "$BOOT" --check > "$T/check" 2>&1; rc=$?
 check "--check runs without root (exit 0 or 3)" '[ $rc = 0 ] || [ $rc = 3 ]'

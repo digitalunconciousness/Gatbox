@@ -20,6 +20,7 @@ your node, so none of them is guessed. Cloudflare's menus and Proxmox's options 
 4. The tunnel and its route.
 5. Tokens for the deck and the apps.
 6. The deck's side, then the first sync as a dry run.
+7. The apps (cabcrawl and the tracker): their settings, then one keyed machine to prove the link.
 
 ## 1. The container (Proxmox node)
 
@@ -144,6 +145,43 @@ curl -s -H "CF-Access-Client-Id: <CLIENT_ID>" -H "CF-Access-Client-Secret: $CF_S
 
 and print `{"ok": true, "app": "gatbox-archive", ...}`. Last, open `https://<HOSTNAME>/` in a browser, sign in, and you
 should see an empty games list. Your partner signs in the same way, from his phone.
+
+**Two more checks, from a machine that isn't signed in.** Run them again whenever you change anything in the Access
+application. Both addresses must answer `302` (a redirect to `<TEAM>.cloudflareaccess.com`):
+
+```bash
+for p in / /api/v1/health; do printf '%s ' "$p"; curl -sS -o /dev/null -w '%{http_code}\n' "https://<HOSTNAME>$p"; done
+```
+
+A `401` for `/` is the archive itself saying "Not signed in", which means the request got past Access without being
+stopped: the application doesn't cover that path, or a second application or a Bypass policy matches first. That matters
+because the pages trust the identity header (see the rule above), so anyone could send a header of their own. Fix the
+application so its destination is the bare hostname with no path, then run the loop again. The last check sends exactly that
+forged header and must also print `302`:
+
+```bash
+J=$(printf '{"alg":"none"}' | base64 -w0 | tr '+/' '-_' | tr -d =).$(printf '{"email":"nobody@example.com"}' | base64 -w0 | tr '+/' '-_' | tr -d =).x
+curl -sS -o /dev/null -w '%{http_code}\n' -H "Cf-Access-Jwt-Assertion: $J" https://<HOSTNAME>/
+```
+
+**If you recreate the application,** attach both policies to the new one before you test: `people` (Allow) and `deck`
+(Service Auth, with the `gatbox-deck` token, not Allow and not "Any Access Service Token"). Without `deck` the service-token
+call gets a `302` again and the deck's sync stops.
+
+**A `302` with the service token** means Cloudflare didn't match what you sent to a token that a Service Auth policy on this
+application lists. Check, in this order: the policy's action is Service Auth; the policy is ticked on the application; the
+Client ID in `archive.conf` ends in `.access`; and the secret is the whole secret. A secret cut short in the copy is
+accepted by everything except Cloudflare, which answers every request with the same `302`, and the token's **Last seen** in
+the dashboard stays empty. Copy the secret with the copy button. Before you save it, paste it at a hidden prompt and look at
+its length, then check that the length of the value in `archive.conf` matches it:
+
+```bash
+read -rsp "secret: " S; echo; echo "pasted: ${#S}"; unset S
+awk -F= '/^ARCHIVE_ACCESS_SECRET=/{print "in the file:", length($2)}' /etc/gatbox/archive.conf
+```
+
+If they differ, or you can't tell, **Rotate** the token in the dashboard and start again. The Client ID stays the same, so
+the policy keeps working.
 
 ## Steps 3 and 4 from a terminal
 
@@ -286,10 +324,48 @@ Each token is printed once and stored only as a hash. Copy it when it appears. A
 for, can read manuals, and is never given a ROM image.
 
 **How the apps reach it.** Either through the tunnel (each app gets its own Cloudflare service token and a Service Auth
-policy, like the deck's) or, if you'd rather keep that traffic on your network, on the container's private address:
-set `ARCHIVE_PRIVATE_BIND=<CONTAINER_IP>:8081` and `ARCHIVE_PRIVATE_ALLOW=<APPS_NETWORK_CIDR>` in `archive.conf`, run
-`bash archive/install.sh` again, and the apps use `http://<CONTAINER_IP>:8081` with their reader token. That listener answers
-reader tokens only, read-only, and no pages.
+policy, like the deck's) or, if you'd rather keep that traffic on your network, on the container's private address. That
+listener answers reader tokens only, read-only, and no pages. To turn it on, in the container:
+
+```bash
+ip -4 route show scope link
+```
+
+One line of that output looks like `192.0.2.0/24 dev eth0 proto kernel scope link src 192.0.2.50`. Its first field is the
+network the apps' hosts sit on, and `src` is this container's own address. Put them in `/etc/gatbox-archive/archive.conf`:
+
+```
+ARCHIVE_PRIVATE_BIND=<CONTAINER_IP>:8081
+ARCHIVE_PRIVATE_ALLOW=<NETWORK>/<PREFIX>
+```
+
+`ARCHIVE_PRIVATE_ALLOW` takes **one** network, not a list: `install.sh` strips the spaces from the line, so two addresses
+would be glued into one that means nothing. If the two apps are on different networks, use one network that contains both.
+Then apply it, and **restart the service**: the listener's address is read when the service starts. `install.sh` restarts
+the service only when one of its own files changed, and the one file that follows `archive.conf` is the drop-in made from
+`ARCHIVE_PRIVATE_ALLOW`. A change to anything else in `archive.conf`, the bind address included, isn't picked up until you
+restart.
+
+```bash
+cd ~/Gatbox && git pull && bash archive/install.sh
+systemctl restart gatbox-archive
+journalctl -u gatbox-archive -n 3 --no-pager | grep -i listener
+```
+
+The last line must end `private listener <CONTAINER_IP>:8081`. If it doesn't, the `ARCHIVE_PRIVATE_BIND` line isn't being
+read: look for a typo, a space around the `=`, or a `#` in front.
+
+Then, **from each app's host** (not from the container), try a reader token. `read -rsp` shows a prompt but not what you
+paste, and `--max-time` stops it hanging:
+
+```bash
+read -rsp "reader token: " T; echo
+curl -sS --max-time 10 -H "Authorization: Bearer $T" "http://<CONTAINER_IP>:8081/api/v1/library/changes?since=0&limit=1" | head -c 300; echo; unset T
+```
+
+JSON starting `{"records"` means it works. `Connection refused` means nothing listens there (the restart above, or the bind
+address). A timeout means the packets are dropped: `ARCHIVE_PRIVATE_ALLOW` doesn't cover that host, or a firewall sits between
+the two. A JSON error about the token means the route is fine and the token is wrong or revoked.
 
 ## 6. The deck
 
@@ -310,6 +386,64 @@ say so. With no file, or an empty one, nothing here runs and the deck behaves as
 The first sync is a dry run (`GATBOX_SYNC_DRYRUN=1`): it prints what it would send and fetch, changes nothing, and you read
 it before the real one.
 
+## 7. The apps (cabcrawl and the tracker)
+
+Each app has its own steps for this: the "game library" section of cabcrawl's `deploy/RUNBOOK.md`, and section 12 of the
+tracker's. They set `LIBRARY_ARCHIVE_URL` (`http://<CONTAINER_IP>:8081` on the private listener, no path, no trailing slash)
+and `LIBRARY_ARCHIVE_TOKEN` (that app's reader token from step 5) in the app's env file, deploy, and install a timer. Three
+things the apps' pages don't make obvious:
+
+**The env file is read as a shell script.** One `KEY=value` per line, no space around the `=`, and no line break inside the
+token. cabcrawl's `deploy.sh` sources `.env`, so a line that isn't an assignment stops it in its preflight with
+`<the line>: command not found`, before the backup, the pull or any change. To check the shape without printing a value:
+
+```bash
+awk '{ i = index($0, "="); if (i) print NR": "substr($0, 1, i-1); else print NR": (no = sign, " length($0) " characters)" }' <ENV_FILE>
+```
+
+Every line should show a key name. A line with no `=` is the broken one.
+
+**A pull asks only for the games that its machines or assets name.** With none named, it logs
+`library: changed=0 … ok=True` and makes no request at all, so that line proves only that the settings loaded. The
+connection is proved by one keyed machine: link cabcrawl's machines from the deck's plan (its runbook has the script),
+or set **Manuals library key (GATBOX)** on a tracker asset, then run the app's pull unit by hand and read the result:
+
+```bash
+systemctl start <PULL_UNIT>.service
+journalctl -u <PULL_UNIT>.service --no-pager | grep 'library:' | tail -3
+```
+
+(`arcade-tracker-library` for cabcrawl, `shop-hub-library` for the tracker.) `changed=` should now be above 0.
+
+**The key has to exist in the archive.** The deck sends the games of the barcade's roster, so those arrive on their own. A
+game that isn't on that roster, such as a customer's machine in the shop, has no record until you add one: **Add** on the
+archive's games list, with the same key you set on the machine or asset. To see whether the archive has a key, open
+`https://<HOSTNAME>/games/<KEY>` while signed in. "There is no game with the key" means it doesn't. A game's key is shown
+under its title, and in the address of its page.
+
+To ask the feed itself, walk every page. The feed filters by game **after** it takes a page of changes, so a small `limit`
+can return an empty page with `"more": true` for a game that exists. Run this where the app's env file is loaded
+(`set -a; . <ENV_FILE>; set +a`); it prints kinds and ids only, never data or the token:
+
+```bash
+python3 - <<'EOF'
+import json, os, urllib.request
+base, tok, key = os.environ["LIBRARY_ARCHIVE_URL"], os.environ["LIBRARY_ARCHIVE_TOKEN"], "widget-wars"
+since, found = 0, []
+while True:
+    req = urllib.request.Request(f"{base}/api/v1/library/changes?since={since}&limit=500&models={key}",
+                                 headers={"Authorization": "Bearer " + tok})
+    page = json.load(urllib.request.urlopen(req, timeout=15))
+    found += [(r["kind"], r["id"]) for r in page["records"]]
+    since = page["cursor"]
+    if not page["more"]:
+        break
+print(len(found), "records:", found[:10])
+EOF
+```
+
+Replace `widget-wars` with your key. `0 records` means the archive has nothing under it.
+
 ## Looking after it
 
 - **Backups.** The Proxmox backup of the container is the backup. To restore, restore the container and start it.
@@ -326,3 +460,9 @@ it before the real one.
 | `gatbox-archive: command not found` | The shell's PATH lacks `/usr/local/bin`: use `/usr/local/bin/gatbox-archive` |
 | Pages show a plain font | The fonts couldn't be fetched at install time; run `bash archive/install.sh` again with internet |
 | `install.sh` says `/srv/archive` is not a mount point | The data volume from step 1 isn't mounted; check `pct config <VMID>` |
+| Every call through Access gets a `302`, the service token shows no "Last seen" | The secret was cut short in the copy, the policy's action isn't Service Auth, or the policy isn't ticked on the application (step 4) |
+| `/` answers `401` to someone who isn't signed in | Access doesn't cover that path; the pages would trust a forged header. Fix the application's destination now (step 4) |
+| An app's pull says `changed=0 … ok=True` | Nothing is keyed in that app, or the key isn't in the archive; the pull made no request (step 7) |
+| A `curl` to `:8081` prints nothing for a long time | You are at a hidden `read -rs` prompt: paste the token and press Enter. Use `read -rsp` and `--max-time 10` (step 5) |
+| `curl` to `:8081` says `Connection refused` / times out | No listener (restart the service) / `ARCHIVE_PRIVATE_ALLOW` or a firewall drops the packets (step 5) |
+| `deploy.sh` stops in the preflight with `<text>: command not found` | A line of the app's `.env` isn't `KEY=value`; a token landed on a line of its own (step 7) |

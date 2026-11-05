@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""The archive's launcher. Installed at /usr/local/bin/gatbox-archive; in a checkout it runs from archive/."""
+import os
+import sys
+
+here = os.path.dirname(os.path.abspath(__file__))
+for p in ("/usr/local/lib/gatbox", os.path.join(here, "..", "backend"), here):
+    if os.path.isdir(p) and p not in sys.path:
+        sys.path.insert(0, p)
+
+from gatboxarchive.cli import main  # noqa: E402
+
+sys.exit(main())

@@ -50,7 +50,7 @@ def env(**extra):
              GATBOX_MANUALS=f"{T}/manuals", GATBOX_ROMS=f"{T}/roms", GATBOX_MAME_ROMS=f"{T}/mame-roms.json",
              GATBOX_LIBRARY=LIB, GATBOX_LOGDIR=f"{T}/log", GATBOX_RUNDIR=f"{T}/run", GATBOX_WEB_PORT=str(PORT),
              GATBOX_SYNC_STATE=f"{T}/sync", MPLCONFIGDIR=f"{T}/cache/mpl", GATBOX_MAME_TITLES=f"{T}/mame-titles.json",
-             GATBOX_MANUALS_SPOOL=f"{T}/mspool")
+             GATBOX_MANUALS_SPOOL=f"{T}/mspool", GATBOX_MAME_SPOOL=f"{T}/mamespool")
     e.update(extra)
     return e
 
@@ -652,6 +652,150 @@ def main():
     check("a game retired into another: its machine reads the survivor's documents and the logger gets the survivor's limits",
           get("/api/manuals/gizmo-racer")["library"] == "widget-wars" and ov["gizmo-racer"] == ov["widget-wars"]
           and settles(lambda: windows("gizmo-racer") == windows("widget-wars"), 20))
+
+    print("chip lists for games added after the seed (D4):")
+    st = get("/api/library/mame")
+    check("before the job is installed (no spool): the status says so, names the game waiting, and SYSTEM counts it without claiming the job runs",
+          st["spool"] is False and {"key": "pac-man", "set": "pacman"} in st["waiting"] and st["last"] is None
+          and settles(lambda: get("/api/system")["library"]["no_chips"] >= 1 and get("/api/system")["library"]["chip_job"] is False, 15))
+    check("and CHECK-by-chips has nothing to say for it yet", L.Library(LIB, create=False).get("rom_list", "pac-man") is None)
+    c, g = call("POST", "/api/library/games", {"title": "Ghost Game", "kind": "video", "key": "ghost-game", "mame_set": "nosuchset"})
+    os.makedirs(f"{T}/mamespool")
+    jobs = f"{T}/mamejobs"
+    mstop = threading.Event()
+
+    def mame_runner():          # gatbox-mame-roms.path: when a request appears in the spool, run the job the way the service would
+        tool = os.path.join(REPO, "tools/gatbox-mame-roms")
+        job_env = dict(env(), GATBOX_MAME=os.path.join(REPO, "tests/fake-mame"))
+        while not mstop.is_set():
+            if os.path.exists(f"{T}/mamespool/request.json"):
+                with open(jobs, "a", encoding="utf-8") as f:
+                    f.write("x")
+                subprocess.run([sys.executable, tool, "--job", f"{T}/mamespool/request.json", "--status", f"{T}/mamespool/status.json"],
+                               env=job_env, capture_output=True, timeout=120, check=False)
+            time.sleep(0.2)
+    threading.Thread(target=mame_runner, daemon=True).start()
+    check("once the spool exists, gatbox-web asks for the sets of games without a list, and the job's answer becomes their ROM lists",
+          settles(lambda: L.Library(LIB, create=False).get("rom_list", "pac-man") is not None, 40))
+    rl = L.Library(LIB, create=False).get("rom_list", "pac-man")
+    check("the list is MAME's own for that set: the parent first with its ROMs' sizes and hashes, made by 'mame', for this game",
+          rl["by"] == "mame" and rl["data"]["model_key"] == "pac-man" and rl["data"]["set"] == "pacman" and rl["data"]["mame"] == "0.276 (mame0276)"
+          and rl["data"]["versions"][0]["parent"] is True and rl["data"]["versions"][0]["roms"] and rl["data"]["versions"][0]["roms"][0]["sha1"])
+    from gatboxlib import libview
+    ml = libview.View(L.Library(LIB, create=False)).mame_roms()["machines"].get("pac-man", {})
+    check("the chip list the dashboard and CHECK read (the library's view of MAME) has it at once, with its status no longer 'missing'",
+          ml.get("versions") and ml["versions"][0]["roms"] and ml["status"] != "missing")
+    st = get("/api/library/mame")
+    check("a set MAME has no entry for is said so, and the game stays without a list, waiting",
+          st["last"]["state"] == "done" and st["last"]["missing"] == ["nosuchset"] and st["waiting"] == [{"key": "ghost-game", "set": "nosuchset"}]
+          and L.Library(LIB, create=False).get("rom_list", "ghost-game") is None)
+    n = len(open(jobs).read())
+    time.sleep(12)
+    check("and it isn't asked for again within the day (no second job though a look comes every few seconds)", len(open(jobs).read()) == n)
+    sx = get("/api/system")["library"]
+    check("SYSTEM counts what is still without a list and says the job is installed",
+          settles(lambda: get("/api/system")["library"]["no_chips"] == 1 and get("/api/system")["library"]["chip_job"] is True, 15))
+    mstop.set()
+    del sx
+
+    print("conflicts with the archive, and the sync's numbers (D4):")
+    sync_dir = f"{T}/sync"
+
+    def sysync():
+        return get("/api/system")["library"]["sync"]
+    check("before any sync: no conflicts, and SYSTEM says the sync isn't set up", get("/api/library/conflicts")["count"] == 0
+          and sysync()["configured"] is False and get("/api/library")["conflicts"] == 0)
+    ww = lib.get("game", "widget-wars")
+    theirs = dict(ww, rev=3, hash="b" * 64, data=dict(ww["data"], mfr="Partner Maker"), by="partner@example.test", at=1790000000.0)
+    base_data = dict(ww["data"], mfr="Base Maker", year=ww["data"]["year"])
+    write(f"{sync_dir}/library/conflicts.json", {"conflicts": [{"key": "game|widget-wars", "why": "conflict", "since": 1790000100, "deck": ww,
+                                                                 "archive": theirs, "base": {"s": "a" * 64, "data": base_data}}]})
+    cj = get("/api/library/conflicts")
+    c0 = cj["conflicts"][0] if cj["count"] else {}
+    mfr = next((f for f in c0.get("fields", []) if f["name"] == "mfr"), {})
+    check("a conflict is listed by its game's title, with the deck's side as it is now, the archive's and what they started from",
+          cj["count"] == 1 and c0["name"] == "Widget Wars" and c0["kind"] == "game" and c0["editable"] is True and c0["deck_state"] == ww["hash"]
+          and c0["archive_state"] == "b" * 64 and c0["archive"]["by"] == "partner@example.test" and c0["base"]["known"] is True)
+    check("... each differing field with its three values and who changed it from the base; a field both agree on isn't shown",
+          mfr.get("label") == "MAKER" and mfr["base"] == "Base Maker" and mfr["deck"] == ww["data"]["mfr"] and mfr["archive"] == "Partner Maker"
+          and mfr["differs"] and mfr["deck_changed"] and mfr["archive_changed"] and "title" not in {f["name"] for f in c0["fields"]})
+    glist = get("/api/library")
+    check("the game carries a conflict count for its badge, and so does the list", next(g for g in glist["games"] if g["key"] == "widget-wars")["conflicts"] == 1
+          and glist["conflicts"] == 1)
+    two = http_local_other = None
+    import http.client
+    other = http.client.HTTPConnection("127.0.0.1", PORT, timeout=20, source_address=("127.0.0.2", 0))
+    other.request("POST", "/api/library/conflicts/resolve", body=json.dumps({"key": "game|widget-wars", "keep": "deck", "deck": ww["hash"], "archive": "b" * 64}),
+                  headers={"Content-Type": "application/json"})
+    r = other.getresponse()
+    r.read()
+    other.close()
+    check("a choice from anywhere but the Pi's own screen is refused, and records nothing", r.status == 403 and not os.path.exists(f"{STATE}/library-resolutions.json"))
+    pick = {"key": "game|widget-wars", "keep": "deck", "deck": ww["hash"], "archive": "b" * 64}
+    check("a choice that isn't deck or archive, one for a conflict that doesn't exist, and one about versions that have changed are each refused",
+          call("POST", "/api/library/conflicts/resolve", dict(pick, keep="both"))[0] == 400
+          and call("POST", "/api/library/conflicts/resolve", dict(pick, key="game|nothing"))[0] == 404
+          and call("POST", "/api/library/conflicts/resolve", dict(pick, archive="c" * 64))[0] == 409
+          and not os.path.exists(f"{STATE}/library-resolutions.json"))
+    c, j = call("POST", "/api/library/conflicts/resolve", pick)
+    check("KEEP THIS (the deck's): queued for the sync, with the two states she was shown",
+          c == 200 and j["queued"] and call("GET", "/api/library/sync/resolutions")[1]["resolutions"][0]["keep"] == "deck"
+          and call("GET", "/api/library/sync/resolutions")[1]["resolutions"][0]["archive"] == "b" * 64
+          and get("/api/library/conflicts")["conflicts"][0]["chosen"] == "deck")
+    c, j = call("POST", "/api/library/conflicts/resolve", dict(pick, keep="archive"))
+    check("changing her mind replaces the choice: one row for the key", c == 200 and len(call("GET", "/api/library/sync/resolutions")[1]["resolutions"]) == 1
+          and get("/api/library/conflicts")["conflicts"][0]["chosen"] == "archive")
+    c, _ = call("PUT", "/api/library/games/widget-wars", {"mfr": "Her Own Maker", "rev": ww["rev"]})
+    now = get("/api/library/conflicts")["conflicts"][0]
+    check("EDIT the deck's version: the conflict now shows her version, and the earlier choice (about the old one) no longer counts as chosen",
+          c == 200 and now["deck_state"] != ww["hash"] and next(f for f in now["fields"] if f["name"] == "mfr")["deck"] == "Her Own Maker" and now["chosen"] is None)
+    c, _ = call("POST", "/api/library/conflicts/resolve", dict(pick, keep="deck"))
+    check("a choice made with the states she saw before the edit is refused: she decides about what is there now", c == 409)
+    c, j = call("POST", "/api/library/conflicts/resolve", {"key": "game|widget-wars", "keep": "deck", "deck": now["deck_state"], "archive": now["archive_state"]})
+    check("and one made about her edited version is taken", c == 200 and call("GET", "/api/library/sync/resolutions")[1]["resolutions"][0]["deck"] == now["deck_state"])
+    call("POST", "/api/library/sync/resolutions/done", {"keys": ["game|widget-wars"]})
+    check("the sync clears a choice once it has used it", call("GET", "/api/library/sync/resolutions")[1]["resolutions"] == [])
+    deck_now = lib.get("game", "widget-wars")
+    write(f"{sync_dir}/library/conflicts.json", {"conflicts": [{"key": "game|widget-wars", "why": "conflict", "since": 1, "deck": deck_now,
+                                                                 "archive": dict(deck_now, rev=9), "base": None}]})
+    check("a conflict whose two sides agree by now (she or the partner made them the same) isn't listed: the next run clears it", get("/api/library/conflicts")["count"] == 0)
+    fid = "f1" * 16
+    lib.put("fact", fid, {"model_key": "widget-wars", "group": "fuse", "what": "Fuse F1", "value": "5 A"}, 0)
+    frec = lib.get("fact", fid)
+    write(f"{sync_dir}/library/conflicts.json", {"conflicts": [{"key": f"fact|{fid}", "why": "conflict", "since": 1, "deck": frec,
+                                                                 "archive": dict(frec, rev=4, hash="d" * 64, deleted=True), "base": {"s": "e" * 64, "data": dict(frec["data"], value="4 A")}}]})
+    f0 = get("/api/library/conflicts")["conflicts"][0]
+    check("an edit against a removal: the archive's side says removed, has no fields, and a fact can be kept either way but isn't EDITed here",
+          f0["name"] == "Widget Wars: Fuse F1" and f0["archive"]["deleted"] is True and f0["editable"] is False
+          and [f["name"] for f in f0["fields"]] == ["value"] and f0["fields"][0]["archive"] is None and f0["fields"][0]["base"] == "4 A"
+          and f0["fields"][0]["deck"] == "5 A" and get("/api/library")["conflicts"] == 1)
+
+    now_t = time.time()
+    write(f"{sync_dir}/status.json", {"at": now_t, "ok": True, "library": {"at": now_t - 90, "ok": True, "pending": 0, "identical": False}})
+    write(f"{sync_dir}/library/state.json", {"deck_cursor": 0, "archive_cursor": 0, "base": {}, "held": {}})
+    total = lib.digest()["count"]
+    check("SYSTEM: the sync is set up, how it went, the conflicts, and every record is still waiting to go up (nothing agreed yet)",
+          settles(lambda: (lambda y: y["configured"] and y["ok"] is True and y["identical"] is False and y["conflicts"] == 1 and y["waiting"] == total)(sysync()), 15))
+    base = {f"{r['kind']}|{r['id']}": {"s": ("deleted" if r["deleted"] else r["hash"])} for k in L.KINDS for r in lib.all(k, deleted=True)}
+    write(f"{sync_dir}/library/state.json", {"deck_cursor": 0, "archive_cursor": 0, "base": base, "held": {}})
+    check("once the base holds what the deck has, nothing is waiting", settles(lambda: sysync()["waiting"] == 0, 15))
+    gk = lib.get("game", "gizmo-racer") or lib.get("game", "widget-wars")
+    lib.put("game", gk["id"], dict(gk["data"], notes="edited after the last sync"), gk["rev"])
+    check("an edit made after it shows as one edit waiting", settles(lambda: sysync()["waiting"] == 1, 15))
+    manual_sha = hashlib.sha256(b"%PDF-1.4 widget wars manual bytes").hexdigest()
+    n_have = len(call("GET", "/api/library/sync/files")[1]["have"])
+    lib.put("document", "widget-wars/promised", {"model_key": "widget-wars", "doc_id": "promised", "title": "Promised", "kind": "other",
+                                                 "sha256": "9" * 64, "bytes": 5}, 0)
+    check("manuals the deck has that were never sent are counted; the documents listed with no file here too",
+          settles(lambda: sysync()["files_to_send"] == n_have and sysync()["files_to_fetch"] == 1, 40))
+    write(f"{sync_dir}/library/files.json", {"up": {manual_sha: 1}})
+    check("... and a manual in the sync's sent ledger is no longer waiting", settles(lambda: sysync()["files_to_send"] == n_have - 1, 40))
+    write(f"{sync_dir}/status.json", {"at": now_t, "ok": True, "library": {"at": now_t, "ok": False, "error": "the archive refused the request (HTTP 403)", "refused_by_archive": True}})
+    check("the archive refusing the deck's token is said as it is", settles(lambda: sysync()["ok"] is False and sysync().get("refused") is True and "403" in (sysync()["error"] or ""), 15))
+    shutil.rmtree(f"{sync_dir}/library", ignore_errors=True)
+    os.remove(f"{sync_dir}/status.json")
+    lib.put("fact", fid, None, lib.get("fact", fid)["rev"], deleted=True)
+    lib.put("document", "widget-wars/promised", None, 1, deleted=True)
 
     print("the logger never opens the database:")
     src = [os.path.join(REPO, "backend", "gatboxlib", "profiles.py"), os.path.join(REPO, "backend", "gatboxlib", "modes.py"),

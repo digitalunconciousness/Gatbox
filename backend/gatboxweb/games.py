@@ -18,7 +18,7 @@ import time
 from gatboxlib import library as L
 from gatboxlib import libview
 
-from . import config, libsource, meter, roster
+from . import config, libconflicts, libsource, mame_request, meter, roster
 from .live import LIVE
 
 LOW_FREE = 2 * 1024 ** 3        # SYSTEM warns below 2 GB free on /srv, or at 90% used
@@ -38,7 +38,7 @@ def _machine_names():
     return {e["slug"]: e.get("name") or e["slug"] for _, e in (roster.entries() or [])}
 
 
-def _summary(v, key, names):
+def _summary(v, key, names, conflicts=None):
     g = v.games[key]
     d = g["data"]
     docs, limits = v.recs("document", key), v.recs("rail_limit", key)
@@ -49,7 +49,7 @@ def _summary(v, key, names):
             "machines": [{"slug": s, "name": names.get(s, s)} for s in v.slugs.get(key, [])], "primary": v.primary(key),
             "docs": len(docs), "fetched": len(fetched), "limits": len(limits),
             "confirmed": sum(1 for x in limits if x["data"]["confirmed"]), "facts": len(v.recs("fact", key)),
-            "mame": mame["data"]["set"] if mame else None, "missing": not fetched,
+            "mame": mame["data"]["set"] if mame else None, "missing": not fetched, "conflicts": (conflicts or {}).get(key, 0),
             "why": " ".join(x[len(libview.WHY):] for x in lines if x.startswith(libview.WHY)),
             "notes": d["notes"]}
 
@@ -60,9 +60,10 @@ def status():
     if v is None:
         return {"seeded": False}
     names = _machine_names()
-    games = sorted((_summary(v, k, names) for k in v.live()), key=lambda g: g["title"].lower())
+    conflicts = libconflicts.by_game()
+    games = sorted((_summary(v, k, names, conflicts) for k in v.live()), key=lambda g: g["title"].lower())
     return {"seeded": True, "games": games, "count": len(games), "missing": sum(1 for g in games if g["missing"]),
-            "bytes": v.lib.size()}
+            "bytes": v.lib.size(), "conflicts": sum(g["conflicts"] for g in games)}
 
 
 def is_low(free, total):
@@ -94,13 +95,14 @@ def storage():
     """SYSTEM's Library tile: what the library holds, what it takes on the Pi, and whether /srv is running short. The
     sizes are there before the library is set up too: the manuals are on the Pi either way."""
     v = libsource.current()
-    out = dict(_file_sizes(), seeded=v is not None, db_bytes=v.lib.size() if v else 0)
+    out = dict(_file_sizes(), seeded=v is not None, db_bytes=v.lib.size() if v else 0, sync=libconflicts.summary(v))
     if v:
         limits = [r for k in v.live() for r in v.recs("rail_limit", k)]
         docs = [r for k in v.live() for r in v.recs("document", k)]
         out.update(games=len(v.live()), documents=len(docs), fetched=sum(1 for r in docs if r["data"]["sha256"]),
                    limits=len(limits), confirmed=sum(1 for r in limits if r["data"]["confirmed"]),
-                   images=v.lib.counts().get("rom_image", 0),
+                   images=v.lib.counts().get("rom_image", 0), no_chips=len(mame_request.wanted()),
+                   chip_job=os.path.isdir(mame_request.SPOOL),
                    missing=sum(1 for k in v.live() if not any(r["data"]["sha256"] for r in v.recs("document", k))))
     try:
         u = shutil.disk_usage(config.SRV)

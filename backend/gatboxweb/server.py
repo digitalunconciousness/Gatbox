@@ -20,8 +20,9 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from . import (captures, config, devices, dump, games, hubs, libsource, mame, manual_request, manuals, meter, orders,
-               phone, report, rom_check, romsync, roster, sessions, system, titles, wifi)
+from . import (captures, config, devices, dump, games, hubs, libconflicts, libsource, libsync_api, mame, mame_request,
+               manual_request, manuals, meter, orders, phone, report, rom_check, romsync, roster, sessions, system, titles,
+               wifi)
 from .live import LIVE
 from .meter import Bad
 
@@ -147,6 +148,86 @@ def post_control(h, m, q):
     h.log_line(f"control: {action}")
     LIVE.emit("state", meter.state(full=False))
     h.send(303, b"", extra=[("Location", "/?" + h.url.query if h.url.query else "/")])
+
+
+def api_library_mame(h, m, q):
+    """GET /api/library/mame: the chip-list job for games added after the seed (spool installed? busy? who's waiting?)."""
+    h.json(200, mame_request.status())
+
+
+def api_library_conflicts(h, m, q):
+    h.json(200, libconflicts.listing())
+
+
+def api_library_conflict_choose(h, m, q):
+    """POST /api/library/conflicts/resolve {key, keep, deck, archive}: the Pi's own screen only."""
+    out = libconflicts.choose(h.body(), h.is_local())
+    h.log_line(f"library: conflict {out['key']}: keep the {out['keep']}'s")
+    h.json(200, out)
+
+
+# --- the library sync's door (gatbox-sync, on loopback): see libsync_api -----------------------------------------------------------
+def sync_changes(h, m, q):
+    libsync_api.local_only(h)
+    h.json(200, libsync_api.changes(q))
+
+
+def sync_records(h, m, q):
+    libsync_api.local_only(h)
+    h.json(200, libsync_api.apply(libsync_api.read_json(h)))
+
+
+def sync_digest(h, m, q):
+    libsync_api.local_only(h)
+    h.json(200, libsync_api.digest())
+
+
+def sync_files(h, m, q):
+    libsync_api.local_only(h)
+    h.json(200, libsync_api.files())
+
+
+def sync_file_read(h, m, q):
+    libsync_api.local_only(h)
+    data, start, end, total = libsync_api.read_range(m["sha"], h.headers.get("Range"))
+    h.send(206, data, "application/octet-stream", extra=[("Content-Range", f"bytes {start}-{end}/{total}")])
+
+
+def sync_stage_begin(h, m, q):
+    libsync_api.local_only(h)
+    h.json(200, libsync_api.stage_begin(libsync_api.read_json(h)))
+
+
+def sync_stage_part(h, m, q):
+    libsync_api.local_only(h)
+    if (h.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/octet-stream":
+        raise Bad(415, "Content-Type must be application/octet-stream")
+    try:
+        n = int(h.headers.get("Content-Length") or "")
+    except ValueError:
+        raise Bad(411, "Content-Length is required") from None
+    if not 0 < n <= libsync_api.PART_SIZE:
+        raise Bad(413, f"a part is at most {libsync_api.PART_SIZE} bytes")
+    h.json(200, libsync_api.stage_part(m["sha"], int(m["n"]), h.rfile.read(n)))
+
+
+def sync_stage_finish(h, m, q):
+    libsync_api.local_only(h)
+    out = libsync_api.stage_finish(m["sha"])
+    if out.get("placed"):
+        h.log_line(f"library sync: a manual from the archive placed ({', '.join(p['game'] for p in out['placed'])})")
+        LIVE.emit("manuals", {"slug": out["placed"][0]["game"], "file": out["placed"][0]["file"], "title": "from the archive"})
+    h.json(200, out)
+
+
+def sync_resolutions(h, m, q):
+    libsync_api.local_only(h)
+    h.json(200, libsync_api.resolutions())
+
+
+def sync_resolutions_done(h, m, q):
+    libsync_api.local_only(h)
+    h.json(200, libsync_api.resolutions_done(libsync_api.read_json(h)))
 
 
 def get_kiosk_state(h, m, q):
@@ -933,6 +1014,19 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("POST", r"/api/library/games/(?P<key>[^/]+)/manual/search", api_manual_search),
     ("POST", r"/api/library/games/(?P<key>[^/]+)/manual/files", api_manual_files),
     ("POST", r"/api/library/games/(?P<key>[^/]+)/manual/fetch", api_manual_fetch),
+    ("GET", r"/api/library/mame", api_library_mame),
+    ("GET", r"/api/library/conflicts", api_library_conflicts),
+    ("POST", r"/api/library/conflicts/resolve", api_library_conflict_choose),
+    ("GET", r"/api/library/sync/changes", sync_changes),
+    ("PUT", r"/api/library/sync/records", sync_records),
+    ("GET", r"/api/library/sync/digest", sync_digest),
+    ("GET", r"/api/library/sync/files", sync_files),
+    ("GET", r"/api/library/sync/files/(?P<sha>[0-9a-f]{64})", sync_file_read),
+    ("POST", r"/api/library/sync/files", sync_stage_begin),
+    ("PUT", r"/api/library/sync/files/(?P<sha>[0-9a-f]{64})/parts/(?P<n>\d{1,6})", sync_stage_part),
+    ("POST", r"/api/library/sync/files/(?P<sha>[0-9a-f]{64})/finish", sync_stage_finish),
+    ("GET", r"/api/library/sync/resolutions", sync_resolutions),
+    ("POST", r"/api/library/sync/resolutions/done", sync_resolutions_done),
     ("GET", r"/api/library/check", api_library_check),
     ("POST", r"/api/library/images/(?P<sha>[^/]+)/mark", api_library_mark),
     ("GET", r"/api/manuals", api_manuals_all),
@@ -1075,6 +1169,7 @@ def main():
     dump.watch()
     libsource.watch()                                      # the logger's flat export follows the game library
     manual_request.watch()                                 # a manual fetched on request becomes a library document
+    mame_request.watch()                                   # a game with a MAME set and no chip list gets one from the job
     threading.Thread(target=_warm, name="warm", daemon=True).start()
     ThreadingHTTPServer.allow_reuse_address = True
     ThreadingHTTPServer.daemon_threads = True

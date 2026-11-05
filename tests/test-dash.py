@@ -1600,6 +1600,115 @@ def main():
             c.open(B + "/dash/", 1024, 600)
             c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
 
+    with Chrome(f"{T}/browser3") as c:     # a fresh browser: the one above has a tab for every open, each with its live feed
+        print("CONFLICTS: the deck and the archive both changed a record, and the sync's numbers (D4):")
+        api("PUT", "/api/machine", {"slug": "gauntlet-legends"})
+        recs = api("GET", "/api/library/sync/changes?since=0&limit=500")["records"]
+        gl = next(r for r in recs if r["kind"] == "game" and r["id"] == "gauntlet-legends")
+        lim = next(r for r in recs if r["kind"] == "rail_limit" and r["data"]["model_key"] == "gauntlet-legends")
+        theirs = dict(gl, rev=gl["rev"] + 2, hash="c" * 64, data=dict(gl["data"], mfr="Partner Maker", year=1998), by="partner@example.test", at=1790000000.0)
+        base = {"s": "a" * 64, "data": dict(gl["data"], mfr="Original Maker", year=1998)}
+        os.makedirs(f"{T}/sync/library", exist_ok=True)
+        json.dump({"conflicts": [
+            {"key": "game|gauntlet-legends", "why": "conflict", "since": 1790000100, "deck": gl, "archive": theirs, "base": base},
+            {"key": f"rail_limit|{lim['id']}", "why": "conflict", "since": 1790000200, "deck": lim,
+             "archive": dict(lim, rev=lim["rev"] + 1, hash="d" * 64, deleted=True, by="partner@example.test"),
+             "base": {"s": "e" * 64, "data": dict(lim["data"], quote="the older words from the page")}}]}, open(f"{T}/sync/library/conflicts.json", "w"))
+        st_path = f"{T}/sync/status.json"
+        st0 = json.load(open(st_path)) if os.path.exists(st_path) else {"at": time.time(), "ok": True}
+        json.dump(dict(st0, library={"at": time.time() - 120, "ok": True, "pending": 0, "identical": False}), open(st_path, "w"))
+        c.open(B + "/dash/", 1024, 600)
+        c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
+        q = lambda js: c.eval(js)                                  # noqa: E731
+        text = lambda sel: q(f"(document.querySelector({json.dumps(sel)}) || {{}}).textContent || ''")   # noqa: E731
+        click = lambda sel: q(f"document.querySelector({json.dumps(sel)}).click()")  # noqa: E731
+        shot = lambda n: c.shot(os.path.join(OUT, n + ".png"))     # noqa: E731
+        click('[data-view="library"]')
+        check("the bar offers CONFLICTS (2), lit like MISSING, and the machine's game carries a CONFLICT ×2 badge",
+              lib_has("CONFLICTS (2)") and q("[...document.querySelectorAll('#lb-body .btnrow button')].some(b => b.textContent === 'CONFLICTS (2)' && b.classList.contains('warn'))")
+              and lib_has("CONFLICT ×2"))
+        shot("31a-conflicts-bar")
+        lib_tap("ALL GAMES")
+        c.wait("document.querySelectorAll('#pane .picklist .row').length >= 3", 10)
+        check("ALL GAMES says CONFLICT ×2 on the game, in words", q("[...document.querySelectorAll('#pane .picklist .row')].some(r => r.textContent.startsWith('Gauntlet') && r.textContent.includes('CONFLICT ×2'))"))
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'CLOSE').click()")
+        lib_tap("CONFLICTS")
+        c.wait("document.querySelector('#lb-body').textContent.includes('Conflicts (2)')", 10)
+        rows = q("[...document.querySelectorAll('#lb-body button.row')].map(r => r.textContent)")
+        check("the list: each conflict by its game and what it is (GAME, LIMIT), with what differs, and the removal in words",
+              len(rows) == 2 and rows[0].startswith("Gauntlet Legends GAME") and "MAKER" in rows[0] and "differ" in rows[0]
+              and rows[1].startswith("Gauntlet Legends: +5V limit LIMIT") and "the archive removed it; this deck changed it" in rows[1])
+        shot("31b-conflicts-list")
+        q("[...document.querySelectorAll('#lb-body button.row')][0].click()")
+        c.wait("document.querySelector('#sheet').classList.contains('hide') === false && (document.querySelector('#pane h2') || {}).textContent === 'CONFLICT · Gauntlet Legends'", 10)
+        ptxt = text("#pane")
+        check("a conflict: BEFORE / THIS DECK / THE ARCHIVE, the maker's three values, who changed it from what, and the actions",
+              all(w in ptxt for w in ("BEFORE", "THIS DECK", "THE ARCHIVE", "MAKER", "Original Maker", "Partner Maker", "partner@example.test", "CHANGED"))
+              and all(b in [x for x in q("[...document.querySelectorAll('#pane button')].map(b => b.textContent)")]
+                      for b in ("KEEP THIS DECK'S", "KEEP THE ARCHIVE'S", "EDIT THIS DECK'S")))
+        check("the fields that differ are lit on both sides; a field they agree on (the title) isn't shown",
+              q("document.querySelectorAll('#pane td.cf-lit').length") >= 4 and "TITLE" not in ptxt)
+        check("box: each action is a full 56 px target, no text under 14 px, nothing wider than the panel",
+              not q("[...document.querySelectorAll('#pane button')].filter(b => b.getClientRects().length && b.getBoundingClientRect().height < 55).map(b => b.textContent)")
+              and not q("[...document.querySelectorAll('#pane .cf-t td, #pane .cf-t th, #pane .cf-tag, #pane .mut')].filter(e => parseFloat(getComputedStyle(e).fontSize) < 14).map(e => e.textContent)")
+              and q("document.querySelector('#pane').scrollWidth <= document.querySelector('#pane').clientWidth + 1"))
+        shot("31c-conflict-game")
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'CLOSE').click()")
+        q("[...document.querySelectorAll('#lb-body button.row')][1].click()")
+        c.wait("document.querySelector('#sheet').classList.contains('hide') === false && (document.querySelector('#pane h2') || {}).textContent === 'CONFLICT · Gauntlet Legends: +5V limit'", 10)
+        check("an edit against a removal: the archive's side says REMOVED in words, only what this deck changed is listed, and a limit is kept "
+              "either way but not EDITed here",
+              "THE ARCHIVE REMOVED IT." in text("#pane") and "(removed)" in text("#pane") and "QUOTE" in text("#pane") and "RAIL" not in text("#pane")
+              and "EDIT THIS DECK'S" not in q("[...document.querySelectorAll('#pane button')].map(b => b.textContent)"))
+        shot("31d-conflict-removed")
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'CLOSE').click()")
+        q("[...document.querySelectorAll('#lb-body button.row')][0].click()")
+        c.wait("document.querySelector('#sheet').classList.contains('hide') === false && (document.querySelector('#pane h2') || {}).textContent === 'CONFLICT · Gauntlet Legends'", 10)
+        pane_tap("KEEP THIS DECK'S")
+        if not settles(c, "document.querySelector('#lb-body').textContent.includes('KEEPING THIS DECK')", 10):
+            print("    toast:", text("#toast"), "| resolutions:", api("GET", "/api/library/sync/resolutions"))
+        res = api("GET", "/api/library/sync/resolutions")["resolutions"]
+        check("KEEP THIS DECK'S: noted for the sync with the two states she saw, shown on the list as chosen and applied at the next sync",
+              len(res) == 1 and res[0]["key"] == "game|gauntlet-legends" and res[0]["keep"] == "deck" and res[0]["archive"] == "c" * 64
+              and res[0]["deck"] == gl["hash"] and "APPLIES AT THE NEXT SYNC" in text("#lb-body"))
+        shot("31e-conflict-chosen")
+        q("[...document.querySelectorAll('#lb-body button.row')][0].click()")
+        c.wait("document.querySelector('#sheet').classList.contains('hide') === false && (document.querySelector('#pane h2') || {}).textContent === 'CONFLICT · Gauntlet Legends' && document.querySelector('#pane').textContent.includes('Chosen: THIS DECK')", 10)
+        pane_tap("EDIT THIS DECK'S")
+        c.wait("[...document.querySelectorAll('#pane button')].some(b => b.textContent === 'MAKER')", 10)
+        pane_tap("MAKER")
+        c.wait("document.querySelector('#pane .kp-field')")
+        for _ in range(20):
+            q("[...document.querySelectorAll('#pane .keys button')].find(b => b.textContent === '\u232B').click()")
+        type_text("HER MAKER")
+        c.wait("document.querySelector('#sheet').classList.contains('hide') === false && (document.querySelector('#pane h2') || {}).textContent === 'CONFLICT · Gauntlet Legends' && document.querySelector('#pane').textContent.includes('HER MAKER')", 15)
+        check("EDIT THIS DECK'S: the maker is typed on the keypad, and the conflict opens again with her version in THIS DECK's column; "
+              "the earlier choice (about the old version) no longer counts", "HER MAKER" in text("#pane") and "Chosen:" not in text("#pane"))
+        shot("31f-conflict-edited")
+        pane_tap("KEEP THE ARCHIVE'S")
+        c.wait("document.querySelector('#lb-body').textContent.includes('KEEPING THE ARCHIVE')", 10)
+        res = api("GET", "/api/library/sync/resolutions")["resolutions"]
+        edited = next(r for r in api("GET", "/api/library/sync/changes?since=0&limit=500")["records"] if r["kind"] == "game" and r["id"] == "gauntlet-legends")
+        check("KEEP THE ARCHIVE'S replaces the choice (one row), about the version she edited", len(res) == 1 and res[0]["keep"] == "archive"
+              and res[0]["deck"] == edited["hash"] and edited["data"]["mfr"] == "HER MAKER")
+
+        click('[data-view="system"]')
+        libcard2 = ("[...document.querySelectorAll('#sy-grid .card')]"
+                    ".find(c => (c.querySelector('h2') || {}).textContent === 'Library')")
+        check("SYSTEM's Library tile: the archive synced a couple of minutes ago, the conflicts and where to settle them, not yet identical",
+              settles(c, f"!!({libcard2}) && {libcard2}.textContent.includes('synced 2 min ago') && {libcard2}.textContent.includes('2: LIBRARY')", 20)
+              and "not yet" in q(f"{libcard2}.textContent"))
+        q(f"{libcard2}.lastElementChild.scrollIntoView({{block: 'end'}})")
+        shot("32a-system-sync")
+        json.dump(dict(st0, library={"at": time.time(), "ok": False, "error": "the archive refused the request (HTTP 403)", "refused_by_archive": True}), open(st_path, "w"))
+        check("... and when the archive has refused the deck's token it says a person has to act, in words",
+              settles(c, f"{libcard2}.textContent.includes('TOKEN REFUSED')", 20) and "a person has to act" in q(f"{libcard2}.textContent"))
+        q(f"{libcard2}.lastElementChild.scrollIntoView({{block: 'end'}})")
+        shot("32b-system-sync-refused")
+        json.dump(st0, open(st_path, "w"))
+        os.remove(f"{T}/sync/library/conflicts.json")
+        check("... and with no archive configured it says so in one line", settles(c, f"{libcard2}.textContent.includes('no archive configured')", 20))
+
     print("phone (390x844):")
     with Chrome(f"{T}/browser2") as c:
         # ?box=0: the test reaches gatbox-web at 127.0.0.1, which is the kiosk's address; a phone comes by name

@@ -80,6 +80,8 @@ backend/gatboxlib/profiles.py                   /usr/local/lib/gatbox/gatboxlib/
 backend/gatboxlib/library.py                    /usr/local/lib/gatbox/gatboxlib/library.py            644
 backend/gatboxlib/libview.py                    /usr/local/lib/gatbox/gatboxlib/libview.py            644
 backend/gatboxlib/seed.py                       /usr/local/lib/gatbox/gatboxlib/seed.py               644
+backend/gatboxlib/filestore.py                  /usr/local/lib/gatbox/gatboxlib/filestore.py          644
+backend/gatboxlib/libsync.py                    /usr/local/lib/gatbox/gatboxlib/libsync.py            644
 backend/gatboxlib/csvlog.py                     /usr/local/lib/gatbox/gatboxlib/csvlog.py             644
 backend/gatboxweb/__init__.py                   /usr/local/lib/gatbox/gatboxweb/__init__.py           644
 backend/gatboxweb/config.py                     /usr/local/lib/gatbox/gatboxweb/config.py             644
@@ -97,6 +99,9 @@ backend/gatboxweb/devices.py                    /usr/local/lib/gatbox/gatboxweb/
 backend/gatboxweb/dump.py                       /usr/local/lib/gatbox/gatboxweb/dump.py               644
 backend/gatboxweb/mame.py                       /usr/local/lib/gatbox/gatboxweb/mame.py               644
 backend/gatboxweb/libsource.py                  /usr/local/lib/gatbox/gatboxweb/libsource.py          644
+backend/gatboxweb/libsync_api.py                /usr/local/lib/gatbox/gatboxweb/libsync_api.py        644
+backend/gatboxweb/libconflicts.py                /usr/local/lib/gatbox/gatboxweb/libconflicts.py        644
+backend/gatboxweb/mame_request.py                /usr/local/lib/gatbox/gatboxweb/mame_request.py        644
 backend/gatboxweb/games.py                      /usr/local/lib/gatbox/gatboxweb/games.py              644
 backend/gatboxweb/rom_check.py                  /usr/local/lib/gatbox/gatboxweb/rom_check.py          644
 backend/gatboxweb/titles.py                     /usr/local/lib/gatbox/gatboxweb/titles.py             644
@@ -269,6 +274,7 @@ if [ "${1:-}" = "--check" ]; then
     [ -d /etc/gatbox ] || DIFFS+=("create     /etc/gatbox (tmpfiles.d; hub.conf goes in by hand)")
     [ -d /etc/gatbox/hubs.d ] || DIFFS+=("create     /etc/gatbox/hubs.d (tmpfiles.d; one <name>.conf per extra hub, by hand)")
     [ -e /etc/gatbox/hub.conf ] || DIFFS+=("create     /etc/gatbox/hub.conf, empty (tmpfiles.d; empty means no hub)")
+    [ -e /etc/gatbox/archive.conf ] || DIFFS+=("create     /etc/gatbox/archive.conf, empty (tmpfiles.d; empty means no archive, the library is not synced)")
     # Only when the hotspot is armed at all: an unarmed Pi is not missing anything.
     if systemctl -q is-enabled gatbox-ap-fallback.service 2>/dev/null \
        || systemctl -q is-enabled gatbox-ap-fallback.timer 2>/dev/null; then
@@ -455,7 +461,7 @@ if changed /etc/sysusers.d/gatbox.conf || ! getent passwd gatbox-dump >/dev/null
    || ! getent passwd gatbox-sync >/dev/null || ! getent group gatbox-wifi >/dev/null; then
     systemd-sysusers /etc/sysusers.d/gatbox.conf && log "users gatbox-dump (T48 dumps, group plugdev) and gatbox-sync (hub push), group gatbox-manuals"
 fi
-if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ] || [ ! -d /srv/gatbox/manuals ] || [ ! -d /etc/gatbox ] || [ ! -d /etc/gatbox/hubs.d ] || [ ! -e /etc/gatbox/hub.conf ] || [ ! -d /var/spool/gatbox-wifi ]; then
+if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ] || [ ! -d /srv/gatbox/manuals ] || [ ! -d /etc/gatbox ] || [ ! -d /etc/gatbox/hubs.d ] || [ ! -e /etc/gatbox/hub.conf ] || [ ! -e /etc/gatbox/archive.conf ] || [ ! -d /var/spool/gatbox-wifi ]; then
     systemd-tmpfiles --create /etc/tmpfiles.d/gatbox.conf && log "/srv/gatbox/roms + /srv/gatbox/manuals + /var/spool/gatbox-dump + /etc/gatbox (+ hubs.d)"
 fi
 if ! id -nG "$U" | grep -qw gatbox-dump; then

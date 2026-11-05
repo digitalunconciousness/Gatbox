@@ -25,7 +25,19 @@ cd "$dir" || exit 2
 if [ "$write" = 1 ]; then
   tmp=$(mktemp) || exit 2
   {
-    cat <<'EOF'
+    if [ "$(basename "$PWD")" = read ]; then
+      cat <<'EOF'
+# sha256 of every file in this directory, CHECKSUMS itself excepted.
+#
+# The library's read side is owned by GATBOX (docs/contract/library-v1/read/) and
+# vendored byte-identical into each hub at contract/library-v1/. A test in every
+# repository checks its copy against this list, and against any sibling checkout it
+# finds. Edit GATBOX's copy, then regenerate there with:
+#   bash docs/contract/checksums.sh --write docs/contract/library-v1/read
+
+EOF
+    else
+      cat <<'EOF'
 # sha256 of every file in this directory, CHECKSUMS itself excepted.
 #
 # Contract v1 is owned by GATBOX (docs/contract/v1/) and vendored byte-identical
@@ -35,6 +47,7 @@ if [ "$write" = 1 ]; then
 #   bash docs/contract/checksums.sh --write
 
 EOF
+    fi
     find . -type f ! -name CHECKSUMS | sed 's|^\./||' | LC_ALL=C sort | while read -r f; do
       sha256sum "$f"
     done

@@ -10,11 +10,32 @@ Settings come from the environment (the unit's EnvironmentFile, /etc/gatbox-arch
 ARCHIVE_TUNNEL_BIND, ARCHIVE_PRIVATE_BIND, ARCHIVE_IDENTITY_HEADER, ARCHIVE_PEOPLE, ARCHIVE_MAX_FILE.
 """
 import argparse
+import os
+import pwd
 import sys
 import time
 
 from .server import Archive, Config, serve
 from .tokens import TokenError
+
+
+def become_data_owner(data):
+    """Started as root against a data directory another user owns (the install's gatbox-archive), carry on as that user.
+
+    The service is not root, so a file this command made as root (the token file, the library's -wal and -shm files) would be
+    one the service can no longer read or write, and tokens would stop working with no error anywhere. Does nothing when not
+    root, when the directory isn't there yet, or when root owns it."""
+    if os.geteuid() != 0:
+        return
+    try:
+        st = os.stat(data)
+    except OSError:
+        return
+    if st.st_uid == 0:
+        return
+    os.initgroups(pwd.getpwuid(st.st_uid).pw_name, st.st_gid)
+    os.setgid(st.st_gid)
+    os.setuid(st.st_uid)
 
 
 def main(argv=None):
@@ -32,7 +53,9 @@ def main(argv=None):
     rev = tsub.add_parser("revoke")
     rev.add_argument("name")
     args = ap.parse_args(argv)
-    arc = Archive(Config())
+    cfg = Config()
+    become_data_owner(cfg.data)
+    arc = Archive(cfg)
     if args.cmd == "serve":
         serve(arc)
         return 0

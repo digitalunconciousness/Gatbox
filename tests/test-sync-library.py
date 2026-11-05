@@ -396,6 +396,66 @@ def run(arc, urlbase, token):
           seen and seen[0].get("cf-access-client-id") == "abc.access" and seen[0].get("cf-access-client-secret") == "s3cret-value"
           and seen[0].get("authorization") == f"Bearer {token}")
     stub.shutdown()
+
+    # What Cloudflare Access does with a request it doesn't accept: a redirect to its login page, which urllib used to follow
+    # (sending both tokens along) and which came back as a 200 of HTML that crashed the run with "'bytes' has no attribute 'get'".
+    elsewhere = []
+
+    class Login(BaseHTTPRequestHandler):
+        def do_GET(self):
+            elsewhere.append(dict(self.headers))
+            body = b"<html>sign in</html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    login = ThreadingHTTPServer(("127.0.0.1", 0), Login)
+    threading.Thread(target=login.serve_forever, daemon=True).start()
+    mode = {"kind": "redirect"}
+
+    class Access(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if mode["kind"] == "redirect":
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{login.server_address[1]}/cdn-cgi/access/login")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            else:
+                body = b"<html>not the archive</html>"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    access = ThreadingHTTPServer(("127.0.0.1", 0), Access)
+    threading.Thread(target=access.serve_forever, daemon=True).start()
+    client = libsync.Archive(f"http://127.0.0.1:{access.server_address[1]}", token, "abc.access", "s3cret-value", timeout=5)
+    try:
+        client.changes(0)
+        got = None
+    except libsync.Refused as e:
+        got = e
+    check("a redirect (Access not accepting the service token) is a refusal that names where it went, and a person has to act",
+          got is not None and got.status == 302 and f"127.0.0.1:{login.server_address[1]}" in str(got) and "Service Auth" in str(got), str(got))
+    check("and it is not followed: neither token reaches the other address", elsewhere == [])
+    mode["kind"] = "html"
+    try:
+        client.changes(0)
+        got = None
+    except libsync.Unreachable as e:
+        got = e
+    check("a 200 that isn't JSON is an error that says so, not a crash further in", got is not None and "isn't JSON" in str(got) and "text/html" in str(got), str(got))
+    access.shutdown()
+    login.shutdown()
     r = script("http://example.invalid", token)
     check("an archive address that isn't https is refused before anything is sent: said in the journal, exit 0", r.returncode == 0 and "must be an https" in r.stdout)
     with open(f"{T}/archive.conf", "w", encoding="utf-8") as f:

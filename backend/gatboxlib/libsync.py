@@ -148,6 +148,18 @@ class State:
 
 # --- the two sides ------------------------------------------------------------------------------------------------------
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow a redirect. urllib would send the Authorization header and the Access service token on to wherever it
+    points, and Cloudflare Access answers a request it doesn't accept with a redirect to its login page, which comes back as
+    a 200 of HTML that no caller can read."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 class Http:
     def __init__(self, base, headers=None, timeout=60.0):
         self.base, self.headers, self.timeout = base.rstrip("/"), dict(headers or {}), timeout
@@ -164,7 +176,7 @@ class Http:
             headers["Content-Type"] = ctype
         req = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+            with OPENER.open(req, timeout=self.timeout) as r:
                 status, out, got = r.status, r.read(), r.headers
         except urllib.error.HTTPError as e:
             status, out, got = e.code, e.read(), e.headers
@@ -177,13 +189,21 @@ class Http:
                 pass
         return status, out, got
 
-    def ok(self, method, path, **kw):
+    def ok(self, method, path, binary=False, **kw):
+        """(parsed JSON, headers), or the bytes when `binary`. Anything else is an error that says what came back."""
         status, out, got = self.call(method, path, **kw)
         if status in (401, 403):
             raise Refused(f"{self.base} refused the request (HTTP {status}): " + (out.get("error", "") if isinstance(out, dict) else ""), status)
+        if 300 <= status < 400:
+            where = urllib.parse.urlsplit(got.get("Location") or "").netloc or "somewhere else"
+            raise Refused(f"{self.base} sent us to {where} instead of answering (HTTP {status}); the tokens were not sent on. Behind "
+                          "Cloudflare Access this means it did not accept the service token: check it in the archive.conf and that "
+                          "the application's policy for it is Service Auth", status)
         if status >= 400:
             msg = out.get("error") if isinstance(out, dict) else (out[:120].decode("utf-8", "replace") if out else "")
             raise Unreachable(f"{self.base}{path.split('?')[0]}: HTTP {status} {msg}")
+        if not binary and out and isinstance(out, (bytes, bytearray)):
+            raise Unreachable(f"{self.base}{path.split('?')[0]}: answered something that isn't JSON ({got.get('Content-Type') or 'no type'}): not the archive?")
         return out, got
 
 
@@ -244,7 +264,7 @@ class Deck(Http):
         return self.ok("GET", "/api/library/sync/files")[0]
 
     def file_range(self, sha, start, end):
-        return self.ok("GET", f"/api/library/sync/files/{sha}", extra={"Range": f"bytes={start}-{end}"})[0]
+        return self.ok("GET", f"/api/library/sync/files/{sha}", binary=True, extra={"Range": f"bytes={start}-{end}"})[0]
 
     def stage_begin(self, sha, size):
         return self.ok("POST", "/api/library/sync/files", body={"sha256": sha, "size": size})[0]

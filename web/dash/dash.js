@@ -2933,7 +2933,7 @@
       const c = el("div", "card");
       add(c, el("h2", null, "Drives on USB"), driveTiles(st, null, null, 0),
           el("div", "mut", "READ and WRITE are on the Pi's own screen."));
-      add(B, c, checklistCard(), imagesCard(st));
+      add(B, c, checklistCard(), diskImagesCard(st));
       return;
     }
     const seg = el("div", "seg");
@@ -2946,7 +2946,7 @@
     if (K.mode === "write") diskWritePanel(B, st);
     else if (K.mode === "checklist") B.appendChild(checklistCard());
     else diskReadPanel(B, st);
-    if (K.mode !== "checklist") B.appendChild(imagesCard(st));
+    if (K.mode !== "checklist") B.appendChild(diskImagesCard(st));
   }
   function storeLine(st) {
     const c = el("div", "card dk-store"), sto = st.store;
@@ -3173,7 +3173,7 @@
     }
     B.appendChild(p);
   }
-  function imagesCard(st) {
+  function diskImagesCard(st) {
     const c = el("div", "card"), imgs = K.images;
     c.appendChild(el("h2", null, "Images in the store"));
     if (!st.store.mounted) { c.appendChild(el("div", "mut", "Plug in the image store to see its images.")); return c; }

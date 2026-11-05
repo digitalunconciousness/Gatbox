@@ -6,7 +6,7 @@
 #   bash archive/install.sh --check                 # what a run would change; no root, nothing changed
 #   sudo bash archive/install.sh --allow-unmounted  # /srv/archive isn't a mount point (a test box only)
 #
-# Idempotent: a re-run changes nothing unless the checkout changed, and restarts the service only if its files did.
+# Idempotent: a re-run changes nothing unless the checkout or archive.conf changed, and restarts the service only then.
 # It needs no internet once the packages are there. It does NOT touch Proxmox or Cloudflare: archive/RUNBOOK.md writes those
 # steps out. The owner runs this herself, in the container; nothing else does.
 #
@@ -16,7 +16,9 @@
 #      silently fill)
 #   3  the files from this checkout (the table below), the pages' two fonts (pinned by sha256, fetched once: an offline
 #      re-run needs nothing) and /etc/gatbox-archive/archive.conf (only if absent)
-#   4  the service: enabled, started, restarted only when its files changed
+#   4  the service: enabled, started, restarted only when its files or archive.conf changed (the service reads the conf
+#      when it starts, so an edit to it means nothing until then; /var/lib/gatbox-archive/conf.sha256 remembers which
+#      conf the service was last started with)
 #
 # Test knobs: ARCHIVE_PREFIX=DIR installs under DIR and ARCHIVE_NO_SYSTEM=1 skips users, packages and systemctl;
 # ARCHIVE_FONTS_BASE=URL and ARCHIVE_FONTS_TABLE=FILE point the font fetch at a local copy and its own checksums.
@@ -69,10 +71,23 @@ CONF_EXAMPLE=archive/archive.conf.example
 CONF=/etc/gatbox-archive/archive.conf
 UNIT=/etc/systemd/system/gatbox-archive.service
 DROPIN=/etc/systemd/system/gatbox-archive.service.d/private.conf
+STAMP=/var/lib/gatbox-archive/conf.sha256       # the checksum of the archive.conf the service was last started with
 
 log() { printf '  %s\n' "$*"; }
 changed_files=()
 DIFFS=()
+
+conf_sum() {   # the checksum of archive.conf; prints nothing and fails when there is none yet
+    [ -f "$PREFIX$CONF" ] && sha256sum < "$PREFIX$CONF" | cut -d' ' -f1
+}
+conf_changed() {   # true when archive.conf exists and isn't the one the service was last started with (no stamp counts as changed)
+    local now
+    now=$(conf_sum) || return 1
+    [ "$now" != "$(cat "$PREFIX$STAMP" 2>/dev/null)" ]
+}
+stamp_conf() {   # remember the conf as the one the service is running with
+    mkdir -p "$(dirname "$PREFIX$STAMP")" && conf_sum > "$PREFIX$STAMP"
+}
 
 differs() {   # <repo path> <installed path>: true when the installed file is missing or different
     [ ! -f "$PREFIX$2" ] || ! cmp -s "$REPO/$1" "$PREFIX$2"
@@ -114,6 +129,7 @@ want_dropin=""
 have_dropin=""
 [ -f "$PREFIX$DROPIN" ] && have_dropin=$(cat "$PREFIX$DROPIN")
 [ "$want_dropin" = "$have_dropin" ] || DIFFS+=("drop-in    $DROPIN (${private_allow:-removed})")
+! conf_changed || DIFFS+=("restart    gatbox-archive (archive.conf changed since the service was last started)")
 
 if [ -z "$NO_SYSTEM" ]; then
     command -v pdftoppm >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 \
@@ -163,7 +179,7 @@ if [ "$WANT_FONTS" = 1 ]; then
     [ "$fonts_ok" = 1 ] || log "!! couldn't fetch the fonts (no internet?). The pages use system fonts until a re-run gets them."
 fi
 if [ ! -f "$PREFIX$CONF" ]; then
-    install -D -m 0644 "$REPO/$CONF_EXAMPLE" "$PREFIX$CONF" && log "created $CONF: look it over, then restart the service"
+    install -D -m 0644 "$REPO/$CONF_EXAMPLE" "$PREFIX$CONF" && log "created $CONF: look it over; a later change to it restarts the service on the next run of this script"
 fi
 if [ "$want_dropin" != "$have_dropin" ]; then
     if [ -n "$want_dropin" ]; then
@@ -175,15 +191,28 @@ if [ "$want_dropin" != "$have_dropin" ]; then
 fi
 
 # --- 4: the service ----------------------------------------------------------------------------------------------------------
+# The conf is read when the service starts. If it is not the one the service was last started with, restart. The stamp is
+# written only after a restart that worked, so a failed one is tried again by the next run.
+restart_conf=0
+if conf_changed; then restart_conf=1; fi
 if [ -z "$NO_SYSTEM" ]; then
-    if [ "${#changed_files[@]}" -gt 0 ] || ! systemctl is-enabled --quiet gatbox-archive 2>/dev/null; then
+    if [ "${#changed_files[@]}" -gt 0 ] || [ "$restart_conf" = 1 ] || ! systemctl is-enabled --quiet gatbox-archive 2>/dev/null; then
         systemctl daemon-reload
         systemctl enable gatbox-archive >/dev/null 2>&1 || true
-        systemctl restart gatbox-archive && log "gatbox-archive (re)started"
+        if systemctl restart gatbox-archive; then
+            stamp_conf
+            if [ "$restart_conf" = 1 ]; then log "gatbox-archive (re)started: archive.conf changed"; else log "gatbox-archive (re)started"; fi
+        else
+            log "!! gatbox-archive did not restart: journalctl -u gatbox-archive"
+        fi
     fi
     systemctl is-active --quiet gatbox-archive && log "gatbox-archive is running on ${ARCHIVE_TUNNEL_BIND:-127.0.0.1:8080}" \
         || log "gatbox-archive is NOT running: journalctl -u gatbox-archive"
+elif [ "$restart_conf" = 1 ]; then
+    stamp_conf                    # a test run has no service: take the conf as the one it started with
 fi
 
-if [ "${#changed_files[@]}" = 0 ] && [ "$fonts_fetched" = 0 ] && [ -f "$PREFIX$CONF" ]; then echo "archive: nothing to change"; fi
+if [ "${#changed_files[@]}" = 0 ] && [ "$fonts_fetched" = 0 ] && [ "$restart_conf" = 0 ] && [ -f "$PREFIX$CONF" ]; then
+    echo "archive: nothing to change"
+fi
 echo "Next: archive/RUNBOOK.md (the Cloudflare tunnel and Access, the tokens)."

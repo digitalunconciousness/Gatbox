@@ -89,7 +89,7 @@ curl -s http://127.0.0.1:8080/api/v1/health
 ```
 
 Open `/etc/gatbox-archive/archive.conf` and set `ARCHIVE_PEOPLE` to your email and your partner's, comma-separated. It is a
-second lock behind Cloudflare Access: only these addresses get pages and can edit. Then `systemctl restart gatbox-archive`.
+second lock behind Cloudflare Access: only these addresses get pages and can edit. Then run `bash archive/install.sh` again, which restarts the service because the file changed.
 
 ## 3. The Access application (Cloudflare dashboard)
 
@@ -341,19 +341,19 @@ ARCHIVE_PRIVATE_ALLOW=<NETWORK>/<PREFIX>
 
 `ARCHIVE_PRIVATE_ALLOW` takes **one** network, not a list: `install.sh` strips the spaces from the line, so two addresses
 would be glued into one that means nothing. If the two apps are on different networks, use one network that contains both.
-Then apply it, and **restart the service**: the listener's address is read when the service starts. `install.sh` restarts
-the service only when one of its own files changed, and the one file that follows `archive.conf` is the drop-in made from
-`ARCHIVE_PRIVATE_ALLOW`. A change to anything else in `archive.conf`, the bind address included, isn't picked up until you
-restart.
+Then apply it. The service reads `archive.conf` only when it starts, so `install.sh` restarts it whenever the file has
+changed since the service was last started (it keeps a checksum of the file in `/var/lib/gatbox-archive/conf.sha256`).
+`bash archive/install.sh --check` lists that restart before you do it. The first run after you update to this version
+restarts the service once, because there is no checksum yet.
 
 ```bash
 cd ~/Gatbox && git pull && bash archive/install.sh
-systemctl restart gatbox-archive
 journalctl -u gatbox-archive -n 3 --no-pager | grep -i listener
 ```
 
 The last line must end `private listener <CONTAINER_IP>:8081`. If it doesn't, the `ARCHIVE_PRIVATE_BIND` line isn't being
-read: look for a typo, a space around the `=`, or a `#` in front.
+read: look for a typo, a space around the `=`, or a `#` in front. If the script said the restart failed, the journal says
+why.
 
 Then, **from each app's host** (not from the container), try a reader token. `read -rsp` shows a prompt but not what you
 paste, and `--max-time` stops it hanging:
@@ -363,8 +363,8 @@ read -rsp "reader token: " T; echo
 curl -sS --max-time 10 -H "Authorization: Bearer $T" "http://<CONTAINER_IP>:8081/api/v1/library/changes?since=0&limit=1" | head -c 300; echo; unset T
 ```
 
-JSON starting `{"records"` means it works. `Connection refused` means nothing listens there (the restart above, or the bind
-address). A timeout means the packets are dropped: `ARCHIVE_PRIVATE_ALLOW` doesn't cover that host, or a firewall sits between
+JSON starting `{"records"` means it works. `Connection refused` means nothing listens there (`install.sh` didn't run after the edit, or
+the bind address is wrong). A timeout means the packets are dropped: `ARCHIVE_PRIVATE_ALLOW` doesn't cover that host, or a firewall sits between
 the two. A JSON error about the token means the route is fine and the token is wrong or revoked.
 
 ## 6. The deck
@@ -464,5 +464,5 @@ Replace `widget-wars` with your key. `0 records` means the archive has nothing u
 | `/` answers `401` to someone who isn't signed in | Access doesn't cover that path; the pages would trust a forged header. Fix the application's destination now (step 4) |
 | An app's pull says `changed=0 … ok=True` | Nothing is keyed in that app, or the key isn't in the archive; the pull made no request (step 7) |
 | A `curl` to `:8081` prints nothing for a long time | You are at a hidden `read -rs` prompt: paste the token and press Enter. Use `read -rsp` and `--max-time 10` (step 5) |
-| `curl` to `:8081` says `Connection refused` / times out | No listener (restart the service) / `ARCHIVE_PRIVATE_ALLOW` or a firewall drops the packets (step 5) |
+| `curl` to `:8081` says `Connection refused` / times out | No listener (check the startup line in the journal, and that `install.sh` ran after the edit) / `ARCHIVE_PRIVATE_ALLOW` or a firewall drops the packets (step 5) |
 | `deploy.sh` stops in the preflight with `<text>: command not found` | A line of the app's `.env` isn't `KEY=value`; a token landed on a line of its own (step 7) |

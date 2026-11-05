@@ -601,6 +601,38 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         comments) in `.claude/skills/`, in all three repos (`docs/antislop/PROVENANCE.md`: the upstream commit,
         and the two changes: no `allowed-tools`, no MCP server). `DESIGN.md` is the owner's direction: the deck's
         Synthwave is deliberate. RULES.md §5: the mode is during. `test-antislop.sh` (12).
+- **Phase C, dumps and burns go to their world (branches `phase-c-roms` here and in cabcrawl, `phase/12-roms` in the
+  Tech Tracker, from 2026-11-03):** spec `docs/plans/2026-11-03-phase-c-roms.md` (its "As built" says where the build
+  differs), approved by the owner ("OK as written"). Repo-only: nothing installed changes, and **until a hub lists
+  `roms` in its health the deck sends nothing new**: deploy the two apps first, then run the bootstrap here.
+  - [x] C1, the contract: capability `roms`, the files calls (begin, 8 MiB parts, finish, read; 32 MiB a file), `rom_dump`
+        and `burn` with their uid rules, and a read-back of a machine's dumps and burns. Ten new examples (a 32-byte
+        invented image as hex), `CHECKSUMS`, and the same vendored copy in both apps. `test-contract.sh` 28 (the uids
+        and hashes are reproduced from the examples; each check broken on purpose six ways fails)
+  - [x] C2, the Tech Tracker (PostgreSQL): `rom_file`, `rom_dump`, `rom_burn` (migration 0026, grants SELECT and
+        INSERT only, not audited), the files calls over its content-addressed store, both items with every refusal, the
+        asset and job pages, login-only downloads, the read-back. `tests/test_roms.py` 35, and the three tests that
+        named the old head, health or the audited list updated
+  - [x] C3, cabcrawl (SQLite, and the migration round trip): `rom_file`, `rom_dump`, `rom_burn` (`e5f6a7b8c9d0`, in
+        `scripts/check_schema.py`), images in `uploads/rom_files/` (no unit edit, already in the uploads backup), health
+        with `app` and `capabilities`, the machine and order pages, operator-and-up downloads, the device allow-list
+        honoured on every call. `tests/test_roms.py` 37
+  - [x] C4, sending: gatbox-web's loopback-only `/api/sync/dumps`, `/api/sync/burns`, `/api/sync/image` (a request
+        from 127.0.0.2 is 403); gatbox-sync uploads the image and then posts the item to the hub whose roster has the
+        machine (the same routing and `guard()` as a session), resumes a cut-off upload, parks a refusal, holds a dump
+        with no machine, an image over 32 MiB and a file that no longer matches its sidecar. Per-hub `roms.json` and one
+        `roms-status.json`. `test-sync-roms.sh` 32, `test-romsync.sh` 54, `test-sync.sh` 137 unchanged
+  - [x] C5, the 7": SENT TO <hub>, WAITING, HELD or REFUSED (with the reason) beside each dump and burn on MACHINE, a
+        Burns list there, and a count on SYSTEM's hub tile (screenshot `14b`, `19`)
+  - [x] C6, FOR ORDER on DUMP and BURN: the machine's one open order preselected (a tap clears it, several are a pick),
+        refused by gatbox-web unless it's open for the machine as of the last sync; it reaches the sidecar and the
+        burn line. A chip read again is "already archived" and can't be linked to a new order: the result says so.
+        `test-dump.sh` 72, `test-dash.sh` 132
+  - [x] C7, the read-back: built with C2 and C3, one route each way in both apps (`GET /machines/<slug>/dumps`,
+        `GET /files/<sha256>` with Range). The deck's side of a rebuild is D's
+  - [ ] ⏸ Owner: merge the apps (each deploy runs its migration: three tables), then this repo and the bootstrap's usual
+        run (one new MANIFEST line, `romsync.py`; no unit, udev or `/etc` change). Then a real dump: the 7" should go
+        from WAITING to SENT TO <hub> within two minutes
 - In a cabinet with no known Wi-Fi, the hotspot comes up ~90 s after boot: join **GATBOX**,
   Pi at `10.42.0.1` / `gatbox.local`. Since 2026-10-05 it also drops again by itself when a
   saved network comes back into range, and there are three ways to join a new one — see

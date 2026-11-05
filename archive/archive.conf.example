@@ -1,0 +1,28 @@
+# gatbox-archive's settings: the unit reads this file (EnvironmentFile). Copied to /etc/gatbox-archive/archive.conf by
+# install.sh the first time, and never overwritten after that. There are no secrets in it: tokens live in the data
+# directory, hashed (gatbox-archive token add ...).
+
+# The data: library.sqlite, the files, the tokens. Its own mount point, included in the Proxmox backups.
+ARCHIVE_DATA=/srv/archive
+
+# Where cloudflared delivers what has passed Cloudflare Access. Keep it on localhost: only here is the Access identity
+# trusted, so nothing but cloudflared may be able to reach it.
+ARCHIVE_TUNNEL_BIND=127.0.0.1:8080
+
+# Optional: the apps' pull jobs, on this container's private address (reader tokens only, read-only). Empty = tunnel only.
+# ARCHIVE_PRIVATE_ALLOW is the network they come from (a CIDR): install.sh turns it into the unit's IPAddressAllow.
+ARCHIVE_PRIVATE_BIND=
+ARCHIVE_PRIVATE_ALLOW=
+
+# A second lock behind Access: the emails allowed to use the pages (comma-separated). Empty = whoever Access lets in.
+ARCHIVE_PEOPLE=
+
+# The header that carries who is signed in. Cloudflare Access sends its JWT in Cf-Access-Jwt-Assertion (its docs, checked
+# 2026-11-04) and the archive reads the email claim from it. A header holding a bare address works too.
+ARCHIVE_IDENTITY_HEADER=Cf-Access-Jwt-Assertion
+
+# The largest file taken, in bytes (400 MB, the deck's own fetch limit).
+ARCHIVE_MAX_FILE=419430400
+
+# The pages' stylesheet, script and fonts (install.sh puts them here).
+ARCHIVE_STATIC=/usr/local/share/gatbox-archive/static

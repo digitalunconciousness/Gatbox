@@ -8,6 +8,8 @@ Wants=network-online.target
 # when hub.conf has something in it (tmpfiles leaves it empty) or hubs.d holds a file.
 ConditionFileNotEmpty=|/etc/gatbox/hub.conf
 ConditionDirectoryNotEmpty=|/etc/gatbox/hubs.d
+# ... or when the deck has an archive to sync its library with (archive.conf, empty by default).
+ConditionFileNotEmpty=|/etc/gatbox/archive.conf
 
 [Service]
 Type=oneshot
@@ -18,6 +20,9 @@ LoadCredential=hub:/etc/gatbox/hub.conf
 # Every other hub, one file each: a directory loads as one credential per file, named
 # hubs_<file>. tmpfiles makes sure both paths exist -- a missing one is fatal to the unit.
 LoadCredential=hubs:/etc/gatbox/hubs.d
+# The archive's address and the deck's device token for it (and Cloudflare's service token pair), the library step's.
+# tmpfiles makes it, empty, like hub.conf: a missing one would be fatal to the unit.
+LoadCredential=archive:/etc/gatbox/archive.conf
 # A real user (sysusers.d), not DynamicUser. This job needs no log directory, no /dev and no
 # matplotlib -- which is the whole reason it talks HTTP instead of importing gatboxweb -- but
 # a DynamicUser's StateDirectory is /var/lib/private/<name> at 0700, and gatbox-web is a

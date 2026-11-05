@@ -70,7 +70,7 @@ The bootstrap's MANIFEST maps repo files to installed paths. `--check` (no root)
   MACHINE "ROM chips (MAME)" and DUMP "WHICH CHIP?" tick chips whose SHA-1 is in the dump archive (`/api/mame/<slug>`).
 - Manuals: `gatbox-manuals fetch|list` (run as the owner, group gatbox-manuals) downloads each machine's documents
   from `data/gatbox-manuals.json` (git-ignored; https from the manual archives only; sha256 pinned) into
-  `/srv/gatbox/manuals/<slug>/` (PDF + .json sidecar + .txt; never in git). The dashboard's MANUALS tab: the documents
+  `/srv/gatbox/manuals/<slug>/` (PDF + .json sidecar + .txt; never in git). The dashboard's LIBRARY tab (it was MANUALS): the documents
   (page images from `pdftoppm`, search, phone uploads) and the spec sheet: the manual's rail limits with page and words
   → CONFIRM (only then the logger's window) and actual values from the field beside them (own window optional). Spec
   layers in `profiles.machine_specs()`: specs file < confirmed (`machine-specs-confirmed.json`) < actual window
@@ -170,7 +170,9 @@ the bridge passes through) come from Task 0's output, never from a guess.
 use; 5 (network: three ways onto a new Wi-Fi, hotspot recovery) and 6 (orders from the bench)
 merged 2026-10-06. The contract both sides share is `docs/contract/v1/`, vendored from the
 tracker and checksum-tested in both repos. `gatbox-sync` pushes finished sessions, orders and
-session tags on a 2-minute timer and caches the roster and open orders for the 7″.
+session tags on a 2-minute timer and caches the roster and open orders for the 7″. From phase C (built 2026-11-03, not
+installed: `docs/plans/2026-11-03-phase-c-roms.md`) it also sends each dump and burn, image first, to the hub whose roster
+has the machine, and the 7″ says where each one stands (SENT / WAITING / HELD / REFUSED).
 Phase 6 installed on the Pi and the tracker side deployed 2026-10-07; both bench exits passed
 on hardware that day — a real join from the Wi-Fi card, and an order typed on the 7″ reaching
 the work queue with its trace attached.
@@ -178,3 +180,24 @@ the work queue with its trace attached.
 beside `hub.conf`, routing by roster, per-hub state under `/var/lib/gatbox-sync/hubs/<name>/`,
 `model_key`, the capability-gated JOB card and `phase`. Design: `docs/plans/2026-10-13-phase8-multi-hub.md`.
 A second hub is live in `hubs.d`; one session each went to its own hub only.
+
+**Phase B (the library on the deck), built 2026-11-03 on `phase-b-library`, not installed:** one SQLite file of games,
+documents, MAME sets, ROM lists, ROM images and rail limits (`backend/gatboxlib/library.py`, format and vectors in
+`docs/contract/library-v1/`), seeded from the roster and manuals by `gatbox-library seed --plan|--apply` (the plan is
+read by the owner first). The logger never opens it: gatbox-web exports the confirmed limits to `library-specs.json`.
+LIBRARY replaces MANUALS on the 7" (games, MISSING, ADD/EDIT, title search over MAME's list, CHECK with known-good marks,
+FIND A MANUAL through a spool job). An unseeded deck behaves as before. Spec `docs/plans/2026-11-03-phase-b-library.md`;
+the install diff she has not seen yet is in BRINGUP.md.
+
+**Phase D (the archive), D1 to D7 built 2026-11-04 on `phase-d-archive` (stacked on `phase-b-library`), not installed:**
+`archive/` is a stdlib server in its own Debian 13 container (the deck's own `library.py` plus a content-addressed file
+store, `backend/gatboxlib/filestore.py`), reached through a Cloudflare tunnel with Access in front, with phone pages for
+her partner (games, manuals and a PDF viewer, limits that arrive unconfirmed, facts, upload, add and edit). `gatbox-sync` syncs
+the deck's library with it both ways (`gatboxlib/libsync.py`: a conflict writes nothing and waits side by side on the 7" under
+LIBRARY → CONFLICTS; manuals and dump images go up as files), and gatbox-web gains loopback-only `/api/library/sync/*`. The
+apps' side is built too: cabcrawl (`phase-d-library`) and the Tech Tracker (`phase/13-library`) each keep a **read-only copy**
+of the games their machines name, read every ten minutes with a reader token (`models=` for their own keys, replace, tombstones,
+manuals in 8 MiB parts that resume, a restored archive re-read from 0), and show the game's manual, limits and facts on the
+machine / asset page. The format they read is `docs/contract/library-v1/read/`, vendored byte-identical into both with drift
+tests (this repo's `test-archive-read.py` makes the real archive reproduce every example; their stubs start from the same
+files). Her steps are `archive/RUNBOOK.md` and each app's RUNBOOK. Spec `docs/plans/2026-11-04-phase-d-archive.md`.

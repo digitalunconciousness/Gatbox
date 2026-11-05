@@ -23,7 +23,7 @@ import subprocess
 import threading
 import time
 
-from . import config, hubs
+from . import config, games, hubs
 from .live import LIVE
 
 CACHE_S = 2.0
@@ -228,6 +228,7 @@ SYNC_STATE = hubs.SYNC_STATE
 def _hub_line(st):
     return {"ok": st.get("ok"), "url": st.get("hub"), "at": st.get("at"),
             "queued": st.get("queued"), "sent_total": st.get("sent_total"),
+            "roms_waiting": st.get("roms_waiting"), "roms_parked": st.get("roms_parked"),
             "error": st.get("error"),
             "last": {"created": st.get("last_created"),
                      "duplicate": st.get("last_duplicate"),
@@ -283,7 +284,7 @@ def snapshot():
             "undervoltage_now": (_read(os.path.join(vm, "in0_lcrit_alarm")) == "1") if vm else None,
             "ext5v_v": _vc_volts("EXT5V_V"),
             "disk": disk(), "network": network(), "clock": clock(), "kiosk": kiosk(procs),
-            "logger": logger(procs), "versions": versions(), "hub": hub(),
+            "logger": logger(procs), "versions": versions(), "hub": hub(), "library": games.storage(),
         }
         out["errors"] = dict(_errors)
         _cache[:] = [time.monotonic(), out]

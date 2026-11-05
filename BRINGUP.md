@@ -613,7 +613,195 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         has no READ, WRITE or hold. The READ and WRITE screens say to run the Pi from its wall supply, not the cabinet's
         12 V buck (§1 row 10), and the checklist's 5 V line shows the machine's last saved reading with SAVE READING
         (§1 row 9). `test-disk.sh` 93, `test-dash.sh` 150 (DISK: 23, against `tests/fakedisk.py`; screenshots 23a–23i, 24)
-  - [ ] Task 7: CLAUDE.md (hard rule 6 as §5 words it, Owned, installed list), a journal entry
+  - [x] Task 7: CLAUDE.md (hard rule 6 as §5 words it, Owned, installed list), a journal entry
+- **Phase B, the library on the deck (branch `phase-b-library`, from 2026-11-03):** spec
+  `docs/plans/2026-11-03-phase-b-library.md`, approved by the owner (LIBRARY replaces MANUALS on the 7"). Repo-only
+  until she says: nothing installed changes.
+  - [x] B1, the store: `backend/gatboxlib/library.py` (SQLite, revisions, canonical hashes, compare-and-set, the
+        feed and the digest, `model_key`, the confirmed rule) and `docs/contract/library-v1/` (README + vectors).
+        `test-library.sh` 59; each of 17 guards broken on purpose fails a test (the 18th is equivalent). The ROM list
+        keeps year, maker, regions, BIOS and disks (what the chip list shows), and `bulk` writes many records in one
+        transaction
+  - [x] B2, the seed: `tools/gatbox-library seed --plan` (read-only; a plan to your home, never git; it flags slugs that
+        look like one game, ids it had to change, an http address, a confirmed limit nothing matches), `seed --apply`
+        (one transaction; what's there is kept, a deleted record stays deleted, so a second run changes nothing),
+        `import --kind manuals|mame-sets|specs FILE` (edits; never confirms or unconfirms a limit), `status`.
+        `test-seed.sh` 38 on an invented deck; 19 of 20 guards broken on purpose fail a test (the 20th is equivalent)
+  - [x] B3, the readers: once the deck is seeded, `gatboxlib/libview.py` builds today's data shapes (the manuals list,
+        the CONFIRMed state, the specs file's limits, mame-roms.json) from the library, and `manuals.py`, `mame.py` and
+        `roster.library` read those instead of the files, which stay the fallback for a machine the seed left out. With
+        no library file nothing changes. CONFIRM / UNCONFIRM write the library, and gatbox-web keeps `library-specs.json`
+        (the confirmed limits, flat) in its state dir: that file replaces the specs-file and confirmed-state layers in
+        `profiles.machine_specs`, so the logger never opens SQLite. A damaged export, or no library, falls back to the
+        files. Two cabinets seeded as one game share their manuals (files stay in each cabinet's folder), limits and ROM
+        list; a retired game's machines read its survivor. The seed now flags a limit confirmed at other numbers than the
+        list has (the logger would stop using it). `test-library-web.sh` 31 (the same answers before and after a seed,
+        CONFIRM through the library to the logger, an outside change within seconds, the fallbacks, the merge), 21 of 22
+        guards broken on purpose fail a test (the 22nd is equivalent); the web-api, manuals, mame, roster, raillog,
+        report and sync suites pass unchanged
+  - [x] B4, the LIBRARY view (it replaces MANUALS: nav, `#v-library`; the machine-keyed spec sheet and documents are
+        inside it). `GET /api/library` (every game with what the library holds and whether it's missing a manual, and
+        why), `/api/library/key` (the key a title would get), `POST /api/library/games` (ADD GAME) and `PUT
+        /api/library/games/<key>` (EDIT: title, maker, year, notes; compare-and-set on `rev`, the key never changes),
+        both the Pi's own screen only (L5). The manuals API takes a game's key as well as a machine's slug, so a game no
+        roster machine is has documents and a spec sheet; actual values stay per machine. On the 7": ALL GAMES, MISSING,
+        + ADD GAME (title, kind, maker, year, then the permanent key shown before saving), EDIT GAME; a phone reads. With
+        no library the tab is each machine's manuals as before and says the library isn't set up. `test-library-web.sh`
+        44, `test-dash.sh` 137 (LIBRARY seeded: 11; screenshots 25a–25e, 26); 18 of 21 new guards broken on purpose
+        fail a test (two of the three that didn't got tests, the third is equivalent)
+  - [x] B7, SYSTEM's Library tile: games and how many are missing a manual, documents on the Pi of those listed,
+        limits confirmed of all, ROM images, the size on the Pi (manuals, ROM images, the database) and the room on
+        /srv, with LOW (under 2 GB free, or 90% used) in red. It's there before the library is set up too: the manuals'
+        size and the room are true either way. `/api/system` carries `library`
+  - [x] B6, CHECK and the known-good marks. `GET /api/library/check?image=<machine>/<file>.bin` compares one archived
+        dump four ways, each as a word, a level and an explanation: MAME's own answer (MATCH / NO MATCH / NOT
+        IDENTIFIED), the game's chips from the library's ROM list (RIGHT CHIP / ANOTHER REVISION / NOT THIS GAME / NOT
+        LISTED), her images (KNOWN GOOD / KNOWN BAD / SEEN BEFORE / NEVER SEEN) and this machine's earlier dumps of
+        the chip (SAME AS LAST TIME / CHANGED / FIRST DUMP). It reads and sends nothing, and works before the library
+        is set up (minus the game's chips and the marks). `POST /api/library/images/<sha256>/mark` sets known good /
+        bad / unmarked with a note (the Pi's own screen only). gatbox-web adopts every archived dump into the library
+        as a `rom_image` within seconds and never changes one that's there, a mark included; a sidecar missing its size,
+        CRC or SHA-1 has them read from the file. On the 7": CHECK ▸ on the DUMP result and list and on each ROM chip
+        that has a dump, the marks inside the sheet, and a "ROM images" card on each game in LIBRARY. A phone reads.
+        `test-library-web.sh` 64, `test-dash.sh` 143 (screenshots 27a–27c, 28), `test-seed.sh` 40; 16 of 16 guards broken
+        on purpose fail a test
+  - [x] B5, the title search and linking a machine to a game. `gatbox-mame-roms --titles OUT` writes MAME's own game list
+        (set, description, year, maker, parent; no devices, no BIOS sets) once per MAME version, and the bootstrap
+        builds it like the chip list (shown in `--check`). `GET /api/library/titles?q=` searches it offline: every word
+        must match, the exact title first, parents before clones; each hit carries the key a new game would get and the
+        game in the library that already is it. `POST /api/library/games` takes a `mame_set` (noted for a dump to settle);
+        `POST /api/library/games/<key>/machines {slug}` links a machine on this Pi's roster to a game (409 if it already
+        has another, unless `replace`), and `DELETE .../machines/<slug>` undoes it; both refresh the logger's limits and
+        are the Pi's own screen only. On the 7": a machine with no game says so and offers FIND GAME (MAME) (type a
+        title, pick the hit, ADD IT AND USE IT); ALL GAMES offers USE IT FOR <machine>; ADD GAME offers it too.
+        `test-library-web.sh` 78, `test-dash.sh` 147 (screenshots 29a–29d); 17 of 17 guards broken on purpose fail a
+        test. **Not done:** a game added after the seed has its MAME set noted but no chip list until MAME's list is
+        built from the library's games too (the chip list is still built from `gatbox-mame-sets.json`): the CHECK says
+        "NO CHIP LIST" until then
+  - [x] B8, manuals on request: FIND A MANUAL on a game with no manual (the 7" only). It types the game's title into
+        the keypad, asks archive.org for texts with every word in their title (most downloaded first), lists the PDFs
+        in the item you pick (biggest first), asks what kind it is, and downloads it into the game's folder. gatbox-web
+        never goes online: it writes `request.json` to `/var/spool/gatbox-manuals` and a separate job (`gatbox-manuals
+        --job`, its own user, the same host rules as `gatbox-manuals fetch`: https from archive.org, a real PDF only)
+        answers in `status.json`, which gatbox-web relays to the screen; a finished download becomes the game's
+        `document` in the library (hash, pages, bytes) and the game stops being MISSING. One job at a time (409
+        otherwise); a request or claim older than 30 minutes, left by a dead job, is cleared. Without the job
+        installed there's no spool and every request says so (503); an unseeded deck answers 409. `test-library-web.sh`
+        93 (a fake archive.org on loopback and a runner standing in for the path unit), `test-dash.sh` 151 (screenshots
+        30a–30d); each guard broken on purpose fails a test. The real archive.org's search and item listing were read
+        once to confirm the shapes; no download was made from here. The unit files `backend/gatbox-manuals.path` and
+        `.service` are in the repo marked NOT INSTALLED: the bootstrap doesn't touch them yet
+  - [ ] ⏸ Install diff, shown first (not made yet; nothing here is installed). One review, in this order:
+        1. `bootstrap/files/sysusers-gatbox.conf`: `u gatbox-fetch - "GATBOX manuals job" /nonexistent /usr/sbin/nologin`
+           and `m gatbox-fetch gatbox-manuals` (the manuals folder is group gatbox-manuals, setgid)
+        2. `bootstrap/files/tmpfiles-gatbox.conf`: `d /var/spool/gatbox-manuals 2770 gatbox-fetch gatbox-fetch -` (the
+           job's spool) and `d /srv/gatbox/library 2775 root gatbox-manuals -` (the library's folder: SQLite needs the
+           directory writable for its -wal and -shm files). **The library's folder is in the bootstrap since 2026-11-05**, with
+           `ReadWritePaths=-/srv/gatbox/library` in `gatbox-web.service` (item 3): `seed --apply` on the Pi stopped with
+           "Permission denied" because nothing made the folder, and the 7" could not have saved a game either
+        3. `gatbox-web.service`: `SupplementaryGroups=gatbox-fetch` and `ReadWritePaths=-/var/spool/gatbox-manuals`
+           (it writes a request and reads the answer, nothing else), and `ReadWritePaths=-/srv/gatbox/library`
+        4. New units `gatbox-manuals.path` (PathExists the request) and `gatbox-manuals.service` (oneshot as
+           `gatbox-fetch`, 20 minute timeout, ProtectSystem=strict, writes only the manuals folder and its spool, no
+           devices, no capabilities, AF_INET/INET6/UNIX only). It has no address filter: it must reach the internet,
+           and the Pi's DNS path isn't recorded, so which hosts it may fetch from is the tool's own allowlist
+        5. The MANIFEST lines already in the bootstrap: `library.py`, `libview.py`, `seed.py`, `libsource.py`,
+           `games.py`, `rom_check.py`, `titles.py`, `manual_request.py`, `gatbox-library`, and the title list build
+           (`/usr/local/share/gatbox/mame-titles.json`, from `mame -listxml` once per MAME version)
+  - [ ] ⏸ Owner: review the seed plan after B2; see the install diff before anything is installed
+- **Phase D, the archive (branch `phase-d-archive`, stacked on `phase-b-library`, from 2026-11-04):** spec
+  `docs/plans/2026-11-04-phase-d-archive.md`, approved by the owner ("OK as written"; it covers the code and the push,
+  merging, installing and everything on Proxmox and Cloudflare stay hers). Repo-only: nothing installed on the deck
+  changes, and nothing is installed anywhere until she runs `archive/RUNBOOK.md`. D1 to D3 go to her as a unit (with a
+  dry run on her real library) before D4 on.
+  - [x] D1, the server (`archive/`): stdlib, over the deck's own `gatboxlib/library.py` and a new content-addressed
+        file store (`gatboxlib/filestore.py`, resumable 8 MiB parts, one implementation for the archive and the deck's
+        loopback calls). `GET /api/v1/library/changes|digest`, `PUT /api/v1/library/records` (up to 100 compare-and-set
+        writes), phase C's file calls (begin, parts, finish, read with Range; 400 MB). Tokens `gbx_<id>.<secret>`
+        (scrypt-hashed, mode 600) for the deck (device) and one per app (reader: `models=` filter, manuals only, never a
+        ROM image, no writes). Two listeners: the tunnel one (localhost) takes people through Cloudflare Access, and the
+        private one (optional) takes reader tokens only. The unit is sandboxed (`IPAddressDeny=any`, `ProtectSystem=strict`).
+        `archive/install.sh` is idempotent, refuses a data directory that isn't a mount point, and works offline once
+        installed. `test-archive.sh` 96, `test-archive-install.sh` 29
+  - [x] D2, the pages (phone-first, Synthwave): games and search, a game (documents, rail limits, facts, MAME set and
+        ROM list, dumped images and their verdicts), the PDF viewer (page images by `pdftoppm`, cached), upload a PDF,
+        add a game (the key shown before saving), edit game / document / fact / limit with the revision the form was
+        opened at: a disagreement shows both versions and keeps what was typed. A limit added there arrives unconfirmed
+        and CONFIRM stays on the 7". Forms carry an HMAC CSRF field; the CSP allows only the archive's own script, style
+        and fonts. `test-archive-pages.sh` 84, `test-archive-layout.sh` 304 (headless Chromium: no sideways scroll at 195,
+        320, 390, 768 and 1280 px, every control at least 44 px, no CSP violation, the pinned fonts load, a visible focus
+        ring); screenshots of every page at every width were read
+  - [x] Cloudflare facts read from its documentation on 2026-11-04 (the RUNBOOK uses them): Access sends its token in
+        `Cf-Access-Jwt-Assertion` and the docs name **no** `Cf-Access-Authenticated-User-Email` header, so the archive
+        reads the JWT's `email` claim (unverified: only the tunnel can reach that port, which the RUNBOOK makes a rule); a
+        service token's JWT has no email; a service token is sent as `CF-Access-Client-Id` / `CF-Access-Client-Secret`,
+        expires on the duration chosen and must be refreshed; create the Access application before the tunnel route
+  - [x] D3, the deck's two-way sync (built 2026-11-04, not installed). `gatboxlib/libsync.py` is the merge: per record the
+        deck's, the archive's and the last agreed state decide push, pull, agreed or CONFLICT (both changed it, an edit against
+        a removal, two versions with no history): a conflict writes nothing on either side and is kept, with both versions
+        and what they started from, in `state/library/conflicts.json` for the 7". Every write is a compare-and-set against
+        the revision the run saw, so a record that moved meanwhile is judged again next run and never forced; a refused
+        write stays pending. State thrown away, a rebuilt deck or an archive restored from an older backup (a library's
+        `head` going down) means "compare both from the start": identical records agree, differing ones are conflicts.
+        `gatbox-sync` runs it after the hubs when `/etc/gatbox/archive.conf` has an address and a device token (and the
+        Cloudflare service token pair); with none, nothing changes. `GATBOX_SYNC_DRYRUN=1` prints the plan and writes
+        nothing. The archive refusing the token (revoked, or the Access service token expired) is exit 1; out of reach is
+        not. Manuals go both ways by their SHA-256 in 8 MiB parts, resumable: gatbox-web's new loopback-only
+        `/api/library/sync/*` (`gatboxweb/libsync_api.py`) is the sync's only door into the deck, so the sync never writes
+        `/srv/gatbox/manuals` and never opens the library. A manual that comes down is placed in its game's folder with the
+        sidecar an upload makes and never over a file that's there. A limit the partner changed arrives unconfirmed and the
+        logger's export drops it at once. `status.json` has a `library` block (pending, conflicts, `identical` by a
+        revision-free content digest). `test-libsync.sh` 48, `test-sync-library.sh` 39 (real archive, real gatbox-web,
+        real gatbox-sync), `test-library.sh` 61, `test-sync.sh` 137 unchanged; 22 of 22 guards broken on purpose fail a test (four first went uncaught and got tests)
+  - [ ] ⏸ Owner: the D3 install diff (system config, rule 5; nothing is applied until she says). In `bootstrap/gatbox-bootstrap.sh`'s
+        MANIFEST: `gatboxlib/filestore.py`, `gatboxlib/libsync.py`, `gatboxweb/libsync_api.py` (gatbox-web restarts when it
+        installs them). In `bootstrap/files/tmpfiles-gatbox.conf`: `f /etc/gatbox/archive.conf 0600 root root -` (empty, like
+        hub.conf, because a missing credential file fails the unit). In `backend/gatbox-sync.service`:
+        `ConditionFileNotEmpty=|/etc/gatbox/archive.conf` (the job also runs when only an archive is set up) and
+        `LoadCredential=archive:/etc/gatbox/archive.conf`. `bash bootstrap/gatbox-bootstrap.sh --check` lists exactly these
+  - [ ] ⏸ Owner: run `archive/RUNBOOK.md` when D3 is shown and she wants it
+  - [x] D4, on the 7" and the rest of the deck's side (built 2026-11-04, not installed). **LIBRARY → CONFLICTS**: each conflict
+        the sync kept (`state/library/conflicts.json`) as BEFORE / THIS DECK / THE ARCHIVE, the fields that differ lit and each
+        side's change named in words too (CHANGED), a removal said as one (THE ARCHIVE REMOVED IT), the deck side as the library
+        holds it now. KEEP THIS DECK'S / KEEP THE ARCHIVE'S, and for a game EDIT THIS DECK'S (maker, title, year, notes) first.
+        A choice is a note (`library-resolutions.json`, the Pi's own screen only) that the sync reads over loopback and applies
+        on its next run **only if both sides still hold the states she was shown**; it is judged on that run's own plan, so a
+        game she just EDITed is judged as edited. A **CONFLICT** badge sits on the game's header, in ALL GAMES and in the bar
+        (CONFLICTS (n)). **SYSTEM's Library tile** gains the archive's half: how the last sync went (the token being refused is
+        said as "a person has to act"), edits waiting to go up, files to send and fetch, conflicts, and whether the two
+        libraries are identical. **Every dump image** is now a `rom_image` record (B6 already) and a file to send: the sync
+        uploads each by SHA-256 beside the manuals; they only go up, and an app's reader token is told there is no such file.
+        **ROM lists for games added after the seed**: gatbox-web asks (a spool request, one at a time, a set not asked again
+        within a day) and `gatbox-mame-roms --job` answers from MAME's driver list, hashes only, no network; gatbox-web makes
+        the game's `rom_list` (create-only). `test-library-web.sh` 121, `test-libsync.sh` 50, `test-sync-library.sh` 42,
+        `test-mame.sh` 37, `test-dash.sh` 164 (needs matplotlib: run here in a venv; screenshots 31a-31f, 32a-32b); 15 of 15 guards broken on purpose fail a test (one first went uncaught and got a stricter test)
+  - [ ] ⏸ Owner: the D4 install diff (shown first; the two new units are in the repo marked NOT INSTALLED). 1.
+        `bootstrap/files/sysusers-gatbox.conf`: `g gatbox-mame -` (the chip-list spool's group). 2. `bootstrap/files/tmpfiles-gatbox.conf`:
+        `d /var/spool/gatbox-mame 2770 root gatbox-mame -`. 3. `gatbox-web.service`: `SupplementaryGroups=gatbox-mame` and
+        `ReadWritePaths=-/var/spool/gatbox-mame` (it writes a request and reads the answer, nothing else). 4. New units
+        `gatbox-mame-roms.path` (PathExists the request) and `gatbox-mame-roms.service` (oneshot, DynamicUser, writes only its
+        spool, no network, no devices, no capabilities, 20 minute timeout). 5. MANIFEST lines already made in the bootstrap:
+        `libconflicts.py`, `mame_request.py` (gatbox-web imports them, so they must install with it). Until 1 to 4 are in, a
+        game added after the seed simply has no chip list (SYSTEM says how many, and that the job isn't installed), as before
+  - [x] D5 to D7, the apps' side (built 2026-11-04, nothing installed or deployed; each app on its own branch, stacked on its phase C
+        branch). **The contract:** `docs/contract/library-v1/read/` (README, an example of every request and answer, `manual.pdf`,
+        CHECKSUMS), vendored byte-identical into cabcrawl and the Tech Tracker at `contract/library-v1/` with a checksum test and a
+        sibling-checkout drift test in each. `test-archive-read.py` (19) makes the real archive reproduce every example. **cabcrawl**
+        (`phase-d-library`): `Game.model_key` + `library_record` / `library_state` (Alembic, registered in `check_schema.py`),
+        `scripts/pull_library.py` on a ten-minute timer with a reader token (`models=` its own keys, replace, tombstones, a retired game
+        followed, PDFs in 8 MiB parts that resume, a restored archive re-read from 0), the machine page's "Manual and limits", a Library
+        page for any signed-in role, `scripts/link_model_keys.py` (from the seed plan; dry run first), and the roster carries each
+        machine's key. **Tech Tracker** (`phase/13-library`): the same on PostgreSQL (migration 0027 with `grant_app()` and the
+        expected grants, one-row `library_state`), PDFs in its file store, the asset page's section with "Edit it in the library" for
+        owners and techs. Tests: cabcrawl 69 library tests (whole suite 2027 passed, 1 skipped, 1 failed), Tech Tracker 57 (606 passed, 6 skipped, 1 failed); the one failure in each is the sibling-checkout contract diff;
+        every guard broken on purpose fails a test (two in the Tech Tracker cannot change behaviour). The example manual ships as
+        `examples/manual.pdf.b64`, because the repositories refuse a `.pdf`; the pull never follows a redirect with the token
+  - [ ] ⏸ Owner, per app (read the two unit files first; none is installed): mint a reader token at the archive
+        (`gatbox-archive token add NAME --role reader`), put the archive's address and the token in the app's environment
+        (`LIBRARY_ARCHIVE_URL`, `LIBRARY_ARCHIVE_TOKEN`, and the Access service token pair through the tunnel), deploy the release
+        (cabcrawl's migration adds `game.model_key` and two tables; the Tech Tracker's 0027 adds two), install the timer
+        (cabcrawl: `deploy/RUNBOOK.md`, "the game library"; Tech Tracker: `deploy/RUNBOOK.md` §12), then link the machines
+        (cabcrawl: `link_model_keys.py` with the seed plan; the Tech Tracker's assets already carry `model_key`)
 - **The integration plan, phase A (2026-10-28):** `docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md`,
   approved by the owner. Repo-only on this side (nothing installed changes except the guard above).
   - [x] Contract v1 is GATBOX's now: the README takes the hub's 10-26 additions and writes down the Phase 8 extras
@@ -629,6 +817,38 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         comments) in `.claude/skills/`, in all three repos (`docs/antislop/PROVENANCE.md`: the upstream commit,
         and the two changes: no `allowed-tools`, no MCP server). `DESIGN.md` is the owner's direction: the deck's
         Synthwave is deliberate. RULES.md §5: the mode is during. `test-antislop.sh` (12).
+- **Phase C, dumps and burns go to their world (branches `phase-c-roms` here and in cabcrawl, `phase/12-roms` in the
+  Tech Tracker, from 2026-11-03):** spec `docs/plans/2026-11-03-phase-c-roms.md` (its "As built" says where the build
+  differs), approved by the owner ("OK as written"). Repo-only: nothing installed changes, and **until a hub lists
+  `roms` in its health the deck sends nothing new**: deploy the two apps first, then run the bootstrap here.
+  - [x] C1, the contract: capability `roms`, the files calls (begin, 8 MiB parts, finish, read; 32 MiB a file), `rom_dump`
+        and `burn` with their uid rules, and a read-back of a machine's dumps and burns. Ten new examples (a 32-byte
+        invented image as hex), `CHECKSUMS`, and the same vendored copy in both apps. `test-contract.sh` 28 (the uids
+        and hashes are reproduced from the examples; each check broken on purpose six ways fails)
+  - [x] C2, the Tech Tracker (PostgreSQL): `rom_file`, `rom_dump`, `rom_burn` (migration 0026, grants SELECT and
+        INSERT only, not audited), the files calls over its content-addressed store, both items with every refusal, the
+        asset and job pages, login-only downloads, the read-back. `tests/test_roms.py` 35, and the three tests that
+        named the old head, health or the audited list updated
+  - [x] C3, cabcrawl (SQLite, and the migration round trip): `rom_file`, `rom_dump`, `rom_burn` (`e5f6a7b8c9d0`, in
+        `scripts/check_schema.py`), images in `uploads/rom_files/` (no unit edit, already in the uploads backup), health
+        with `app` and `capabilities`, the machine and order pages, operator-and-up downloads, the device allow-list
+        honoured on every call. `tests/test_roms.py` 37
+  - [x] C4, sending: gatbox-web's loopback-only `/api/sync/dumps`, `/api/sync/burns`, `/api/sync/image` (a request
+        from 127.0.0.2 is 403); gatbox-sync uploads the image and then posts the item to the hub whose roster has the
+        machine (the same routing and `guard()` as a session), resumes a cut-off upload, parks a refusal, holds a dump
+        with no machine, an image over 32 MiB and a file that no longer matches its sidecar. Per-hub `roms.json` and one
+        `roms-status.json`. `test-sync-roms.sh` 32, `test-romsync.sh` 54, `test-sync.sh` 137 unchanged
+  - [x] C5, the 7": SENT TO <hub>, WAITING, HELD or REFUSED (with the reason) beside each dump and burn on MACHINE, a
+        Burns list there, and a count on SYSTEM's hub tile (screenshot `14b`, `19`)
+  - [x] C6, FOR ORDER on DUMP and BURN: the machine's one open order preselected (a tap clears it, several are a pick),
+        refused by gatbox-web unless it's open for the machine as of the last sync; it reaches the sidecar and the
+        burn line. A chip read again is "already archived" and can't be linked to a new order: the result says so.
+        `test-dump.sh` 72, `test-dash.sh` 132
+  - [x] C7, the read-back: built with C2 and C3, one route each way in both apps (`GET /machines/<slug>/dumps`,
+        `GET /files/<sha256>` with Range). The deck's side of a rebuild is D's
+  - [ ] ⏸ Owner: merge the apps (each deploy runs its migration: three tables), then this repo and the bootstrap's usual
+        run (one new MANIFEST line, `romsync.py`; no unit, udev or `/etc` change). Then a real dump: the 7" should go
+        from WAITING to SENT TO <hub> within two minutes
 - In a cabinet with no known Wi-Fi, the hotspot comes up ~90 s after boot: join **GATBOX**,
   Pi at `10.42.0.1` / `gatbox.local`. Since 2026-10-05 it also drops again by itself when a
   saved network comes back into range, and there are three ways to join a new one — see

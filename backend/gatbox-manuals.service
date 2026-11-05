@@ -1,0 +1,31 @@
+# NOT INSTALLED YET: this is the repo copy for review. The bootstrap doesn't install it until the owner has seen the diff
+# (BRINGUP.md, phase B8) and said yes.
+[Unit]
+Description=GATBOX manuals job (the LIBRARY's FIND A MANUAL; gatbox-manuals.path starts it)
+After=network-online.target
+
+[Service]
+# One job per request: `gatbox-manuals --job` claims request.json (renames it to running.json), searches archive.org, lists one
+# item's PDFs or downloads one into /srv/gatbox/manuals/<game>/, and writes status.json for gatbox-web. gatbox-web never goes
+# online itself and never runs this: it only writes the request and reads the answer, then records the file in the library.
+Type=oneshot
+ExecStart=/usr/local/bin/gatbox-manuals --job /var/spool/gatbox-manuals/request.json --status /var/spool/gatbox-manuals/status.json
+TimeoutStartSec=20min
+# Its own narrow identity: it writes the manuals folder (group gatbox-manuals) and its spool, and nothing else. No /dev, no
+# home, no capabilities. It talks to the internet because that is its job, so the address filter isn't used: which hosts it
+# may fetch from is the tool's own allowlist (https from archive.org only, a real PDF only), not this unit's.
+User=gatbox-fetch
+Group=gatbox-fetch
+SupplementaryGroups=gatbox-manuals
+UMask=0002
+Environment=HOME=/tmp
+PrivateDevices=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/gatbox/manuals /var/spool/gatbox-manuals
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ProtectKernelTunables=yes
+ProtectControlGroups=yes

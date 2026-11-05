@@ -25,6 +25,16 @@ What it sends, per contract/v1 (vendored at docs/contract/v1/):
     POST /api/v1/ingest              rail_session items, readings nested
     GET  /api/v1/roster              cached for the dashboard and for slug checks
     GET  /api/v1/machines/<s>/orders cached so the 7" can show what is already reported
+    POST /api/v1/files (+ parts)     a dump's or a burn's image, in 8 MiB parts, before its item (phase C)
+    POST /api/v1/ingest              rom_dump and burn items, to a hub whose health lists "roms"
+
+Dumps and burns (phase C). They come from gatbox-web's loopback-only /api/sync/dumps, /api/sync/burns and
+/api/sync/image, because this job's sandbox has no view of /srv/gatbox/roms. Each goes to the hub whose roster holds its
+machine, by the same routing and the same guard() as a session; the image is uploaded first (a cut-off upload resumes
+from the parts the hub already has), then the item. A hub that doesn't list "roms" gets nothing, an image over its
+32 MiB or a dump with no machine is held with the reason, and a refusal counts against the item like a session's does.
+Per hub, roms.json keeps what it acknowledged, the refusals counted and the items parked; roms-status.json at the top of
+the state directory says, for each dump and burn, where it stands (sent, waiting, held, refused) for the 7".
 
 Idempotency is the hub's, not ours: every uid is derived from the device id and the CSV's
 own name, so re-sending changes nothing and comes back "duplicate". **The sent ledger is an
@@ -82,9 +92,23 @@ status.json at the top is the whole run; with one hub its keys are what they alw
 `phase` (as_found | during | as_left) goes only to a hub whose health lists the "jobs"
 capability, and only as one of those three. The tracker lists none, so it never sees the field.
 
+The game library (phase D3). With /etc/gatbox/archive.conf filled in, the same run also syncs the deck's game library with
+the archive, both ways, after the hubs' work (so a slow file never holds up a session or an order):
+
+    ARCHIVE_URL=https://archive.example      https, or http on loopback (tests)
+    ARCHIVE_TOKEN=gbx_<public_id>.<secret>   the deck's device token (gatbox-archive token add deck --role device)
+    ARCHIVE_ACCESS_ID=...                    Cloudflare Access service token, when the archive is behind Access
+    ARCHIVE_ACCESS_SECRET=...
+
+The merge, the conflicts and the files are gatboxlib/libsync.py; its state is state/library/ (cursors, the agreed base,
+conflicts.json for the 7"). The library block of status.json says what happened. GATBOX_SYNC_DRYRUN prints the plan and writes
+nothing. The archive refusing the token (revoked, or the Access service token expired) is exit 1: a person has to act. An
+archive that is simply out of reach is not.
+
 Environment (the unit sets CREDENTIALS_DIRECTORY and STATE_DIRECTORY; tests set the rest):
     GATBOX_SYNC_CONF      read the default hub's config from this path instead of the credential
     GATBOX_SYNC_CONF_DIR  read hubs.d from this directory (with GATBOX_SYNC_CONF alone: none)
+    GATBOX_SYNC_ARCHIVE_CONF   read the archive's config from this path instead of the credential
     GATBOX_SYNC_WEB       gatbox-web's base URL (default http://127.0.0.1)
     GATBOX_SYNC_MAX       sessions per run, per hub (default 10)
     GATBOX_SYNC_ONCE      ignore the ledger: send everything eligible (for a forced re-push)
@@ -100,6 +124,11 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+# The game library's sync with the archive lives in gatboxlib (shared with gatbox-web); a checkout has it beside this file,
+# an install in /usr/local/lib/gatbox. The hubs' part above imports nothing from it, and with no archive.conf nothing here runs.
+_here = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.environ.get("GATBOX_LIB") or (_here if os.path.isdir(os.path.join(_here, "gatboxlib")) else "/usr/local/lib/gatbox"))
 
 WEB = os.environ.get("GATBOX_SYNC_WEB", "http://127.0.0.1").rstrip("/")
 STATE = os.environ.get("STATE_DIRECTORY", "/var/lib/gatbox-sync").split(":")[0]
@@ -132,6 +161,9 @@ IGNORE_LEDGER = bool(os.environ.get("GATBOX_SYNC_ONCE"))
 MAX_TRIES = int(os.environ.get("GATBOX_SYNC_MAX_TRIES", "5"))
 # Offer the parked ones again, once: the way back after fixing the roster at the hub.
 UNPARK = bool(os.environ.get("GATBOX_SYNC_UNPARK"))
+# Dumps and burns per hub per run: an image is up to 32 MiB, so this is the slow part of a run.
+MAX_ROMS = int(os.environ.get("GATBOX_SYNC_MAX_ROMS", "5"))
+ROM_CLOCKS = ("ntp", "rtc", "unverified", "unknown")
 
 
 def log(msg):
@@ -201,8 +233,9 @@ def parse_conf(text):
     return conf
 
 
-def read_conf():
-    """(hubs, refused). Each hub: {name, label, urls, token, dev, dir}.
+def read_conf(keep_going=False):
+    """(hubs, refused). Each hub: {name, label, urls, token, dev, dir}. With no hub at all it exits 0, unless `keep_going` (an
+    archive is configured: the library still has work to do), when it returns two empty lists.
 
     Exits 0 -- not 1 -- when there is no hub at all: a Pi that has never been given a token is
     not broken, it just has nothing to do, and a timer that fails every two minutes for the
@@ -254,12 +287,61 @@ def read_conf():
     if not hubs and any(r.get("fatal") for r in refused):
         sys.exit(1)
     if not hubs and not refused:
+        if keep_going:
+            return hubs, refused
         if missing and not entries:
             log(f"no hub config at {missing[0]} ({missing[1]}); nothing to do")
         elif incomplete and not entries:
             log(f"{incomplete}: HUB_URLS and HUB_TOKEN are both required; nothing to do")
         sys.exit(0)
     return hubs, refused
+
+
+def archive_path():
+    if os.environ.get("GATBOX_SYNC_ARCHIVE_CONF"):
+        return os.environ["GATBOX_SYNC_ARCHIVE_CONF"]
+    creds = os.environ.get("CREDENTIALS_DIRECTORY")
+    if creds:
+        return os.path.join(creds, "archive")
+    if os.environ.get("GATBOX_SYNC_CONF"):
+        return None                       # a test with its own hub config never picks up this machine's archive.conf
+    return "/etc/gatbox/archive.conf"
+
+
+def archive_conf():
+    """{url, token, access_id, access_secret} when the deck has an archive configured, else None (and there is no library
+    step at all, as before this existed). A config that is there but wrong is said so in the journal and skipped."""
+    path = archive_path()
+    if path is None:
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            conf = parse_conf(fh.read())
+    except OSError:
+        return None
+    if not conf:
+        return None                       # tmpfiles leaves an empty placeholder: "none"
+    url, token = conf.get("ARCHIVE_URL", "").rstrip("/"), conf.get("ARCHIVE_TOKEN", "")
+    host = urllib.parse.urlsplit(url).hostname or ""
+    if not (url.startswith("https://") or (url.startswith("http://") and host in ("127.0.0.1", "localhost", "::1"))):
+        log(f"{path}: ARCHIVE_URL must be an https:// address; the library is not synced")
+        return None
+    if device_id(token) is None:
+        log(f"{path}: ARCHIVE_TOKEN is not of the form gbx_<public_id>.<secret>; the library is not synced")
+        return None
+    return {"url": url, "token": token, "access_id": conf.get("ARCHIVE_ACCESS_ID", ""),
+            "access_secret": conf.get("ARCHIVE_ACCESS_SECRET", "")}
+
+
+def library_step(conf, started):
+    """The game library's sync with the archive (gatboxlib.libsync): one pass, after the hubs'. -> the status block, or None."""
+    from gatboxlib import libsync
+    deck = libsync.Deck(WEB, timeout=WEB_TIMEOUT)
+    archive = libsync.Archive(conf["url"], conf["token"], conf["access_id"], conf["access_secret"], timeout=POST_TIMEOUT)
+    left = RUN_BUDGET - (time.monotonic() - started)
+    log(f"gatbox-sync: library, archive {conf['url']}" + (" (dry run)" if DRYRUN else ""))
+    return libsync.run(deck, archive, os.path.join(STATE, "library"), dryrun=DRYRUN,
+                       deadline=time.monotonic() + max(left, 20.0), log=log)
 
 
 def device_id(token):
@@ -605,9 +687,16 @@ def guard(h, hubs, batch, sessions, outbox):
 
 def main():
     started = time.monotonic()
-    hubs, refused = read_conf()
+    arch = archive_conf()
+    hubs, refused = read_conf(keep_going=bool(arch))
     rc = 1 if any(r.get("fatal") for r in refused) else 0
     multi = len(hubs) > 1
+    if not hubs and arch:
+        # An archive and no hub: the library is the whole job. status.json says so for the SYSTEM tile.
+        lib = library_step(arch, started)
+        if not DRYRUN:
+            save("status.json", {"at": time.time(), "ok": bool(lib and lib.get("ok")), "hubs": [], "refused": refused, "library": lib})
+        return 1 if lib and lib.get("refused_by_archive") else rc
 
     for h in hubs:
         name = "" if not multi else f"hub {h['name']} ({h['label']}), "
@@ -698,17 +787,43 @@ def main():
     for slug, labels in conflicts.items():
         log(f"  conflict: {slug} is on {' and '.join(labels)}; sent to neither")
 
+    # Dumps and burns, from gatbox-web's loopback reads. An older gatbox-web has no such routes: nothing to send.
+    try:
+        dumps = get_json(f"{WEB}/api/sync/dumps", WEB_TIMEOUT).get("dumps") or []
+        burns = get_json(f"{WEB}/api/sync/burns", WEB_TIMEOUT).get("burns") or []
+    except (urllib.error.URLError, OSError, ValueError, AttributeError):
+        dumps, burns = [], []
+
+    def why_unrouted(slug):
+        if waiting:
+            return "waiting for a roster"
+        if slug in conflicts:
+            return f"on {' and '.join(conflicts[slug])}'s rosters: sent to neither"
+        return "no hub's roster has this machine"
+
+    rom_states = {}
+    roms = collect_roms(dumps, burns, route, why_unrouted, rom_states)
+
     statuses, blocked = [], []
     for h in hubs:
         if multi:
             log(f"  {h['label']}:")
         st, h_rc = run_hub(h, sessions, mine[h["name"]], outbox, current, started, hubs, blocked)
         rc = max(rc, h_rc)
+        counters = run_roms(h, roms.get(h["name"], []), started, hubs, blocked, rom_states)
         if st is not None:
+            st.update(counters)
             statuses.append(st)
+    lib = library_step(arch, started) if arch else None
+    if lib and lib.get("refused_by_archive"):
+        rc = 1                    # the archive refused the deck's token: only a person can fix that
     if DRYRUN:
         return rc
-    save("status.json", combine(hubs, statuses, held, conflicts, refused, waiting, blocked))
+    save("roms-status.json", {"at": time.time(), "items": rom_states})
+    out = combine(hubs, statuses, held, conflicts, refused, waiting, blocked)
+    if lib is not None:
+        out["library"] = lib
+    save("status.json", out)
     return rc
 
 
@@ -913,6 +1028,248 @@ def run_hub(h, sessions, mine, outbox, current, started, hubs, blocked):
     # and a unit that fails every two minutes until someone edits the roster is the noise
     # this policy exists to avoid.
     return status, 0
+
+
+# ---------------------------------------------------------------------------
+# dumps and burns (phase C, capability "roms")
+# ---------------------------------------------------------------------------
+
+class FileSend(Exception):
+    """An image that could not be handed to the hub. `code` is the hub's HTTP status, or None for a
+    network failure: only a refusal counts against the item, a dead connection just waits."""
+
+    def __init__(self, message, code=None):
+        super().__init__(message)
+        self.code = code
+
+
+def uid_dump(dev, machine, label, sha1):
+    return hashlib.sha256(f"{dev}|rom_dump|{machine}|{label}|{sha1}".encode()).hexdigest()[:32]
+
+
+def uid_burn(dev, machine, sha1, epoch):
+    # The .3f is contractual, as for a reading: the same burn must hash the same on both sides.
+    return hashlib.sha256(f"{dev}|burn|{machine}|{sha1}|{float(epoch):.3f}".encode()).hexdigest()[:32]
+
+
+def _romident(ri):
+    """The sidecar's `mame -romident` result as the contract carries it."""
+    if not isinstance(ri, dict) or ri.get("match") not in (True, False):
+        return None
+    if not ri["match"]:
+        return {"match": False}
+    matches = []
+    for m in (ri.get("matches") or [])[:20]:
+        if isinstance(m, dict) and m.get("set") and m.get("rom"):
+            one = {"set": str(m["set"])[:64], "rom": str(m["rom"])[:64]}
+            if m.get("description"):
+                one["description"] = str(m["description"])[:200]
+            matches.append(one)
+    return {"match": True, "matches": matches} if matches else {"match": False}
+
+
+def dump_item(dev, d):
+    clock = d.get("clock") if d.get("clock") in ROM_CLOCKS else "unknown"
+    item = {"kind": "rom_dump", "uid": uid_dump(dev, d["machine"], d["label"], d["sha1"]),
+            "machine": d["machine"], "label": d["label"], "part": d["part"], "size": d["size"],
+            "crc32": d["crc32"], "sha1": d["sha1"], "sha256": d["sha256"],
+            "romident": _romident(d.get("romident")), "reads": 2, "identical": True,
+            "blank": bool(d.get("blank")), "created": d["epoch"], "clock": {"source": clock}}
+    if isinstance(d.get("order"), int) and not isinstance(d["order"], bool):
+        item["order"] = d["order"]
+    return item
+
+
+def burn_item(dev, b):
+    item = {"kind": "burn", "uid": uid_burn(dev, b["machine"], b["sha1"], b["epoch"]),
+            "machine": b["machine"], "image": b["sha256"], "image_sha1": b["sha1"], "part": b["part"],
+            "size": b["size"], "state": b["state"], "vpp": b.get("vpp"), "blank_ok": b.get("blank_ok"),
+            "error": b.get("error"), "created": b["epoch"]}
+    if isinstance(b.get("order"), int) and not isinstance(b["order"], bool):
+        item["order"] = b["order"]
+    return item
+
+
+def _send(method, url, data, token, content_type):
+    """(status, parsed body) of one PUT or POST; an HTTP error still carries the hub's {"error": ...}."""
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("User-Agent", USER_AGENT)
+    req.add_header("Content-Type", content_type)
+    req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=POST_TIMEOUT) as r:
+            return r.status, json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", "replace")
+        try:
+            return exc.code, json.loads(raw)
+        except ValueError:
+            return exc.code, {"error": raw.strip()[:200] or exc.reason}
+
+
+def get_bytes(url, timeout):
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("User-Agent", USER_AGENT)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def upload_image(h, name, sha256, size):
+    """Begin, send the parts the hub lacks, finish (contract v1, "Files"). Raises FileSend."""
+    base, token = f"{h['url']}/api/v1/files", h["token"]
+    try:
+        code, body = _send("POST", base, json.dumps({"sha256": sha256, "size": size}).encode(), token,
+                           "application/json")
+        if code != 200:
+            raise FileSend(f"HTTP {code}: {body.get('error')}", code)
+        if body.get("state") == "stored":
+            return
+        have = set(body.get("have") or [])
+        for n in range(body["parts"]):
+            if n in have:
+                continue
+            data = get_bytes(f"{WEB}/api/sync/image?name={urllib.parse.quote(name)}&part={n}", WEB_TIMEOUT)
+            code, r = _send("PUT", f"{base}/{sha256}/parts/{n}", data, token, "application/octet-stream")
+            if code != 200:
+                raise FileSend(f"part {n}: HTTP {code}: {r.get('error')}", code)
+        code, r = _send("POST", f"{base}/{sha256}/finish", b"{}", token, "application/json")
+        if code != 200 or r.get("state") != "stored":
+            raise FileSend(f"finish: HTTP {code}: {r.get('error')}", code)
+    except (urllib.error.URLError, OSError, ValueError, KeyError) as exc:
+        raise FileSend(f"{exc}") from None
+
+
+def collect_roms(dumps, burns, route, why_unrouted, states):
+    """Sort what gatbox-web listed into hubs. Returns {hub name: [(kind, entry)]}; anything that can't go
+    anywhere is recorded in `states` with the reason."""
+    out = {}
+    for kind, entries in (("rom_dump", dumps), ("burn", burns)):
+        for e in entries:
+            key = e.get("key")
+            if not key:
+                continue
+            if e.get("hold"):
+                states[key] = {"state": "held", "reason": e["hold"]}
+                continue
+            h = route(e["machine"], key)
+            if h is None:
+                states[key] = {"state": "held", "reason": why_unrouted(e["machine"])}
+                continue
+            out.setdefault(h["name"], []).append((kind, e))
+    return out
+
+
+def run_roms(h, entries, started, hubs, blocked, states):
+    """One hub's dumps and burns. Returns a few counters for its status. Never raises: this is a
+    second job after the sessions and must not take them down."""
+    dev, label, where = h["dev"], h["label"], h["dir"]
+    book = load("roms.json", {}, where)
+    book = book if isinstance(book, dict) else {}
+    sent, tries, parked = (dict(book.get(k) or {}) for k in ("sent", "tries", "parked"))
+    if UNPARK and parked:
+        log(f"  releasing {len(parked)} parked dump/burn item(s) to be tried again")
+        parked, tries = {}, {}
+    todo, uids = [], set()
+    for kind, e in entries:
+        uid = uid_dump(dev, e["machine"], e["label"], e["sha1"]) if kind == "rom_dump" \
+            else uid_burn(dev, e["machine"], e["sha1"], e["epoch"])
+        uids.add(uid)
+        if not IGNORE_LEDGER and uid in sent:
+            states[e["key"]] = {"state": "sent", "hub": label}
+        elif uid in parked:
+            states[e["key"]] = {"state": "refused", "hub": label, "reason": parked[uid].get("reason")}
+        else:
+            todo.append((kind, e, uid))
+    sent = {k: v for k, v in sent.items() if k in uids}            # forget what no longer exists
+    tries = {k: v for k, v in tries.items() if k in uids}
+    parked = {k: v for k, v in parked.items() if k in uids}
+    counters = {"roms_waiting": 0, "roms_parked": len(parked)}
+    if not todo:
+        save("roms.json", {"sent": sent, "tries": tries, "parked": parked}, where)
+        return counters
+
+    def hold(reason, state="waiting"):
+        for _, e, _uid in todo:
+            states[e["key"]] = {"state": state, "hub": label, "reason": reason}
+        counters["roms_waiting"] = len(todo)
+        save("roms.json", {"sent": sent, "tries": tries, "parked": parked}, where)
+        return counters
+
+    if not h.get("url"):
+        return hold("no hub reachable")
+    if "roms" not in (h["info"].get("capabilities") or []):
+        return hold(f"{label} doesn't take ROM images yet (its health doesn't list roms)", "held")
+    if DRYRUN:
+        log(f"  dry run: {len(todo)} dump/burn item(s) not sent")
+        return counters
+
+    batch, by_uid = [], {}
+    for kind, e, uid in todo:
+        if len(batch) >= MAX_ROMS or time.monotonic() - started > RUN_BUDGET:
+            states[e["key"]] = {"state": "waiting", "hub": label, "reason": "next run"}
+            counters["roms_waiting"] += 1
+            continue
+        name = e["file"] if kind == "rom_dump" else e["image"]
+        try:
+            upload_image(h, name, e["sha256"], e["size"])
+        except FileSend as exc:
+            log(f"  {e['key']}: image not sent ({exc})")
+            if exc.code is not None and 400 <= exc.code < 500 and exc.code != 429:
+                n = tries.get(uid, 0) + 1
+                tries[uid] = n
+                if n >= MAX_TRIES:
+                    parked[uid] = {"n": n, "reason": str(exc), "what": e["key"], "at": time.time()}
+                    tries.pop(uid, None)
+                    states[e["key"]] = {"state": "refused", "hub": label, "reason": str(exc)}
+                    continue
+            states[e["key"]] = {"state": "waiting", "hub": label, "reason": str(exc)}
+            counters["roms_waiting"] += 1
+            continue
+        item = dump_item(dev, e) if kind == "rom_dump" else burn_item(dev, e)
+        batch.append(item)
+        by_uid[uid] = (item, e)
+    if len(hubs) > 1:
+        batch, stopped = guard(h, hubs, batch, [], [])
+        blocked.extend(stopped)
+        for item in [i for i in by_uid.values() if i[0] not in batch]:
+            states[item[1]["key"]] = {"state": "held", "hub": label, "reason": "stopped by the realm check"}
+    if batch:
+        log(f"  posting {len(batch)} dump/burn item(s)")
+        code, body = post_json(f"{h['url']}/api/v1/ingest",
+                               {"contract": CONTRACT, "device": dev, "items": batch}, h["token"])
+        if code != 200:
+            log(f"  dump/burn ingest failed: HTTP {code} {body.get('error')}")
+            for item in batch:
+                states[by_uid[item["uid"]][1]["key"]] = {"state": "waiting", "hub": label,
+                                                         "reason": f"HTTP {code}: {body.get('error')}"}
+                counters["roms_waiting"] += 1
+        else:
+            now = time.time()
+            for r in body.get("results") or []:
+                pair = by_uid.get(r.get("uid"))
+                if pair is None:
+                    continue
+                key = pair[1]["key"]
+                if r.get("status") in ("created", "duplicate"):
+                    sent[r["uid"]] = now
+                    tries.pop(r["uid"], None)
+                    states[key] = {"state": "sent", "hub": label}
+                    continue
+                n = tries.get(r["uid"], 0) + 1
+                tries[r["uid"]] = n
+                log(f"  rejected {key}: {r.get('reason')}")
+                if n >= MAX_TRIES:
+                    parked[r["uid"]] = {"n": n, "reason": r.get("reason"), "what": key, "at": now}
+                    tries.pop(r["uid"], None)
+                    states[key] = {"state": "refused", "hub": label, "reason": r.get("reason")}
+                else:
+                    states[key] = {"state": "waiting", "hub": label, "reason": r.get("reason")}
+                    counters["roms_waiting"] += 1
+            counters["roms_sent_now"] = sum(1 for r in body.get("results") or []
+                                            if r.get("status") in ("created", "duplicate"))
+    counters["roms_parked"] = len(parked)
+    save("roms.json", {"sent": sent, "tries": tries, "parked": parked}, where)
+    return counters
 
 
 def refresh_roster(h):

@@ -72,10 +72,16 @@ tools/gatbox-replay                             /usr/local/bin/gatbox-replay    
 tools/gatbox-labels                             /usr/local/bin/gatbox-labels                          755
 tools/gatbox-dump                               /usr/local/bin/gatbox-dump                            755
 tools/gatbox-mame-roms                          /usr/local/bin/gatbox-mame-roms                       755
+tools/gatbox-library                            /usr/local/bin/gatbox-library                         755
 tools/gatbox-manuals                            /usr/local/bin/gatbox-manuals                         755
 backend/gatboxlib/__init__.py                   /usr/local/lib/gatbox/gatboxlib/__init__.py           644
 backend/gatboxlib/modes.py                      /usr/local/lib/gatbox/gatboxlib/modes.py              644
 backend/gatboxlib/profiles.py                   /usr/local/lib/gatbox/gatboxlib/profiles.py           644
+backend/gatboxlib/library.py                    /usr/local/lib/gatbox/gatboxlib/library.py            644
+backend/gatboxlib/libview.py                    /usr/local/lib/gatbox/gatboxlib/libview.py            644
+backend/gatboxlib/seed.py                       /usr/local/lib/gatbox/gatboxlib/seed.py               644
+backend/gatboxlib/filestore.py                  /usr/local/lib/gatbox/gatboxlib/filestore.py          644
+backend/gatboxlib/libsync.py                    /usr/local/lib/gatbox/gatboxlib/libsync.py            644
 backend/gatboxlib/csvlog.py                     /usr/local/lib/gatbox/gatboxlib/csvlog.py             644
 backend/gatboxlib/disks.py                      /usr/local/lib/gatbox/gatboxlib/disks.py              644
 backend/gatboxweb/__init__.py                   /usr/local/lib/gatbox/gatboxweb/__init__.py           644
@@ -88,11 +94,20 @@ backend/gatboxweb/live.py                       /usr/local/lib/gatbox/gatboxweb/
 backend/gatboxweb/meter.py                      /usr/local/lib/gatbox/gatboxweb/meter.py              644
 backend/gatboxweb/captures.py                   /usr/local/lib/gatbox/gatboxweb/captures.py           644
 backend/gatboxweb/roster.py                     /usr/local/lib/gatbox/gatboxweb/roster.py             644
+backend/gatboxweb/romsync.py                    /usr/local/lib/gatbox/gatboxweb/romsync.py            644
 backend/gatboxweb/system.py                     /usr/local/lib/gatbox/gatboxweb/system.py             644
 backend/gatboxweb/devices.py                    /usr/local/lib/gatbox/gatboxweb/devices.py            644
 backend/gatboxweb/dump.py                       /usr/local/lib/gatbox/gatboxweb/dump.py               644
 backend/gatboxweb/disk.py                       /usr/local/lib/gatbox/gatboxweb/disk.py               644
 backend/gatboxweb/mame.py                       /usr/local/lib/gatbox/gatboxweb/mame.py               644
+backend/gatboxweb/libsource.py                  /usr/local/lib/gatbox/gatboxweb/libsource.py          644
+backend/gatboxweb/libsync_api.py                /usr/local/lib/gatbox/gatboxweb/libsync_api.py        644
+backend/gatboxweb/libconflicts.py                /usr/local/lib/gatbox/gatboxweb/libconflicts.py        644
+backend/gatboxweb/mame_request.py                /usr/local/lib/gatbox/gatboxweb/mame_request.py        644
+backend/gatboxweb/games.py                      /usr/local/lib/gatbox/gatboxweb/games.py              644
+backend/gatboxweb/rom_check.py                  /usr/local/lib/gatbox/gatboxweb/rom_check.py          644
+backend/gatboxweb/titles.py                     /usr/local/lib/gatbox/gatboxweb/titles.py             644
+backend/gatboxweb/manual_request.py             /usr/local/lib/gatbox/gatboxweb/manual_request.py     644
 backend/gatboxweb/manuals.py                    /usr/local/lib/gatbox/gatboxweb/manuals.py            644
 backend/gatboxweb/wifi.py                       /usr/local/lib/gatbox/gatboxweb/wifi.py               644
 backend/gatboxweb/orders.py                     /usr/local/lib/gatbox/gatboxweb/orders.py             644
@@ -139,6 +154,10 @@ parts_ok() { head -n 1 "$PARTS_LIST" 2>/dev/null | grep -qxF "# minipro $(minipr
 MAME_ROMS=/usr/local/share/gatbox/mame-roms.json
 mame_roms_wanted() { [ -f "$REPO/data/gatbox-mame-sets.json" ] && [ -x /usr/games/mame ]; }
 mame_roms_ok() { GATBOX_DATA="$REPO/data" python3 "$REPO/tools/gatbox-mame-roms" --check "$MAME_ROMS"; }
+# MAME's own title list for the LIBRARY's title search: every game's description, year and maker, once per MAME version
+MAME_TITLES=/usr/local/share/gatbox/mame-titles.json
+mame_titles_wanted() { [ -x /usr/games/mame ]; }
+mame_titles_ok() { python3 "$REPO/tools/gatbox-mame-roms" --titles-check "$MAME_TITLES"; }
 MINIPRO_URL=https://gitlab.com/DavidGriffith/minipro.git
 MINIPRO_SRC=/usr/local/src/minipro
 # gatbox-web's fonts: Chakra Petch + Share Tech Mono (SIL OFL), the project's design-token fonts, pinned to one
@@ -257,6 +276,7 @@ if [ "${1:-}" = "--check" ]; then
     [ -d /etc/gatbox ] || DIFFS+=("create     /etc/gatbox (tmpfiles.d; hub.conf goes in by hand)")
     [ -d /etc/gatbox/hubs.d ] || DIFFS+=("create     /etc/gatbox/hubs.d (tmpfiles.d; one <name>.conf per extra hub, by hand)")
     [ -e /etc/gatbox/hub.conf ] || DIFFS+=("create     /etc/gatbox/hub.conf, empty (tmpfiles.d; empty means no hub)")
+    [ -e /etc/gatbox/archive.conf ] || DIFFS+=("create     /etc/gatbox/archive.conf, empty (tmpfiles.d; empty means no archive, the library is not synced)")
     # Only when the hotspot is armed at all: an unarmed Pi is not missing anything.
     if systemctl -q is-enabled gatbox-ap-fallback.service 2>/dev/null \
        || systemctl -q is-enabled gatbox-ap-fallback.timer 2>/dev/null; then
@@ -266,10 +286,12 @@ if [ "${1:-}" = "--check" ]; then
     id -nG "$(id -un)" | grep -qw gatbox-dump || DIFFS+=("group      $(id -un) += gatbox-dump (the dump archive)")
     getent group gatbox-manuals >/dev/null || DIFFS+=("create     group gatbox-manuals (sysusers.d)")
     [ -d /srv/gatbox/manuals ] || DIFFS+=("create     /srv/gatbox/manuals (tmpfiles.d)")
+    [ -d /srv/gatbox/library ] || DIFFS+=("create     /srv/gatbox/library (tmpfiles.d; the game library's folder)")
     getent group gatbox-manuals >/dev/null && ! getent group gatbox-manuals | cut -d: -f4 | tr ',' '\n' | grep -qx "$(id -un)" \
         && DIFFS+=("group      $(id -un) += gatbox-manuals (the manuals folder)")
     command -v minipro >/dev/null && ! parts_ok && DIFFS+=("generate   $PARTS_LIST")
     mame_roms_wanted && ! mame_roms_ok && DIFFS+=("generate   $MAME_ROMS (from mame -listxml: a minute or two)")
+    mame_titles_wanted && ! mame_titles_ok && DIFFS+=("generate   $MAME_TITLES (MAME's title list, once per MAME version: a minute or two)")
     if ((${#DIFFS[@]})); then printf 'a run would change:\n'; printf '  %s\n' "${DIFFS[@]}"; exit 3; fi
     echo "nothing to change: this Pi matches the checkout"
     exit 0
@@ -442,8 +464,8 @@ if changed /etc/sysusers.d/gatbox.conf || ! getent passwd gatbox-dump >/dev/null
    || ! getent passwd gatbox-sync >/dev/null || ! getent group gatbox-wifi >/dev/null; then
     systemd-sysusers /etc/sysusers.d/gatbox.conf && log "users gatbox-dump (T48 dumps, group plugdev) and gatbox-sync (hub push), group gatbox-manuals"
 fi
-if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ] || [ ! -d /srv/gatbox/manuals ] || [ ! -d /etc/gatbox ] || [ ! -d /etc/gatbox/hubs.d ] || [ ! -e /etc/gatbox/hub.conf ] || [ ! -d /var/spool/gatbox-wifi ]; then
-    systemd-tmpfiles --create /etc/tmpfiles.d/gatbox.conf && log "/srv/gatbox/roms + /srv/gatbox/manuals + /var/spool/gatbox-dump + /etc/gatbox (+ hubs.d)"
+if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ] || [ ! -d /srv/gatbox/manuals ] || [ ! -d /srv/gatbox/library ] || [ ! -d /etc/gatbox ] || [ ! -d /etc/gatbox/hubs.d ] || [ ! -e /etc/gatbox/hub.conf ] || [ ! -e /etc/gatbox/archive.conf ] || [ ! -d /var/spool/gatbox-wifi ]; then
+    systemd-tmpfiles --create /etc/tmpfiles.d/gatbox.conf && log "/srv/gatbox/roms + /srv/gatbox/manuals + /srv/gatbox/library + /var/spool/gatbox-dump + /etc/gatbox (+ hubs.d)"
 fi
 if ! id -nG "$U" | grep -qw gatbox-dump; then
     usermod -aG gatbox-dump "$U" && log "$U += gatbox-dump (gatbox-dump from the terminal archives too; log out/in)"
@@ -536,6 +558,14 @@ if mame_roms_wanted && ! mame_roms_ok; then
     HOME=$mh /usr/local/bin/gatbox-mame-roms --build "$MAME_ROMS" 2>&1 | sed 's/^/     /' || true
     rm -rf "$mh"
     mame_roms_ok || warn "the MAME ROM checklist didn't build: the dashboard shows machines without it"
+fi
+# MAME's title list, for LIBRARY -> FIND GAME. Once per MAME version, built the same way.
+if mame_titles_wanted && ! mame_titles_ok; then
+    log "building MAME's title list from mame -listxml (a minute or two)"
+    mh=$(mktemp -d)
+    HOME=$mh /usr/local/bin/gatbox-mame-roms --titles "$MAME_TITLES" 2>&1 | sed 's/^/     /' || true
+    rm -rf "$mh"
+    mame_titles_ok || warn "MAME's title list didn't build: LIBRARY's FIND GAME has nothing to search"
 fi
 
 # 9 ---------------------------------------------------------------------------

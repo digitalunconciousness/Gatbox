@@ -13,6 +13,13 @@
   var f = /[?&]box=([01])\b/.exec(location.search), h = location.hostname;
   if (f ? f[1] === "1" : (h === "127.0.0.1" || h === "localhost" || h === "[::1]")) document.documentElement.classList.add("box");
 })();
+/* A page that came up without its stylesheet or its script can't mend itself, and the 7" has no reload button
+   (2026-11-05: a reload met gatbox-web restarting, and "Shutting down…" sat on the screen for two hours). Once every
+   file has loaded or failed, check that both took; if one didn't, try again in 5 s, until they do. */
+addEventListener("load", function () {
+  var css = getComputedStyle(document.documentElement).getPropertyValue("--bg");
+  if (!css || !window.GDashRunning) setTimeout(function () { location.reload(); }, 5000);
+});
 </script>
 </head>
 <body>
@@ -30,7 +37,7 @@
   <button data-view="meter" class="on">METER</button>
   <button data-view="sessions">SESSIONS</button>
   <button data-view="machine">MACHINE<small id="n-machine"></small></button>
-  <button data-view="manuals">MANUALS<small>specs · docs</small></button>
+  <button data-view="library">LIBRARY<small>games · docs</small></button>
   <button data-view="system">SYSTEM</button>
   <button data-view="devices">DEVICES</button>
   <button data-view="dump" id="n-dump" class="dim">DUMP<small id="n-dump-s">T48 not plugged in</small></button>
@@ -86,8 +93,8 @@
     <div id="mc-body"></div>
   </section>
 
-  <!-- MANUALS: a machine's documents and its spec sheet (the manual's numbers, CONFIRM, actual values) -->
-  <section id="v-manuals" class="view scroll"><div id="mn-body"></div></section>
+  <!-- LIBRARY: the games, each game's documents and spec sheet (the manual's numbers, CONFIRM, actual values per machine) -->
+  <section id="v-library" class="view scroll"><div id="lb-body"></div></section>
 
   <!-- SYSTEM: the Pi -->
   <section id="v-system" class="view scroll">
@@ -136,7 +143,8 @@
 </div>
 <div id="sheet" class="hide"><div class="pane" id="pane"></div></div>
 <div id="toast" class="hide"></div>
-<div id="kx-off" class="hide" style="position:fixed;inset:0;z-index:60;background:#150a28;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px">
+<!-- hidden, not .hide: without the stylesheet it must stay hidden all the same -->
+<div id="kx-off" hidden>
   <div><div class="big">Shutting down…</div><p>Unplug the Pi only when this screen goes dark and its LED turns red.</p></div>
 </div>
 

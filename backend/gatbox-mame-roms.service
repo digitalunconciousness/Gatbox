@@ -1,0 +1,29 @@
+# NOT INSTALLED YET: this is the repo copy for review. The bootstrap doesn't install it until the owner has seen the diff
+# (BRINGUP.md, phase D4) and said yes.
+[Unit]
+Description=GATBOX chip-list job (the library's games added after the seed; gatbox-mame-roms.path starts it)
+
+[Service]
+# One job per request: `gatbox-mame-roms --job` claims request.json (renames it to running.json), reads MAME's driver list once
+# for every set asked for (each with its clones) and writes status.json. gatbox-web asked, and reads the answer to make the
+# games' ROM lists: this job never opens the library, never touches a ROM file and never needs the network.
+Type=oneshot
+ExecStart=/usr/local/bin/gatbox-mame-roms --job /var/spool/gatbox-mame/request.json --status /var/spool/gatbox-mame/status.json
+TimeoutStartSec=20min
+# No account of its own: a transient one that writes only its spool. The spool is setgid group gatbox-mame (gatbox-web is in it
+# too), so the answer is readable there whoever wrote it.
+DynamicUser=yes
+SupplementaryGroups=gatbox-mame
+UMask=0007
+Environment=HOME=/tmp
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectSystem=strict
+ReadWritePaths=/var/spool/gatbox-mame
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX
+ProtectKernelTunables=yes
+ProtectControlGroups=yes

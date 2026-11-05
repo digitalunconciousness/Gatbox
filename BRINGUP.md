@@ -586,6 +586,34 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         (−7, 0) and (+6, +11) px, spread ±6–9 px — the two disagree, so no calibration; re-run once the panel
         is in its box (the viewing angle changes). A steady offset → a libinput calibration
         matrix for the WS170120 (a udev rule: shown first, rule 5); scatter only → nothing more.
+- **Disk imaging, phase D2 (branch `disk-imaging`, started 2026-11-03):** the spec is
+  `docs/plans/2026-11-02-disk-imaging.md` (the owner's note; §9 decided). Code goes in where it doesn't wait on the
+  archive or an unread hardware fact (owner: "code slides in where it makes sense").
+  - [ ] Task 0 ⏸ (`docs/plans/2026-11-02-disk-imaging-task0.sh`, read-only): stage 1 now (the dock empty), stage 2 with
+        the 4 TB drive, stage 3 with a drive on the dock. The facts go here before code relies on them
+  - [x] Task 1, the test doubles: a fake sysfs tree, plain files as devices, a fake mount table, `tests/fake-ddrescue`
+  - [x] Task 2, `tools/gatbox-disk` (list, read, retry, check, write), not installed: identity from sysfs, the
+        refusals, the store's mount and marker guard, READ (one pass, RETRY on bad areas, a second read for flash,
+        `<label>_<YYYYmmdd>_<sha1:8>.img`, no duplicates, the archive queue), TARGET CHECK (size, 512-byte sectors, not
+        the source, what's on it now), WRITE (fresh check, re-identified, O_EXCL, fsync, two O_DIRECT read-backs,
+        `writes.jsonl`). `test-disk.sh`: 53, and each of 11 guards broken on purpose fails at least one of them.
+        Still to come once Task 0 shows them: the drive's own serial and CHS, the HDD health line
+  - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
+  - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
+        to §5 and **not installed**: not in the MANIFEST until Task 4
+  - [ ] Task 4 ⏸: the units, the udev rule, sysusers (two groups), tmpfiles, the store's mount unit from
+        `/etc/gatbox/disks.conf`, `gddrescue` + `mame-tools`; the owner sees the system-config diff first (hard rule 5)
+  - [x] Task 5, gatbox-web: `/api/disk` (+ images, read, retry, check, write, checklist, checklists, checklist/new),
+        SSE `disk`, a write from the Pi's own screen only, after a passing check ≤ 5 min old; one checklist record per
+        write. In the MANIFEST (`gatboxweb/disk.py`) and harmless before Task 4: the tab lists the USB drives and says
+        IMAGE STORE NOT CONNECTED and that the disk service isn't installed; READ and WRITE are refused
+  - [x] Task 6, the DISK tab: READ (source → what it is → machine + label → READ → STORED / BAD AREAS + RETRY),
+        WRITE (image → target → TARGET CHECK → OVERWRITE IT for a non-blank drive → HOLD 3 S → VERIFIED), the swap
+        checklist, the store's line, the images; a phone sees the state and can tick the checklist (owner, 11-03), but
+        has no READ, WRITE or hold. The READ and WRITE screens say to run the Pi from its wall supply, not the cabinet's
+        12 V buck (§1 row 10), and the checklist's 5 V line shows the machine's last saved reading with SAVE READING
+        (§1 row 9). `test-disk.sh` 93, `test-dash.sh` 150 (DISK: 23, against `tests/fakedisk.py`; screenshots 23a–23i, 24)
+  - [x] Task 7: CLAUDE.md (hard rule 6 as §5 words it, Owned, installed list), a journal entry
 - **Phase B, the library on the deck (branch `phase-b-library`, from 2026-11-03):** spec
   `docs/plans/2026-11-03-phase-b-library.md`, approved by the owner (LIBRARY replaces MANUALS on the 7"). Repo-only
   until she says: nothing installed changes.

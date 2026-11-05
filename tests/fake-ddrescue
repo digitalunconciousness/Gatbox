@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""A stand-in for GNU ddrescue in the disk tests: no drive. `ddrescue [opts] SRC OUT MAP`, where SRC is a plain file
+standing in for the device. Driven by the environment:
+
+    FAKE_DDRESCUE_BAD     bad areas, "offset:length,…" in bytes: not copied, and marked - (bad sector) in the map
+    FAKE_DDRESCUE_HEAL    1 = a -r pass (retry) reads the bad areas after all
+    FAKE_DDRESCUE_MUTATE  1 = after copying, one byte of SRC changes (a card that reads differently twice)
+    FAKE_DDRESCUE_LOG     a file each call's arguments are appended to, one line per call
+    FAKE_DDRESCUE_EXIT    an exit code to fail with, before doing anything
+
+It resumes like the real one: blocks the map already marks + are not read again. The map is written in GNU
+ddrescue's mapfile format (the manual's "Mapfile structure": comments, the status line, then "pos size status" in hex).
+"""
+import os
+import sys
+
+args = sys.argv[1:]
+paths = [a for a in args if not a.startswith("-")]
+opts = [a for a in args if a.startswith("-")]
+if os.environ.get("FAKE_DDRESCUE_LOG"):
+    with open(os.environ["FAKE_DDRESCUE_LOG"], "a") as f:
+        f.write(" ".join(args) + "\n")
+if os.environ.get("FAKE_DDRESCUE_EXIT"):
+    print("ddrescue: Can't open input file: No such device", file=sys.stderr)
+    sys.exit(int(os.environ["FAKE_DDRESCUE_EXIT"]))
+src, out, mapf = paths
+size = os.path.getsize(src)
+retry = any(o.startswith("-r") for o in opts)
+
+
+def bad_areas():
+    areas = []
+    for item in filter(None, os.environ.get("FAKE_DDRESCUE_BAD", "").split(",")):
+        off, length = item.split(":")
+        areas.append((int(off), int(length)))
+    return areas
+
+
+def old_map():
+    """{offset: (size, status)} from an existing map, or everything not tried."""
+    blocks = {}
+    if os.path.exists(mapf):
+        lines = [l for l in open(mapf) if l.strip() and not l.startswith("#")]
+        for l in lines[1:]:
+            p, s, st = l.split()[:3]
+            blocks[int(p, 16)] = (int(s, 16), st)
+    return blocks or {0: (size, "?")}
+
+
+def status_at(blocks, pos):
+    for p, (s, st) in blocks.items():
+        if p <= pos < p + s:
+            return st
+    return "?"
+
+
+heal = retry and os.environ.get("FAKE_DDRESCUE_HEAL") == "1"
+bad = [] if heal else bad_areas()
+before = old_map()
+with open(src, "rb") as s, open(out, "r+b" if os.path.exists(out) else "wb") as o:
+    o.truncate(size)
+    step = 512
+    for pos in range(0, size, step):
+        if status_at(before, pos) == "+":
+            continue
+        if any(b <= pos < b + n for b, n in bad):
+            continue
+        s.seek(pos)
+        o.seek(pos)
+        o.write(s.read(step))
+
+# the new map: 512-byte blocks merged into runs of the same status
+runs = []
+for pos in range(0, size, 512):
+    st = "-" if any(b <= pos < b + n for b, n in bad) else "+"
+    if runs and runs[-1][2] == st:
+        runs[-1][1] += 512
+    else:
+        runs.append([pos, 512, st])
+with open(mapf, "w") as m:
+    m.write("# Mapfile. Created by GNU ddrescue version 1.28 (a test stand-in)\n")
+    m.write(f"# Command line: ddrescue {' '.join(args)}\n")
+    m.write("# current_pos  current_status  current_pass\n")
+    m.write(f"0x{size:08X}     +               1\n")
+    m.write("#      pos        size  status\n")
+    for p, n, st in runs:
+        m.write(f"0x{p:08X}  0x{n:08X}  {st}\n")
+
+if os.environ.get("FAKE_DDRESCUE_MUTATE") == "1" and size:
+    with open(src, "r+b") as s:
+        s.seek(size // 2)
+        b = s.read(1)
+        s.seek(size // 2)
+        s.write(bytes([b[0] ^ 0xFF]))
+print(f"rescued: {sum(n for _, n, st in runs if st == '+')} B", flush=True)

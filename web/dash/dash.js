@@ -103,6 +103,7 @@
     on("mark", m => { if (m.pending) S.pending.push(m); else S.marks.push(m); chartDecor();
                       toast(`MARK ${hms(m.epoch, true)}${m.label ? " · " + m.label : ""}${m.pending ? " (goes into the next file)" : ""}`); });
     on("capture", c => {
+      if (S.view === "disk" && K.list) loadChecklist(K.list.write);       // the checklist's 5 V line
       const to = c.machine === "unassigned" ? "unassigned (no machine set)"
                : c.machine === (S.st && S.st.machine) ? (S.st.machine_name || c.machine) : c.machine;
       toast(`SAVED ${c.label}: ${c.display} → ${to}`);
@@ -115,6 +116,7 @@
     });
     on("scan", onScan);
     on("dump", onDump);
+    on("disk", onDisk);
     on("specs", x => { if (S.view === "library" && x.slug === mnSlug()) loadManuals(); });
     on("manuals", x => { if (S.view === "library" && x.slug === mnSlug()) loadManuals(); });
     on("library", () => { LB.data = null; if (S.view === "library") loadManuals(); });
@@ -599,6 +601,7 @@
     if (view === "library") loadManuals();
     if (view === "system") loadSystem();
     if (view === "devices" || view === "dump") loadDevices();
+    if (view === "disk") { K.sig = null; loadDisk(); }
     if (view === "meter") chart.redraw();
   }
   document.querySelectorAll("#nav button").forEach(b => b.addEventListener("click", () => show(b.dataset.view)));
@@ -1113,9 +1116,10 @@
     if (!await confirmBox("CLEAR MACHINE?", "New files won't carry a machine (a live session starts a new file).", "CLEAR")) return;
     api("DELETE", "/api/machine").then(() => loadMachine()).catch(fail);
   });
-  $("#mc-pick").addEventListener("click", async () => {
+  // The roster as a pick list: a heading per hub when there are several (Phase 8), THIS PI for the rest. -> the entry
+  async function pickRosterMachine(title, cur) {
     let R;
-    try { R = await api("GET", "/api/roster"); } catch (e) { return fail(e); }
+    try { R = await api("GET", "/api/roster"); } catch (e) { fail(e); return null; }
     const item = m => ({
       key: m.slug, title: m.name, find: [m.name.toLowerCase(), m.slug],
       sub: m.slug + (m.spec ? " · rail spec" : "") + (m.added ? " · added here" : "") + (m.location ? " · " + m.location : "")
@@ -1125,9 +1129,13 @@
     R.machines.forEach(m => { by[m.slug] = m; });
     const items = R.groups ? R.groups.flatMap(g => [{head: g.label}].concat(g.slugs.filter(sl => by[sl]).map(sl => item(by[sl]))))
                            : R.machines.map(item);
-    const pick = await pickFrom("Pick the machine", items, S.st && S.st.machine);
-    if (!pick) return;
-    api("PUT", "/api/machine", {slug: pick}).then(r => { toast(`Machine: ${r.entry.name}${r.new_file ? " · new file started" : ""}`); loadMachine(); }).catch(fail);
+    const pick = await pickFrom(title, items, cur);
+    return pick ? by[pick] : null;
+  }
+  $("#mc-pick").addEventListener("click", async () => {
+    const m = await pickRosterMachine("Pick the machine", S.st && S.st.machine);
+    if (!m) return;
+    api("PUT", "/api/machine", {slug: m.slug}).then(r => { toast(`Machine: ${r.entry.name}${r.new_file ? " · new file started" : ""}`); loadMachine(); }).catch(fail);
   });
 
   // a pick list filtered with its own letter keys (the kiosk has no keyboard): machines, platforms
@@ -1334,7 +1342,9 @@
   async function loadSystem() {
     try {
       const d = await api("GET", "/api/system");
+      const wasLocal = S.local;
       S.sys = d; S.local = !!(d.client && d.client.local);
+      if (wasLocal !== S.local && S.view === "disk") renderDisk();      // the controls are the Pi's own screen's
       S.offset = d.time.epoch * 1000 - Date.now();
       // a new install changed the dashboard's files: load them (the 7" kiosk never reloads on its own). Not at once:
       // the install restarts gatbox-web a second or two after it writes them, and a reload into that restart comes
@@ -1588,7 +1598,7 @@
         ...(sc.recent || []).slice(0, 3).map(r => [`${hms(r.at, true)}  ${r.action === "unknown" ? "unknown code " + r.code
                                                      : r.action === "mark" ? "MARK" : r.action === "new" ? "NEW FILE" : r.name || r.code}`, "mut"])]);
       card("Touch panel", [[d.touch.present ? `Waveshare 7" (C) · USB ${d.touch.usb_id}` : "not found", d.touch.present ? "ok" : "warn"]]);
-      for (const [t, why] of [["M2K SCOPE", "ADALM2000: not fitted"], ["HUB ARM", "UUGear MEGA4 / uhubctl: not fitted"],
+      for (const [t, why] of [["M2K SCOPE", "ADALM2000: not fitted"], ["HUB ARM", "uhubctl port switching: not used (the MEGA4 is a plain hub)"],
                               ["BOARD POWER", "not fitted: GATBOX never powers a board"]])
         card(t, [[why, "mut"]], "notfit");
     }
@@ -2719,13 +2729,15 @@
       .catch(e => { fail(e); renderDump(); });       // a refused burn: a fresh hold button replaces the spent one
   }
   // hold to act (like SHUT DOWN): letting go early does nothing; while it's held, the tab doesn't redraw under it.
-  // One pointer holds it (a second finger is ignored, and so is its release), and once it has fired it's spent
-  function holdButton(label, ms, fire) {
+  // One pointer holds it (a second finger is ignored, and so is its release), and once it has fired it's spent.
+  // OWNER is the tab's state (its holding / pending flags), REDRAW its render: DUMP's unless given.
+  function holdButton(label, ms, fire, owner, redraw) {
+    owner = owner || D; redraw = redraw || renderDump;
     const b = el("button", "hold bad", label);
     b.style.cssText = "min-height:72px;font-size:20px;width:100%";
     b.style.setProperty("--ms", ms + "ms");
     let t = null, who = null;
-    const end = () => { D.holding = false; if (D.pending) { D.pending = false; setTimeout(renderDump, 0); } };
+    const end = () => { owner.holding = false; if (owner.pending) { owner.pending = false; setTimeout(redraw, 0); } };
     const stop = e => {
       if (t === null || e.pointerId !== who) return;
       clearTimeout(t); t = who = null; b.classList.remove("arm"); b.textContent = label;
@@ -2734,7 +2746,7 @@
     b.addEventListener("pointerdown", e => {
       e.preventDefault();
       if (t !== null || b.dataset.done) return;
-      who = e.pointerId; D.holding = true; b.classList.add("arm"); b.textContent = "KEEP HOLDING…";
+      who = e.pointerId; owner.holding = true; b.classList.add("arm"); b.textContent = "KEEP HOLDING…";
       t = setTimeout(() => { t = who = null; b.dataset.done = 1; b.textContent = "ARMED: STARTING…"; end(); fire(); }, ms);
     });
     ["pointerup", "pointerleave", "pointercancel"].forEach(k => b.addEventListener(k, stop));
@@ -2827,6 +2839,418 @@
     }
   }
 
+  // --- DISK: hard disks, CF and SD cards on the USB dock or a card reader (docs/plans/2026-11-02-disk-imaging.md) ---
+  // READ images a drive into the image store. WRITE puts a stored image onto another drive: a TARGET CHECK first, then
+  // a 3 s hold on the Pi's own screen arms it (gatbox-web refuses a write from anywhere else), and the job writes it
+  // and reads it back twice. gatbox-web only lists and queues; gatbox-disk.service is what opens the drives. A phone
+  // sees the drives, the job, the images and the swap checklist, and can tick it; READ, WRITE and the hold are on the
+  // 7" (note §10, and the owner's 2026-11-03 answer on ticking).
+  const K = {st: null, sig: null, images: null, imgSig: null, list: null, cap: null, listFor: undefined, mode: "read",
+             src: null, media: null, machine: null, machineName: null, label: null, image: null, target: null,
+             ackFor: null, holding: false, pending: false, expT: null};
+  const GB = n => n >= 1e12 ? (n / 1e12).toFixed(2) + " TB" : n >= 1e9 ? (n / 1e9).toFixed(1) + " GB"
+                : n >= 1e6 ? Math.round(n / 1e6) + " MB" : (n || 0).toLocaleString("en-US") + " bytes";
+  const exact = n => (n || 0).toLocaleString("en-US") + " bytes";
+  const base = p => String(p || "").split("/").pop();
+  const driveName = i => `${(i || {}).vendor || ""} ${(i || {}).model || ""}`.trim() || "a drive with no name";
+  const sameDrive = (a, b) => ["vendor", "model", "bytes", "logical", "serial"].every(k => (a || {})[k] === (b || {})[k]);
+  const stamp = t => {
+    if (!t) return "";
+    const d = new Date(t * 1000), p = n => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  const DISK_ROLE = {empty: ["EMPTY SLOT", "mut"], store: ["IMAGE STORE", "cy"], system: ["THE PI'S OWN", "mut"],
+                     mounted: ["MOUNTED", "warn"]};
+  const DISK_MEDIA = [["hdd", "HDD"], ["cf", "CF"], ["sd", "SD"], ["ssd", "SSD"]];
+  const DISK_LABEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
+  const DISK_DOING = {read: "READING", retry: "RETRYING", check: "CHECKING", write: "WRITING"};
+
+  async function loadDisk() {
+    let st;
+    try { st = await api("GET", "/api/disk"); } catch (e) { return; }
+    onDisk(st);
+  }
+  function onDisk(st) {                              // GET /api/disk, or the SSE "disk" event: the same shape
+    K.st = st;
+    diskNav();
+    if (S.view !== "disk") return;
+    const s = st.status || {};
+    const isig = [st.store.mounted, s.job, s.state].join("|");       // a job ended, or the store came or went
+    if (K.images === null || isig !== K.imgSig) {
+      K.imgSig = isig;
+      api("GET", "/api/disk/images").then(r => { K.images = r.images; renderDisk(); }).catch(() => {});
+    }
+    if (s.op === "write" && s.verified && K.listFor !== s.job) loadChecklist(s.job);
+    else if (K.listFor === undefined) loadChecklist(null);
+    const sig = JSON.stringify(st);
+    if (sig === K.sig) return;                       // the 5 s poll: nothing changed, nothing redrawn
+    K.sig = sig;
+    renderDisk();
+  }
+  // The checklist and, for its 5 V line, the last reading saved on its machine (SAVE READING on METER; note §1 row 9)
+  function loadChecklist(write) {
+    K.listFor = write;
+    api("GET", "/api/disk/checklist" + (write ? "?write=" + write : "")).then(async r => {
+      K.list = r;
+      const slug = r.machine && r.machine !== "unassigned" ? r.machine : null;
+      try {
+        const c = await api("GET", "/api/captures" + (slug ? "?machine=" + encodeURIComponent(slug) : ""));
+        K.cap = c.captures.slice(-1)[0] || null;
+      } catch (e) { K.cap = null; }
+      renderDisk();
+    }).catch(() => {});
+  }
+  function diskNav() {
+    const k = K.st, s = (k && k.status) || {}, r = (k && k.request) || {};
+    if (!k) return;
+    const n = (k.disks || []).filter(d => d.role === "ok").length;
+    const op = {read: "reading", retry: "retrying", check: "checking", write: "writing"}[r.op || s.op] || "working";
+    $("#n-disk-s").textContent = k.busy ? (s.state === "running" && s.progress ? `${op} ${Math.round(s.progress * 100)}%` : op)
+                               : !k.store.mounted ? "no store" : n ? `${n} drive${n > 1 ? "s" : ""}` : "no drive";
+    $("#n-disk").classList.toggle("dim", !k.busy && !k.store.mounted);
+  }
+  // What's on a drive now, in words (gatbox-disk's TARGET CHECK reads it; gatbox-web never opens the drive)
+  function contentsText(c) {
+    if (!c) return "";
+    if (c.blank) return "blank: no signatures, and the first MiB is empty";
+    if (c.table) {
+      const parts = (c.partitions || []).map(p => `partition ${p.n} ${GB(p.bytes)}${p.fs ? " " + p.fs : ""}${p.label ? ` '${p.label}'` : ""}`);
+      return `a ${c.table} partition table: ${parts.join("; ") || "no partitions"}`;
+    }
+    if (c.fs) return `a ${c.fs} filesystem on the whole drive${c.label ? ` '${c.label}'` : ""}`;
+    return "no signatures, but the first MiB isn't empty";
+  }
+
+  function renderDisk() {
+    if (K.holding) { K.pending = true; return; }     // a hold to write is under a finger: redraw when it ends
+    const B = clear($("#dk-body")), st = K.st;
+    if (!st) { B.appendChild(el("div", "card mut", "Reading the drive list…")); return; }
+    const s = st.status, ctl = S.local;
+    B.appendChild(storeLine(st));
+    if (st.busy || (s && s.state === "running")) B.appendChild(diskProgress(st));
+    else if (s && s.state) B.appendChild(diskResult(s, ctl));
+    if (!ctl) {                                      // a phone: what's going on, no controls
+      const c = el("div", "card");
+      add(c, el("h2", null, "Drives on USB"), driveTiles(st, null, null, 0),
+          el("div", "mut", "READ and WRITE are on the Pi's own screen."));
+      add(B, c, checklistCard(), diskImagesCard(st));
+      return;
+    }
+    const seg = el("div", "seg");
+    for (const [k, t] of [["read", "READ"], ["write", "WRITE"], ["checklist", "CHECKLIST"]]) {
+      const b = el("button", K.mode === k ? "on" : null, t);
+      b.addEventListener("click", () => { K.mode = k; renderDisk(); });
+      seg.appendChild(b);
+    }
+    B.appendChild(seg);
+    if (K.mode === "write") diskWritePanel(B, st);
+    else if (K.mode === "checklist") B.appendChild(checklistCard());
+    else diskReadPanel(B, st);
+    if (K.mode !== "checklist") B.appendChild(diskImagesCard(st));
+  }
+  function storeLine(st) {
+    const c = el("div", "card dk-store"), sto = st.store;
+    add(c, el("b", null, "IMAGE STORE"),
+        el("span", "badge " + (sto.mounted ? "ok" : "warn"), sto.mounted ? "CONNECTED" : "NOT CONNECTED"),
+        el("span", sto.mounted ? "mut" : "warn", sto.mounted ? (sto.total ? `${GB(sto.free)} free of ${GB(sto.total)}` : "")
+                                                       : "Plug in the image-store drive: READ and WRITE wait for it."));
+    if (!st.spool) c.appendChild(el("span", "bad", "The disk service isn't installed yet (no spool)."));
+    return c;
+  }
+  // the drives on USB as tiles: a drive that can be picked is a button; the store, an empty slot, a mounted drive or
+  // one too small for the image is a plain tile that says why
+  function driveTiles(st, pick, picked, need) {
+    const ds = st.disks || [];
+    if (!ds.length) return el("div", "mut", "No drive on USB. Put the drive on the dock or the card in the reader: it shows up here within a few seconds.");
+    const tiles = el("div", "tiles dk-drives");
+    for (const d of ds) {
+      const i = d.identity, role = DISK_ROLE[d.role], small = !!need && d.role === "ok" && i.bytes < need;
+      const can = pick && d.role === "ok" && !small;
+      const t = el(can ? "button" : "div", "tile" + (can ? "" : " dk-no") + (picked && picked.name === d.name ? " on" : ""));
+      add(t, el("b", null, `${d.name} · ${driveName(i)}`),
+          el("span", null, d.role === "empty" ? "nothing in the slot" : `${GB(i.bytes)} · ${i.logical}-byte sectors`),
+          el("span", "mut", d.role === "empty" ? `USB ${i.usb}` : `${exact(i.bytes)} · USB ${i.usb}`),
+          role ? el("span", "badge " + role[1], role[0] + (d.role === "mounted" ? ": " + d.mounted.join(", ") : "")) : null,
+          small ? el("span", "badge warn", "TOO SMALL FOR THE IMAGE") : null);
+      if (can) t.addEventListener("click", () => pick(d));
+      tiles.appendChild(t);
+    }
+    return tiles;
+  }
+  function diskProgress(st) {
+    const s = st.status && st.status.state === "running" ? st.status : {}, r = st.request || s;
+    const c = el("div", "card");
+    const what = r.op === "check" ? r.device : r.op === "write" ? `${base(r.image)} → ${r.device}`
+               : `${r.label || ""}${r.device ? " · " + r.device : ""}`;
+    c.appendChild(el("h2", null, `${s.verify_only ? "VERIFYING" : DISK_DOING[r.op] || "WORKING"} ${what}`));
+    const bar = el("div", "dk-bar"), fill = el("div");
+    fill.style.width = Math.round((s.progress || 0.02) * 100) + "%";
+    bar.appendChild(fill); c.appendChild(bar);
+    for (const x of (s.steps || []).slice(-4)) c.appendChild(el("div", "mut", `${x.step}${x.detail ? ": " + x.detail : ""}`));
+    c.appendChild(el("div", "mut", st.queued ? "queued: starting…"
+                                  : r.op === "write" ? "Leave both drives where they are until it's done."
+                                  : "Leave the drive where it is until it's done."));
+    return c;
+  }
+  function diskResult(s, ctl) {
+    const c = el("div", "card"), line = (t, cls) => c.appendChild(el("div", cls || null, t));
+    const big = (t, cls) => c.appendChild(el("div", "big " + cls, t));
+    const reading = s.op === "read" || s.op === "retry";
+    if (reading && s.state === "done") {
+      const sto = s.stored || {};
+      big(sto.new ? "STORED" : "ALREADY IN THE STORE", "ok");
+      line(base(sto.path));
+      line(`${s.label} · ${s.machine} · ${GB(s.bytes)} (${exact(s.bytes)}) · ${s.reads === 2 ? "read twice, both match" : "read once"}`, "mut");
+      line(`SHA-1 ${s.sha1}`, "mut");
+      if (s.source) line(`from ${driveName(s.source)}`, "mut");
+      line(sto.new ? "Queued for the archive." : "Those bytes were already stored: this read is noted on that image.", "mut");
+    } else if (reading && s.needs_retry) {
+      const d = s.ddrescue || {};
+      big("BAD AREAS", "warn");
+      line(`${d.rescued_pct}% read · ${d.bad_areas} bad area${d.bad_areas === 1 ? "" : "s"} · ${exact(d.bad_bytes)} not read`);
+      line("The deck never retries on its own: each pass spins an old drive up again, so it's your call.", "mut");
+      if (ctl) {
+        const r = el("button", "primary", "RETRY THE BAD AREAS");
+        r.addEventListener("click", () => api("POST", "/api/disk/retry", {machine: s.machine, label: s.label})
+          .then(() => toast(`RETRY queued: ${s.label}`)).catch(fail));
+        c.appendChild(r);
+      } else line("RETRY is on the Pi's own screen.", "mut");
+    } else if (s.op === "check" && s.state === "done") {
+      big(s.already_written ? "ALREADY WRITTEN" : "TARGET OK", s.already_written ? "cy" : "ok");
+      line(`${s.device} · ${driveName(s.identity)} · ${exact((s.identity || {}).bytes)}`);
+      line(`for ${base(s.image)} · ${exact(s.bytes)}`, "mut");
+      line(s.contents && s.contents.blank ? "It's blank." : "On it now: " + contentsText(s.contents), s.needs_ack ? "warn" : "mut");
+      line(`checked ${hms(s.at, true)}: good for 5 minutes`, "mut");
+    } else if (s.op === "write" && s.state === "done" && s.verified) {
+      big("VERIFIED", "ok");
+      line(s.verify_only ? `${s.device} holds ${base(s.image)}: read back twice, both match`
+                         : `${base(s.image)} written to ${s.device}, then read back twice: both match`);
+      line(`${exact(s.bytes)} · SHA-1 ${s.sha1}`, "mut");
+      if (s.untouched_bytes) line(`${GB(s.untouched_bytes)} beyond the image left as it was`, "mut");
+      if (ctl && K.mode !== "checklist") {
+        const b = el("button", null, "THE SWAP CHECKLIST");
+        b.addEventListener("click", () => { K.mode = "checklist"; renderDisk(); });
+        c.appendChild(b);
+      }
+    } else {
+      big(s.op === "check" ? "TARGET REFUSED" : s.op === "write" ? (s.written ? "FAILED" : "NOT WRITTEN") : "STOPPED", "bad");
+      line(s.error || "");
+      if (s.hint) line("→ " + s.hint, "mut");
+      if (s.op === "write" && s.written) line("The drive was being written, so it holds part of the image: don't put it in a machine.", "warn");
+    }
+    return c;
+  }
+  function machineRow() {
+    const row = el("div", "btnrow");
+    row.style.alignItems = "center";
+    const cur = K.machine ? K.machineName : ((S.st && (S.st.machine_name || S.st.machine)) || null);
+    const other = el("button", null, "OTHER MACHINE");
+    other.addEventListener("click", async () => {
+      const m = await pickRosterMachine("Which machine is this drive from?", K.machine || (S.st && S.st.machine));
+      if (m) { K.machine = m.slug; K.machineName = m.name; renderDisk(); }
+    });
+    add(row, el("b", null, "FOR"), el("span", "chip", cur || "unassigned"), other);
+    if (K.machine) {
+      const back = el("button", null, "CURRENT");
+      back.addEventListener("click", () => { K.machine = K.machineName = null; renderDisk(); });
+      row.appendChild(back);
+    }
+    return row;
+  }
+  // Note §1 row 10: a swap means switching the cabinet off, which would cut a Pi that runs from the cabinet's 12 V buck
+  const powerNote = () => el("div", "warn dk-power",
+    "Run the Pi from its wall supply for this, not the 12 V buck off the cabinet: the cabinet gets switched off to pull the drive.");
+  function diskReadPanel(B, st) {
+    const p = el("div", "card"), ds = st.disks || [];
+    p.appendChild(powerNote());
+    const src = K.src && ds.find(d => d.name === K.src.name && d.role === "ok" && sameDrive(d.identity, K.src.identity));
+    if (K.src && !src) K.src = null;                 // taken off, or another drive in its place: pick it again
+    add(p, el("h2", null, "1 · SOURCE"),
+        driveTiles(st, d => { K.src = {name: d.name, identity: d.identity}; renderDisk(); }, src, 0));
+    add(p, el("h2", null, "2 · WHAT IT IS"));
+    const seg = el("div", "seg");
+    for (const [k, t] of DISK_MEDIA) {
+      const b = el("button", K.media === k ? "on" : null, t);
+      b.addEventListener("click", () => { K.media = k; renderDisk(); });
+      seg.appendChild(b);
+    }
+    add(p, seg, el("div", "mut", "The dock can't tell a disk from a card: say which it is."), machineRow());
+    const lb = el("button", null, K.label ? "LABEL: " + K.label : "TYPE A LABEL");
+    lb.addEventListener("click", async () => {
+      const v = await keypad({title: "A label for the image (e.g. WW-HDD, BOOT-CF)", max: 40, value: K.label || ""});
+      if (v == null) return;
+      const t = v.replace(/ /g, "-");
+      if (t && !DISK_LABEL.test(t)) return toast("A label is letters, digits, '.', '_' and '-': it becomes the file name", "warn", 6000);
+      K.label = t || null; renderDisk();
+    });
+    p.appendChild(lb);
+    add(p, el("h2", null, "3 · READ"));
+    const go = el("button", "primary dk-go", "READ");
+    go.disabled = !(src && K.media && K.label && st.store.mounted && st.spool && !st.busy);
+    go.addEventListener("click", () => {
+      const body = Object.assign({device: src.name, identity: src.identity, label: K.label, media: K.media},
+                                 K.machine ? {machine: K.machine} : {});
+      api("POST", "/api/disk/read", body).then(() => toast(`READ queued: ${src.name} as ${K.label}`)).catch(e => { fail(e); loadDisk(); });
+    });
+    const why = !st.store.mounted ? "waits for the image store" : st.busy ? "a disk job is running" : !src ? "pick the source"
+              : !K.media ? "say what it is" : !K.label ? "type a label"
+              : K.media === "hdd" ? "one pass with no retries: on bad areas it stops, and RETRY is your call"
+              : "reads it, then again past the cache: the two must match";
+    add(p, go, el("span", "mut", "  " + why));
+    B.appendChild(p);
+  }
+  async function pickDiskImage() {
+    const imgs = K.images || [];
+    const pick = await pickFrom("Which image goes onto the drive?", imgs.map(x => ({
+      key: x.image, title: x.label || base(x.image), find: [x.image.toLowerCase(), (x.label || "").toLowerCase(), x.machine || ""],
+      sub: `${x.machine} · ${GB(x.bytes)} · ${(x.media || "").toUpperCase()} · ${stamp(x.started)}${x.source ? " · from " + x.source : ""}`})),
+      K.image && K.image.image);
+    if (!pick) return;
+    K.image = imgs.find(x => x.image === pick); renderDisk();
+  }
+  function diskWrite(ack, verifyOnly) {
+    const body = {image: K.image.image, device: K.target.name};
+    if (verifyOnly) body.verify_only = true;
+    if (ack) body.ack = true;
+    return api("POST", "/api/disk/write", body)
+      .then(() => toast(verifyOnly ? `VERIFY queued: ${K.target.name}` : `WRITE armed: ${K.image.label} → ${K.target.name}`))
+      .catch(e => { fail(e); renderDisk(); });       // refused: a fresh hold button replaces the spent one
+  }
+  function diskWritePanel(B, st) {
+    const p = el("div", "card"), ds = st.disks || [], s = st.status || {}, imgs = K.images || [];
+    p.appendChild(powerNote());
+    if (K.image && !imgs.some(i => i.image === K.image.image)) K.image = null;
+    const tgt = K.target && ds.find(d => d.name === K.target.name && d.role === "ok" && sameDrive(d.identity, K.target.identity));
+    if (K.target && !tgt) K.target = null;
+    add(p, el("h2", null, "1 · IMAGE"));
+    const ir = el("div", "btnrow");
+    ir.style.alignItems = "center";
+    if (K.image) add(ir, el("span", "chip", K.image.label || base(K.image.image)),
+                     el("span", "mut", `${K.image.machine} · ${GB(K.image.bytes)} · ${stamp(K.image.started)} · SHA-1 ${(K.image.sha1 || "").slice(0, 8)}`));
+    const pick = el("button", null, K.image ? "OTHER IMAGE" : "PICK AN IMAGE");
+    pick.disabled = !imgs.length;
+    pick.addEventListener("click", pickDiskImage);
+    ir.appendChild(pick);
+    p.appendChild(ir);
+    if (!imgs.length) p.appendChild(el("div", "mut", st.store.mounted ? "No images in the store yet: READ a drive first."
+                                                                    : "The images are on the image store: plug it in."));
+    add(p, el("h2", null, "2 · TARGET"),
+        driveTiles(st, d => { K.target = {name: d.name, identity: d.identity}; renderDisk(); }, tgt, K.image ? K.image.bytes : 0));
+    add(p, el("h2", null, "3 · TARGET CHECK"));
+    const chk = el("button", null, "TARGET CHECK");
+    chk.disabled = !(K.image && tgt && st.store.mounted && st.spool && !st.busy);
+    chk.addEventListener("click", () => api("POST", "/api/disk/check", {image: K.image.image, device: tgt.name, identity: tgt.identity})
+      .then(() => toast(`TARGET CHECK queued: ${tgt.name}`)).catch(fail));
+    add(p, chk, el("span", "mut", "  the drive's identity, its size and what's on it now: nothing is written"));
+    add(p, el("h2", null, "4 · WRITE"));
+    const now = (Date.now() + S.offset) / 1000;
+    const ready = K.image && tgt && !st.busy && s.op === "check" && s.state === "done" && s.target_ok === true
+                  && String(s.image || "").endsWith("/" + K.image.image) && s.device === tgt.name && now - (s.at || 0) < 300;
+    clearTimeout(K.expT);
+    if (!ready) {
+      p.appendChild(el("div", "mut", "After a TARGET CHECK of this image and drive that passed (good for 5 minutes)."));
+    } else {
+      K.expT = setTimeout(renderDisk, Math.max(0, 300 - (now - s.at)) * 1000 + 500);   // the check runs out
+      if (s.already_written) {
+        p.appendChild(el("div", "cy", `${tgt.name} already holds this image.`));
+        const v = el("button", "primary", "VERIFY ONLY");
+        v.addEventListener("click", () => diskWrite(false, true));
+        add(p, v, el("span", "mut", "  reads it back twice: nothing is written"));
+      } else {
+        const acked = K.ackFor === s.job;
+        if (s.needs_ack) {
+          p.appendChild(el("div", "warn dk-over", `NOT BLANK. On ${tgt.name} now: ${contentsText(s.contents)}. Writing replaces all of it.`));
+          const ack = el("button", "dk-ack" + (acked ? " on" : ""), (acked ? "✓ " : "") + "OVERWRITE IT: I'M SURE");
+          ack.addEventListener("click", () => { K.ackFor = acked ? null : s.job; renderDisk(); });
+          p.appendChild(ack);
+        }
+        if (!s.needs_ack || acked) {
+          const label = s.needs_ack ? `HOLD 3 S TO OVERWRITE ${tgt.name} WITH ${K.image.label}` : `HOLD 3 S TO WRITE ${K.image.label} → ${tgt.name}`;
+          add(p, holdButton(label, 3000, () => diskWrite(!!s.needs_ack && acked, false), K, renderDisk),
+              el("div", "mut", "The hold arms it for 30 s. The drive is written, then read back twice."));
+        }
+      }
+    }
+    B.appendChild(p);
+  }
+  function diskImagesCard(st) {
+    const c = el("div", "card"), imgs = K.images;
+    c.appendChild(el("h2", null, "Images in the store"));
+    if (!st.store.mounted) { c.appendChild(el("div", "mut", "Plug in the image store to see its images.")); return c; }
+    if (!imgs) { c.appendChild(el("div", "mut", "Reading the store's list…")); return c; }
+    if (!imgs.length) { c.appendChild(el("div", "mut", "None yet: READ a drive and its image lands here.")); return c; }
+    for (const x of imgs.slice(0, 20)) {
+      const r = el("div", "dk-img"), arch = {pending: ["ARCHIVE PENDING", "mut"], uploaded: ["ARCHIVED", "ok"]}[x.archive];
+      add(r, el("b", null, (x.label || base(x.image)) + " "),
+          x.media ? el("span", "tag cy", x.media.toUpperCase()) : null,
+          el("span", "tag " + (x.reads === 2 ? "ok" : "mut"), x.reads === 2 ? "READ TWICE, MATCH" : "READ ONCE"),
+          arch ? el("span", "tag " + arch[1], arch[0]) : null,
+          el("div", "mut", `${x.machine} · ${GB(x.bytes)} · ${stamp(x.started)} · SHA-1 ${(x.sha1 || "").slice(0, 8)}`
+                           + (x.source ? " · from " + x.source : "")
+                           + (x.also_read ? ` · read again ${x.also_read} time${x.also_read > 1 ? "s" : ""}` : "")));
+      c.appendChild(r);
+    }
+    if (imgs.length > 20) c.appendChild(el("div", "mut", `and ${imgs.length - 20} older ones`));
+    return c;
+  }
+  // The swap checklist (note §4.4): it blocks nothing, and each tick keeps its time. One per write; one can be
+  // started on its own (a drive written elsewhere, an original put back).
+  function readingLine(L) {
+    const row = el("div", "dk-reading"), k = K.cap, cur = (S.st && S.st.machine) || null;
+    const slug = L.machine && L.machine !== "unassigned" ? L.machine : null;
+    add(row, el("span", k ? null : "mut", k ? `Last saved on this machine: ${k.label} ${savedText(k)} · ${stamp(parseFloat(k.epoch))}`
+                                            : "No reading saved on this machine yet."));
+    if (slug === cur) {                              // SAVE READING saves to the machine the logger has set
+      const b = el("button", "mini", "SAVE READING");
+      b.addEventListener("click", () => {
+        const cap = $("#b-capture");
+        if (cap.disabled) return toast("No live reading to save: the meter is off, or logging has stopped", "warn", 6000);
+        cap.click();
+      });
+      row.appendChild(b);
+    } else row.appendChild(el("span", "mut", "Pick this machine on MACHINE to save a reading to it."));
+    return row;
+  }
+  function checklistCard() {
+    const c = el("div", "card"), L = K.list;
+    c.appendChild(el("h2", null, "Swap checklist"));
+    if (!L) { c.appendChild(el("div", "mut", "Reading the checklist…")); return c; }
+    c.appendChild(el("div", "mut", !L.write ? "None yet: each WRITE starts one. NEW CHECKLIST starts one on its own."
+                                   : L.image ? `${base(L.image)} → ${L.device}${L.target ? " (" + L.target + ")" : ""} · ${stamp(L.at)}`
+                                   : `on its own · started ${stamp(L.at)}`));
+    const live = !!L.write;
+    for (const [when, title] of [["before", "Before the swap"], ["after", "After"]]) {
+      c.appendChild(el("h3", null, title));
+      for (const it of L.items.filter(i => i.when === when)) {
+        const row = el(live ? "button" : "div", "row dk-tick" + (it.done ? " done" : ""));
+        add(row, el("span", "dk-box", it.done ? "✓" : ""), el("span", "dk-t", it.text),
+            it.done && it.at ? el("span", "mut", hms(it.at)) : null);
+        if (live) row.addEventListener("click", () => api("POST", "/api/disk/checklist", {write: L.write, item: it.item, done: !it.done})
+          .then(r => { K.list = r; renderDisk(); }).catch(fail));
+        c.appendChild(row);
+        if (it.item === "five_volts") c.appendChild(readingLine(L));
+      }
+    }
+    {
+      const row = el("div", "btnrow"), nw = el("button", null, "NEW CHECKLIST"), other = el("button", null, "OTHER CHECKLIST");
+      row.style.marginTop = "8px";
+      nw.addEventListener("click", () => api("POST", "/api/disk/checklist/new", {})
+        .then(r => { K.list = r; K.listFor = r.write; renderDisk(); }).catch(fail));
+      other.addEventListener("click", async () => {
+        let r;
+        try { r = await api("GET", "/api/disk/checklists"); } catch (e) { return fail(e); }
+        if (!r.checklists.length) return toast("No checklists yet: each WRITE starts one", "warn");
+        const pick = await pickFrom("Which checklist?", r.checklists.map(x => ({
+          key: x.write, title: x.image ? `${base(x.image)} → ${x.device}` : "On its own", find: [(x.image || "").toLowerCase()],
+          sub: `${stamp(x.at)} · ${x.done} of ${x.of} ticked`})), L.write);
+        if (pick) loadChecklist(pick);
+      });
+      add(row, nw, other);
+      c.appendChild(row);
+    }
+    return c;
+  }
+
   // --- start ----------------------------------------------------------------------------------
   tick();
   loadProfiles().then(() => { renderMeter(); }).catch(fail);
@@ -2834,6 +3258,9 @@
   setInterval(loadSystem, 10000);
   setInterval(() => { if (S.view === "system") loadSystem(); }, 5000);
   setInterval(loadDevices, 15000);
+  loadDisk();
+  setInterval(() => { if (S.view === "disk") loadDisk(); }, 5000);     // a drive put on the dock shows up
+  setInterval(() => { if (S.view !== "disk") loadDisk(); }, 15000);    // the nav's line
   setInterval(() => { if (S.view === "sessions") loadSessions(); }, 30000);
   connect();
   window.GDashRunning = true;       // index.html's load check: this script ran to the end

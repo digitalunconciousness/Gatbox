@@ -168,6 +168,31 @@ a.btnlink{display:inline-flex;align-items:center;justify-content:center;min-heig
   border:1px solid var(--mag);border-radius:8px;font:600 17px/1.1 var(--disp);color:var(--fg);text-decoration:none;
   align-self:flex-start}
 
+/* DISK: the store's line, the drives as tiles (a drive that can't be picked is a dashed tile saying why), the
+   checklist's rows */
+#dk-body .card{overflow-wrap:anywhere}                     /* a SHA-1 or an image's name breaks, on a phone too */
+.dk-store{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:none}
+.dk-store b{font:600 17px/1.2 var(--disp);letter-spacing:.04em}
+.tiles.dk-drives{grid-template-columns:repeat(auto-fill,minmax(240px,1fr));overflow:visible;margin-bottom:4px}
+div.tile{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 14px}
+.tile.dk-no{border-style:dashed}
+.tile.dk-no>span:not(.badge){color:var(--mut)}
+button.dk-go{min-height:72px;min-width:220px;font-size:24px}
+.dk-bar{height:10px;border-radius:5px;background:var(--line);overflow:hidden;margin:6px 0}
+.dk-bar>div{height:100%;background:var(--cyan)}
+.dk-over{margin:8px 0 6px;font-size:16px}
+button.dk-ack{width:100%;margin:0 0 8px;border-color:var(--warn);color:var(--warn)}
+button.dk-ack.on{background:rgba(255,183,77,.14)}
+.dk-img{margin:6px 0}
+.dk-power{margin:0 0 8px}
+.dk-reading{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:-2px 0 8px 40px}
+.row.dk-tick{display:flex;align-items:center;gap:12px;margin:4px 0}
+div.dk-tick{border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+.dk-tick .dk-t{flex:1;min-width:0}
+.dk-box{flex:none;width:28px;height:28px;border:1px solid var(--line);border-radius:4px;display:inline-flex;
+  align-items:center;justify-content:center;color:var(--ok);font:600 20px/1 var(--disp)}
+.dk-tick.done{border-color:rgba(94,242,176,.55)}
+.dk-tick.done .dk-box{border-color:var(--ok)}
 /* CHECK: each comparison as a word and a level, then the marks */
 .ck-row{margin:8px 0}
 .ck-row .badge{margin-right:6px}
@@ -291,6 +316,8 @@ html.box body{padding:var(--safe-y) var(--safe-x);font-size:16px}
 html.box #sheet{padding:var(--safe-y) var(--safe-x)}
 html.box .unit,html.box #h-net,html.box #h-log{font-size:14px}
 html.box .badge{font-size:14px}
+/* eight tabs down the side: 56 px each fits the 7" without the nav scrolling */
+html.box nav button{min-height:56px}
 html.box nav button small,html.box .act small,html.box #m-saved,html.box .tag,html.box .sect pre,html.box .stat span,
 html.box .stat i,html.box table.t th,html.box .fld>span,html.box button.cite,html.box .quote{font-size:14px}
 html.box h3{font-size:15px}

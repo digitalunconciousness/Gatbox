@@ -1,0 +1,774 @@
+#!/usr/bin/env python3
+"""gatbox-disk — image an IDE, SATA, CF or SD drive into the image store, and write an image back to a drive.
+
+    gatbox-disk list                                        the USB disks, the empty slots and the image store
+    gatbox-disk read  -d sda -m SLUG -l LABEL --media hdd   image a drive (media: hdd, cf, sd or ssd)
+    gatbox-disk retry -m SLUG -l LABEL                      ddrescue -r3 on that read's map (after bad areas)
+    gatbox-disk check -i IMAGE -d sdb                       the TARGET CHECK, on its own
+    gatbox-disk write -i IMAGE -d sdb [--overwrite]         check, show both drives, type the model, write, verify
+
+The spec is docs/plans/2026-11-02-disk-imaging.md. What the 2026-11-02 swap done by hand taught, and so what this does:
+  * A drive is its model, size and sector size (and its ATA serial, once the bridge is known to pass it), never a
+    path: the dock gives every drive the same by-id name. It's identified again right before a write.
+  * Only whole USB disks are listed. mmcblk and nvme devices are never listed or opened; a 0-byte device is an empty
+    slot; a disk with anything mounted, the Pi's own system disk and the image store are never a source or target.
+  * Nothing is written under the image store unless it's mounted with its marker file (.gatbox-image-store).
+  * READ: ddrescue's one no-scrape pass; on bad areas it stops with the map's summary, and only a RETRY (the tech's
+    call: an old drive's spin-ups) runs ddrescue -r3 on the same map. Flash media (CF, SD, SSD) is read a second
+    time with O_DIRECT and must hash the same. The image is <label>_<YYYYmmdd>_<sha1:8>.img beside its map and its
+    .json sidecar, and the same bytes are never stored twice. Each new image is queued for the archive.
+  * TARGET CHECK: big enough, 512-byte sectors, not the image's own source drive, and what's on it now (read-only).
+  * WRITE: a passing check of the same image and drive less than 5 minutes old, the drive identified again, held
+    with O_EXCL (the kernel refuses that while anything is mounted), the image's bytes written and fsynced, then two
+    O_DIRECT reads of exactly that many bytes, both hashing to the image. One line in <store>/writes.jsonl, stopped
+    or verified. The rest of a larger drive is left untouched.
+
+Not here yet (the note's §10): the MAME CHD check (Task 3: the chdman parser waits for Task 0's real output), the
+dashboard's job mode (Task 4/5), and what needs the dock's pass-through known first (Task 0 stage 3): the drive's ATA
+serial and CHS, and an HDD's health line from smartctl.
+
+Environment: GATBOX_DISKS (the image store, default /srv/gatbox/disks), GATBOX_API (gatbox-web, for the current
+machine and the clock source; default http://127.0.0.1). Tests only: GATBOX_SYSFS, GATBOX_DEV, GATBOX_MOUNTINFO (a
+fake sysfs tree, plain files standing in for devices, a fake mount table) and GATBOX_DDRESCUE (tests/fake-ddrescue).
+"""
+import argparse
+import datetime
+import errno
+import glob
+import hashlib
+import json
+import mmap
+import os
+import re
+import stat
+import struct
+import subprocess
+import sys
+import time
+import urllib.request
+
+
+def lib_path():
+    env = os.environ.get("GATBOX_LIB")
+    if env:
+        return env
+    repo = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "backend")
+    return repo if os.path.isdir(os.path.join(repo, "gatboxlib")) else "/usr/local/lib/gatbox"
+
+
+sys.path.insert(0, lib_path())
+from gatboxlib.disks import (DISKS, MARKER, REFUSED, describe, disks, images, read_file,  # noqa: E402
+                             same_drive, store_mounted)
+
+DDRESCUE = os.environ.get("GATBOX_DDRESCUE", "ddrescue")
+API = os.environ.get("GATBOX_API", "http://127.0.0.1")
+LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$")       # a drive label, safe as a file name
+SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+MEDIA = ("hdd", "cf", "sd", "ssd")
+FLASH = ("cf", "sd", "ssd")
+SECTOR = 512                                                     # the IDE2SAT2 takes nothing else (note §4.2)
+CHECK_FRESH_S = 300                                              # a TARGET CHECK is good for 5 minutes
+CHUNK = 4 << 20                                                  # read and write in 4 MiB pieces
+
+
+class Stop(Exception):
+    """A reason to stop, for the person at the dock (and, later, the dashboard's result card)."""
+    def __init__(self, what, hint="", **extra):
+        super().__init__(what)
+        self.what, self.hint, self.extra = what, hint, extra
+
+
+def api(path):
+    try:
+        with urllib.request.urlopen(API + path, timeout=3) as r:
+            return json.loads(r.read())
+    except (OSError, ValueError):
+        return None
+
+
+def clock_source():
+    s = api("/api/system")
+    return ((s or {}).get("clock") or {}).get("source") or "unknown"
+
+
+def current_machine():
+    m = api("/api/machine")
+    return (m or {}).get("slug") or "unassigned"
+
+
+def now_iso():
+    return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+# --- what's plugged in ---------------------------------------------------------------------------------------------
+
+def require_store():
+    if not store_mounted():
+        raise Stop("IMAGE STORE NOT CONNECTED",
+                   f"plug in the image-store drive: {DISKS} must be its mount, with its {MARKER} marker")
+
+
+def pick(name):
+    """The disk called NAME, if it may be a source or target; otherwise a Stop saying why."""
+    for d in disks():
+        if d["name"] == name:
+            if d["role"] != "ok":
+                what, hint = REFUSED[d["role"]]
+                raise Stop(what.format(n=name, m=", ".join(d["mounted"])), hint)
+            return d
+    raise Stop(f"no USB disk called {name!r}", "gatbox-disk list shows what's plugged in (an SD card or NVMe drive "
+               "on the Pi itself is never offered)")
+
+
+# --- reading and hashing ---------------------------------------------------------------------------------------------
+
+def _is_block(path):
+    try:
+        return stat.S_ISBLK(os.stat(path).st_mode)
+    except OSError:
+        return False
+
+
+def hashed_read(path, length, sha256=False):
+    """SHA-1 (and SHA-256) of exactly the first LENGTH bytes of PATH. A block device is read with O_DIRECT, past the
+    page cache, so a verify reads the drive and not memory, with no replug needed (note §1, row 6). The plain files
+    that stand in for devices in the tests are read normally: tmpfs refuses O_DIRECT."""
+    h1, h2 = hashlib.sha1(), (hashlib.sha256() if sha256 else None)
+    direct = _is_block(path)
+    fd = os.open(path, os.O_RDONLY | (os.O_DIRECT if direct else 0))
+    try:
+        buf = mmap.mmap(-1, CHUNK)                  # page-aligned, as O_DIRECT needs
+        view = memoryview(buf)
+        try:
+            done = 0
+            while done < length:
+                want = min(CHUNK, length - done)
+                if direct and want % SECTOR:
+                    want += SECTOR - want % SECTOR  # O_DIRECT reads whole sectors; only LENGTH bytes are hashed
+                n = os.preadv(fd, [view[:want]], done)
+                if n <= 0:
+                    raise Stop(f"{path} ended after {done:,} bytes, before {length:,}", "the drive or card went away")
+                take = min(n, length - done)
+                h1.update(view[:take])
+                if h2:
+                    h2.update(view[:take])
+                done += take
+        finally:
+            view.release()
+            buf.close()
+    finally:
+        os.close(fd)
+    return (h1.hexdigest(), h2.hexdigest()) if h2 else h1.hexdigest()
+
+
+def read_map(path):
+    """GNU ddrescue's mapfile: comment lines, the status line, then one "pos size status" line per block, in hex.
+    Status + is rescued; - bad sector; ? not tried; * not trimmed; / not scraped."""
+    blocks, status_seen = [], False
+    for line in read_file(path).splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        f = line.split()
+        if not status_seen:
+            status_seen = True
+            continue
+        blocks.append((int(f[0], 0), int(f[1], 0), f[2]))
+    return blocks
+
+
+def map_summary(path, size):
+    blocks = read_map(path)
+    rescued = sum(s for _, s, st in blocks if st == "+")
+    bad = [(p, s, st) for p, s, st in blocks if st != "+"]
+    return {"rescued_bytes": rescued, "rescued_pct": round(100.0 * rescued / size, 3) if size else 0.0,
+            "bad_areas": len(bad), "bad_bytes": sum(s for _, s, _ in bad),
+            "complete": not bad and rescued == size}
+
+
+# --- READ -------------------------------------------------------------------------------------------------------------
+
+class Work:
+    """One job's running record, printed as it goes and kept for the result."""
+    def __init__(self, status=None, say=print):
+        self.status_file, self.say = status, say
+        self.info = {"steps": []}
+
+    def step(self, name, detail="", progress=None):
+        self.info["steps"].append({"step": name, "detail": detail, "at": round(time.time(), 3)})
+        self.say(f"  {name}" + (f": {detail}" if detail else ""))
+        if self.status_file:
+            tmp = self.status_file + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(dict(self.info, state="running", step=name, detail=detail, progress=progress), f)
+            os.replace(tmp, self.status_file)
+
+
+class Read(Work):
+    """EXPECT: the identity the dashboard showed when the drive was picked. The job refuses a different drive."""
+    def __init__(self, device, machine, label, media, realm=None, note="", expect=None, status=None, say=print):
+        super().__init__(status, say)
+        self.device, self.machine, self.label, self.media, self.expect = device, machine, label, media, expect
+        self.info.update(op="read", device=device, machine=machine, label=label, media=media, realm=realm, note=note)
+
+    def paths(self):
+        folder = os.path.join(os.path.realpath(DISKS), self.machine)
+        base = os.path.join(folder, self.label)
+        return folder, base + ".img.part", base + ".map", base + ".read.json"
+
+    def go(self, retry=False):
+        require_store()
+        if not LABEL.match(self.label):
+            raise Stop("label: 1-40 of letters, digits, '.', '_', '-' (it becomes the file name)")
+        if self.machine != "unassigned" and not SLUG.match(self.machine):
+            raise Stop(f"machine: not a roster slug: {self.machine!r}")
+        if not retry and self.media not in MEDIA:
+            raise Stop(f"media: one of {', '.join(MEDIA)}", "the tech picks it: a USB bridge can't tell a disk from flash")
+        folder, part, mapf, state = self.paths()
+        if retry:
+            st = self._state(state)
+            d = self._find_again(st["identity"])
+            self.device, self.media = d["name"], st["media"]
+            self.info.update(device=d["name"], media=st["media"], started=st["started"],
+                             realm=st.get("realm"), note=st.get("note", ""))
+        else:
+            d = pick(self.device)
+            if self.expect is not None and not same_drive(d["identity"], self.expect):
+                raise Stop(f"{d['name']} is a different drive from the one picked ({describe(d['identity'])})",
+                           "nothing was read: pick the drive again")
+            os.makedirs(folder, exist_ok=True)
+            if os.path.exists(state):                   # an interrupted read of the same drive and label: resume it
+                st = self._state(state)
+                if not same_drive(st["identity"], d["identity"]):
+                    raise Stop(f"{self.label} was started on another drive ({describe(st['identity'])})",
+                               "use another label, or finish that read with retry")
+                self.info["started"] = st["started"]
+            else:
+                self.info["started"] = round(time.time(), 3)
+                self._save_state(state, d["identity"])
+        ident = d["identity"]
+        self.info["source"] = ident
+        self.step("identified", f"{d['name']}: {describe(ident)}", progress=0.02)
+        size = ident["bytes"]
+        if retry:
+            self.step("retry", "ddrescue -r3 on the same map", progress=0.05)
+            self._ddrescue(["-r3"], d["node"], part, mapf)
+        else:
+            self.step("read", "ddrescue, one pass with no scraping", progress=0.05)
+            self._ddrescue(["-n", "--sparse"], d["node"], part, mapf)
+        summary = map_summary(mapf, size)
+        self.info["ddrescue"] = summary
+        if not summary["complete"]:
+            raise Stop(f"bad areas: {summary['rescued_pct']}% rescued, {summary['bad_areas']} bad area(s), "
+                       f"{summary['bad_bytes']:,} bytes not read",
+                       "RETRY runs ddrescue -r3 on the same map. It's your call on an old drive: each pass spins it up",
+                       needs_retry=True)
+        self.step("hash", "SHA-1 and SHA-256", progress=0.8)
+        sha1, sha256 = hashed_read(part, size, sha256=True)
+        self.info.update(sha1=sha1, sha256=sha256, bytes=size, reads=1)
+        if self.media in FLASH:
+            self.step("second read", "flash: the whole card again, past the cache", progress=0.85)
+            again = hashed_read(d["node"], size)
+            if again != sha1:
+                raise Stop("the card reads differently twice: flaky",
+                           "reseat it (or try another reader slot) and read again; the first read is kept as .part")
+            self.info.update(reads=2, identical=True)
+        self.store(folder, part, mapf, state)
+        return self.info
+
+    def _state(self, state):
+        try:
+            with open(state) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            raise Stop(f"no read of {self.label} in progress for {self.machine}", "start it with read") from None
+
+    def _save_state(self, state, ident):
+        with open(state + ".tmp", "w") as f:
+            json.dump({"identity": ident, "media": self.media, "started": self.info["started"],
+                       "realm": self.info.get("realm"), "note": self.info.get("note", "")}, f)
+        os.replace(state + ".tmp", state)
+
+    def _find_again(self, ident):
+        """The drive a read started on, wherever it's plugged in now (the dock's name for it can change)."""
+        for d in disks():
+            if same_drive(d["identity"], ident):
+                if d["role"] != "ok":
+                    what, hint = REFUSED[d["role"]]
+                    raise Stop(what.format(n=d["name"], m=", ".join(d["mounted"])), hint)
+                return d
+        raise Stop(f"the drive this read started on isn't plugged in ({describe(ident)})",
+                   "plug it back into the dock and wait for it to show in gatbox-disk list")
+
+    def _ddrescue(self, opts, node, part, mapf):
+        r = subprocess.run([DDRESCUE, *opts, node, part, mapf], capture_output=True, text=True)
+        self.info.setdefault("passes", []).append({"opts": opts, "exit": r.returncode, "at": round(time.time(), 3)})
+        if r.returncode != 0:
+            tail = " / ".join(l for l in (r.stderr or r.stdout).strip().splitlines()[-3:])
+            raise Stop(f"ddrescue exited {r.returncode}: {tail}", "the map and the partial image are kept; RETRY resumes")
+
+    def store(self, folder, part, mapf, state):
+        """Name the image after its label, its read's date and its SHA-1; never store the same bytes twice."""
+        sha1 = self.info["sha1"]
+        day = time.strftime("%Y%m%d", time.localtime(self.info["started"]))
+        for side in glob.glob(os.path.join(folder, "*.json")):
+            if side.endswith(".read.json"):
+                continue
+            try:
+                with open(side) as f:
+                    old = json.load(f)
+            except (OSError, ValueError):
+                continue
+            if old.get("sha1") == sha1:
+                old.setdefault("also_read", []).append({"date": day, "label": self.label, "epoch": round(time.time(), 3)})
+                with open(side + ".tmp", "w") as f:
+                    json.dump(old, f, indent=1)
+                os.replace(side + ".tmp", side)
+                for p in (part, mapf, state):
+                    os.remove(p)
+                img = side[:-5] + ".img"
+                self.info["stored"] = {"path": img, "new": False}
+                self.step("store", "already in the store as " + os.path.basename(img), progress=1.0)
+                return
+        base = os.path.join(folder, f"{self.label}_{day}_{sha1[:8]}")
+        if os.path.exists(base + ".img") or os.path.exists(base + ".json"):
+            raise Stop(f"{base}.img already exists with different contents", "use another label")
+        os.link(part, base + ".img")                    # never overwrites: link fails if the name exists
+        os.remove(part)
+        os.replace(mapf, base + ".map")
+        self.info["stored"] = {"path": base + ".img", "new": True}
+        self.info["archive"] = {"state": "pending"}
+        with open(os.open(base + ".json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644), "w") as f:
+            json.dump(self.sidecar(), f, indent=1)
+        os.remove(state)
+        queue(sha1, self.info["sha256"], base + ".img", self.machine)
+        self.step("store", base + ".img", progress=1.0)
+
+    def sidecar(self):
+        i = self.info
+        return {"label": i["label"], "machine": i["machine"], "realm": i.get("realm"), "media": i["media"],
+                "source": i["source"], "bytes": i["bytes"], "sha1": i["sha1"], "sha256": i["sha256"],
+                "ddrescue": i["ddrescue"], "passes": i.get("passes", []), "reads": i["reads"],
+                "identical": i.get("identical"),
+                "mame": {"state": "not run", "why": "the MAME CHD check comes with Task 3"},
+                "archive": i["archive"], "started": i["started"], "finished": round(time.time(), 3),
+                "date": now_iso(), "clock": clock_source(), "note": i.get("note", ""), "also_read": [],
+                "tool": "gatbox-disk"}
+
+
+def queue(sha1, sha256, path, machine):
+    """One line per image in <store>/archive-queue.jsonl, keyed by SHA-256. Phase D's sync drains it."""
+    q = os.path.join(os.path.realpath(DISKS), "archive-queue.jsonl")
+    for line in read_file(q).splitlines():
+        try:
+            if json.loads(line).get("sha256") == sha256:
+                return
+        except ValueError:
+            continue
+    with open(q, "a") as f:
+        f.write(json.dumps({"sha256": sha256, "sha1": sha1, "path": path, "machine": machine, "kind": "disk_image",
+                            "queued": round(time.time(), 3)}) + "\n")
+
+
+# --- TARGET CHECK -------------------------------------------------------------------------------------------------------
+
+def image_in_store(path):
+    """An image this may write: a .img with its sidecar, inside the image store (relative to it, or absolute)."""
+    store = os.path.realpath(DISKS)
+    real = os.path.realpath(path if os.path.isabs(path) else os.path.join(store, path))
+    if not real.startswith(store + os.sep) or not real.endswith(".img") or not os.path.isfile(real):
+        raise Stop(f"{path!r} isn't an image in the store", "gatbox-disk list --images shows them")
+    try:
+        with open(real[:-4] + ".json") as f:
+            side = json.load(f)
+    except (OSError, ValueError):
+        raise Stop(f"{os.path.basename(real)} has no sidecar", "only images this tool stored can be written") from None
+    return real, side
+
+
+def _fs(b, off):
+    """The filesystem whose signature starts at OFF in B, and its label: FAT, exFAT, NTFS, ext2/3/4, ISO 9660, swap,
+    LUKS. A read-only look at the first bytes, the same on a drive and on the plain files the tests use."""
+    def at(o, n):
+        return b[off + o:off + o + n]
+    if at(0, 6) == b"LUKS\xba\xbe":
+        return "crypto_LUKS", ""
+    if at(3, 8) == b"EXFAT   ":
+        return "exfat", ""
+    if at(3, 8) == b"NTFS    ":
+        return "ntfs", ""
+    if at(510, 2) == b"\x55\xaa" and at(82, 5) == b"FAT32":
+        return "vfat", at(71, 11).decode("ascii", "replace").strip()
+    if at(510, 2) == b"\x55\xaa" and at(54, 3) == b"FAT":
+        return "vfat", at(43, 11).decode("ascii", "replace").strip()
+    if len(b) >= off + 1024 + 136 and at(1024 + 56, 2) == b"\x53\xef":
+        return "ext4", at(1024 + 120, 16).rstrip(b"\0").decode("utf-8", "replace")
+    if at(32769, 5) == b"CD001":
+        return "iso9660", at(32808, 32).decode("ascii", "replace").strip()
+    if at(4086, 10) == b"SWAPSPACE2":
+        return "swap", ""
+    return None, ""
+
+
+def contents(node, logical=SECTOR):
+    """What's on a drive now, read-only: its partition table (dos or gpt) and each partition's filesystem and label,
+    or a filesystem on the whole drive. Blank = none of that, and the first MiB all zeros (or all 0xFF)."""
+    def read_at(fd, off, n):
+        return os.pread(fd, n, off)
+    fd = os.open(node, os.O_RDONLY)
+    try:
+        head = read_at(fd, 0, 1 << 20)
+        out = {"table": None, "partitions": [], "fs": None, "label": ""}
+        mbr = len(head) >= 512 and head[510:512] == b"\x55\xaa" and _fs(head, 0)[0] is None
+        entries = []
+        if mbr:
+            for i in range(4):
+                e = head[446 + 16 * i:446 + 16 * (i + 1)]
+                ptype, start, count = e[4], struct.unpack("<I", e[8:12])[0], struct.unpack("<I", e[12:16])[0]
+                if ptype and count:
+                    entries.append((i + 1, start, count, f"0x{ptype:02x}"))
+            if any(t == "0xee" for *_, t in entries) and head[logical:logical + 8] == b"EFI PART":
+                gpt = head[logical:logical + 92]
+                lba, n, size = struct.unpack("<Q", gpt[72:80])[0], struct.unpack("<I", gpt[80:84])[0], struct.unpack("<I", gpt[84:88])[0]
+                raw = read_at(fd, lba * logical, min(n, 128) * size)
+                entries = []
+                for i in range(min(n, 128)):
+                    e = raw[i * size:(i + 1) * size]
+                    if len(e) < 128 or e[:16] == b"\0" * 16:
+                        continue
+                    first, last = struct.unpack("<Q", e[32:40])[0], struct.unpack("<Q", e[40:48])[0]
+                    name = e[56:128].decode("utf-16-le", "replace").rstrip("\0")
+                    entries.append((i + 1, first, last - first + 1, name or "gpt"))
+                out["table"] = "gpt"
+            else:
+                out["table"] = "dos"
+        for n, start, count, ptype in entries:
+            b = read_at(fd, start * logical, 64 << 10)
+            fs, label = _fs(b, 0)
+            out["partitions"].append({"n": n, "start": start * logical, "bytes": count * logical, "type": ptype,
+                                      "fs": fs, "label": label})
+        if not entries:
+            out["fs"], out["label"] = _fs(head, 0)
+        filler = head[:1 << 20]
+        out["blank"] = (not out["table"] and not out["fs"]
+                        and (filler == bytes(len(filler)) or filler == b"\xff" * len(filler)))
+        return out
+    finally:
+        os.close(fd)
+
+
+def say_contents(c):
+    if c["blank"]:
+        return "blank: no signatures found, and the first MiB is empty"
+    if c["table"]:
+        parts = "; ".join(f"partition {p['n']} {p['bytes']:,} bytes" + (f" {p['fs']}" if p["fs"] else "")
+                          + (f" '{p['label']}'" if p["label"] else "") for p in c["partitions"])
+        return f"{c['table']} partition table: " + (parts or "no partitions")
+    if c["fs"]:
+        return f"a {c['fs']} filesystem on the whole drive" + (f" '{c['label']}'" if c["label"] else "")
+    return "no signatures found, but the first MiB isn't empty"
+
+
+def check(image, device, say=print, expect=None):
+    """The TARGET CHECK (the burn's BLANK CHECK): every reason to refuse, before anything is written."""
+    require_store()
+    img, side = image_in_store(image)
+    d = pick(device)
+    if expect is not None and not same_drive(d["identity"], expect):
+        raise Stop(f"{d['name']} is a different drive from the one picked ({describe(d['identity'])})",
+                   "pick the target again")
+    ident, size = d["identity"], os.path.getsize(img)
+    if ident["bytes"] < size:
+        raise Stop(f"too small: {d['name']} holds {ident['bytes']:,} bytes, the image is {size:,}",
+                   "a target must hold at least the image's bytes")
+    if ident["logical"] != SECTOR:
+        raise Stop(f"{d['name']} has {ident['logical']}-byte sectors", "the IDE2SAT2 needs 512-byte sectors")
+    src = side.get("source") or {}
+    if src.get("model") == ident["model"] and src.get("vendor") == ident["vendor"] and (
+            (src.get("serial") and src.get("serial") == ident.get("serial"))
+            or (not (src.get("serial") and ident.get("serial")) and src.get("bytes") == ident["bytes"])):
+        raise Stop("this is the drive the image came from", "same model and " + (
+            "serial" if src.get("serial") else "size") + ": put the new drive on the dock")
+    c = contents(d["node"], ident["logical"])
+    head = min(size, 1 << 20)
+    already = False
+    if hashed_read(d["node"], head) == hashed_read(img, head):
+        already = hashed_read(d["node"], size) == side.get("sha1")
+    result = {"op": "check", "target_ok": True, "image": img, "sha1": side.get("sha1"), "bytes": size,
+              "device": d["name"], "identity": ident, "contents": c, "needs_ack": not c["blank"],
+              "already_written": already, "at": round(time.time(), 3)}
+    say(f"  target  {d['name']}: {describe(ident)}")
+    say(f"          {say_contents(c)}")
+    if already:
+        say("          already holds this image: VERIFY ONLY is all it needs")
+    return result
+
+
+# --- WRITE --------------------------------------------------------------------------------------------------------------
+
+class Write(Work):
+    """The go-ahead is ARMED (the dashboard's hold on the Pi's own screen, checked by gatbox-web) or CONFIRM (the
+    terminal: the target's model typed, once both drives are on screen). Every refusal from here on is logged."""
+    def __init__(self, checked, ack=False, armed=None, confirm=None, machine=None, realm=None, status=None, say=print):
+        super().__init__(status, say)
+        self.checked, self.ack, self.armed, self.confirm = checked, ack, armed, confirm
+        self.info.update(op="write", image=checked.get("image"), sha1=checked.get("sha1"), bytes=checked.get("bytes"),
+                         device=checked.get("device"), ack=ack, armed=armed, machine=machine, realm=realm,
+                         contents=checked.get("contents"))
+
+    def go(self, verify_only=False):
+        c = self.checked
+        try:
+            require_store()
+            if not c.get("target_ok"):
+                raise Stop("there's no passing TARGET CHECK", "check the drive first")
+            until = (self.armed or {}).get("until")
+            if until is not None and time.time() > until:
+                raise Stop("the 30-second arm ran out before the job started", "nothing was written: hold WRITE again")
+            if time.time() - c.get("at", 0) > CHECK_FRESH_S:
+                raise Stop("the TARGET CHECK is more than 5 minutes old", "check the drive again")
+            if c.get("needs_ack") and not self.ack and not verify_only:
+                raise Stop("the target isn't blank: " + say_contents(c["contents"]),
+                           "acknowledge that it gets overwritten (--overwrite)")
+            d = pick(c["device"])
+            if not same_drive(d["identity"], c["identity"]):
+                raise Stop(f"{c['device']} is a different drive from the one checked ({describe(d['identity'])})",
+                           "nothing was written: check the drive that's on the dock now")
+            img, side = image_in_store(c["image"])
+            if side.get("sha1") != c["sha1"]:
+                raise Stop("the image changed since the check", "check again")
+            self.info["target"] = d["identity"]
+            if self.armed is None and (self.confirm is None or not self.confirm(self)):
+                raise Stop("the model wasn't typed: nothing was written")
+            size = c["bytes"]
+            try:
+                fd = os.open(d["node"], os.O_WRONLY | os.O_EXCL)   # on a block device: refused while anything holds it
+            except OSError as e:
+                if e.errno == errno.EBUSY:
+                    raise Stop(f"{d['name']} is busy: something has it mounted or open", "nothing was written") from None
+                raise
+            self.info["verify_only"] = verify_only
+            try:
+                if not verify_only:
+                    self.info["written"] = True     # from here on a stop leaves the drive partly written
+                    self.step("write", f"{size:,} bytes to {d['name']}", progress=0.05)
+                    with open(img, "rb") as src:
+                        done = 0
+                        while done < size:
+                            piece = src.read(min(CHUNK, size - done))
+                            if not piece:
+                                raise Stop("the image ended early", "the store's copy is damaged: nothing more written")
+                            os.pwrite(fd, piece, done)
+                            done += len(piece)
+                    os.fsync(fd)
+                for n in (1, 2):
+                    self.step("verify", f"read-back {n} of 2, exactly {size:,} bytes, past the cache", progress=0.7 + 0.15 * n)
+                    got = hashed_read(d["node"], size)
+                    if got != c["sha1"]:
+                        raise Stop(f"verify {n} doesn't match the image (SHA-1 {got[:12]}…)",
+                                   "the drive didn't take the image: try another one")
+            finally:
+                os.close(fd)
+            beyond = d["identity"]["bytes"] - size
+            self.info.update(verified=True, state="done", untouched_bytes=beyond)
+            self.step("verified", f"{size:,} bytes written and read back twice; {beyond:,} bytes beyond them untouched",
+                      progress=1.0)
+            return self.info
+        except Stop as s:
+            self.info.update(state="stopped", error=s.what, hint=s.hint)
+            raise
+        except Exception as e:                      # a crash mid-write is still logged, as stopped
+            self.info.update(state="stopped", error=f"gatbox-disk failed: {e!r}")
+            raise
+        finally:
+            self.log()
+
+    def log(self):
+        """One line per write, stopped or verified, in <store>/writes.jsonl (only on the store itself)."""
+        if not store_mounted():
+            return
+        i = self.info
+        line = {"date": now_iso(), "epoch": round(time.time(), 3), "state": "verified" if i.get("verified") else "stopped",
+                "image": i.get("image"), "sha1": i.get("sha1"), "bytes": i.get("bytes"), "target": i.get("target"),
+                "device": i.get("device"), "machine": i.get("machine"), "realm": i.get("realm"), "ack": i.get("ack"),
+                "armed": i.get("armed"), "contents": i.get("contents"), "untouched_bytes": i.get("untouched_bytes"),
+                "written": bool(i.get("written")), "verify_only": bool(i.get("verify_only")), "error": i.get("error"),
+                "tool": "gatbox-disk"}
+        with open(os.path.join(os.path.realpath(DISKS), "writes.jsonl"), "a") as f:
+            f.write(json.dumps(line) + "\n")
+
+
+# --- the terminal ---------------------------------------------------------------------------------------------------------
+
+def show_list(as_json):
+    ds, store = disks(), store_mounted()
+    if as_json:
+        print(json.dumps({"disks": ds, "store": {"path": DISKS, "mounted": store}, "images": images() if store else []}))
+        return 0
+    print(f"image store {DISKS}: " + ("mounted" if store else "NOT CONNECTED"))
+    if not ds:
+        print("no USB disks")
+    for d in ds:
+        tag = {"ok": "", "empty": "  (empty slot)", "store": "  IMAGE STORE", "system": "  (the Pi's system: never used)",
+               "mounted": "  (mounted: " + ", ".join(d["mounted"]) + ")"}[d["role"]]
+        print(f"  {d['name']:5} {describe(d['identity'])} · USB {d['identity']['usb']}{tag}")
+    if store:
+        for i in images():
+            print(f"  image {i['image']} · {i['bytes']:,} bytes · {i['media']} · archive {i['archive']}")
+    return 0
+
+
+def report_stop(s, as_json, info=None):
+    out = dict(info or {}, state="stopped", error=s.what, hint=s.hint, **s.extra)
+    if as_json:
+        print(json.dumps(out))
+    else:
+        print(f"\nSTOPPED: {s.what}" + (f"\n  → {s.hint}" if s.hint else ""))
+    return 2
+
+
+def run_job(request, status):
+    """The dashboard's disk job (gatbox-disk.service, started by gatbox-disk.path when gatbox-web drops request.json in
+    the spool). Claims the request (rename → running.json, so the path unit doesn't fire again), runs it, writes the
+    outcome to the status file, removes running.json. A stopped job is a normal outcome: exit 0. A write re-checks its
+    own preconditions (the arm's 30 seconds, the check's 5 minutes, the same drive), whatever gatbox-web checked."""
+    running = os.path.join(os.path.dirname(request), "running.json")
+    try:
+        os.replace(request, running)
+    except FileNotFoundError:
+        return 0
+    say = (lambda m: print("gatbox-disk:" + m, flush=True))
+    w = Work(status, say)
+    try:
+        try:
+            with open(running) as f:
+                req = json.load(f)
+            op = req.get("op")
+            base = {"op": op, "job": req.get("id"), "requested_at": req.get("at")}
+            machine = str(req.get("machine") or "unassigned")
+            if op in ("read", "retry"):
+                w = Read(req.get("device"), machine, str(req.get("label", "")), req.get("media"),
+                         realm=req.get("realm"), note=str(req.get("note") or "")[:500],
+                         expect=req.get("identity") if op == "read" else None, status=status, say=say)
+                w.info.update(base)
+                w.go(retry=op == "retry")
+            elif op == "check":
+                w.info.update(base, image=req.get("image"), device=req.get("device"))
+                w.step("check", f"{req.get('device')} for {os.path.basename(str(req.get('image')))}", progress=0.1)
+                w.info.update(check(str(req.get("image")), str(req.get("device")), say=say, expect=req.get("identity")))
+            elif op == "write":
+                w = Write(req.get("check") or {}, ack=req.get("ack") is True, armed=req.get("armed"),
+                          machine=req.get("machine"), realm=req.get("realm"), status=status, say=say)
+                w.info.update(base)
+                w.go(verify_only=req.get("verify_only") is True)
+            else:
+                raise Stop(f"unknown job {op!r}", "gatbox-web validates these; this shouldn't happen")
+            w.info["state"] = "done"
+        except Stop as e:
+            w.info.update(state="stopped", error=e.what, hint=e.hint, **e.extra)
+        except Exception as e:                      # a crash still ends as a result the dashboard can show
+            w.info.update(state="stopped", error=f"gatbox-disk failed: {e!r}", hint="see journalctl -u gatbox-disk")
+        w.info["finished_at"] = round(time.time(), 3)
+        with open(status + ".tmp", "w") as f:
+            json.dump(w.info, f)
+        os.replace(status + ".tmp", status)
+        print(f"gatbox-disk: {w.info.get('op')}: {w.info['state']}: {w.info.get('error') or ''}", flush=True)
+        return 0
+    finally:
+        try:
+            os.remove(running)
+        except FileNotFoundError:
+            pass
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="gatbox-disk", description=__doc__.split("\n")[0])
+    ap.add_argument("--job", help=argparse.SUPPRESS)        # the dashboard job's request file (gatbox-disk.service)
+    ap.add_argument("--status", help=argparse.SUPPRESS)     # ... and its progress and result file
+    sub = ap.add_subparsers(dest="cmd")
+    p = sub.add_parser("list", help="the USB disks, empty slots, the image store and its images")
+    p.add_argument("--json", action="store_true")
+    p = sub.add_parser("read", help="image a drive into the store")
+    p.add_argument("-d", "--device", required=True, help="a name from gatbox-disk list (sda, sdb ...)")
+    p.add_argument("-m", "--machine")
+    p.add_argument("-l", "--label", required=True)
+    p.add_argument("--media", required=True, choices=MEDIA)
+    p.add_argument("--note", default="")
+    p.add_argument("--json", action="store_true")
+    p = sub.add_parser("retry", help="ddrescue -r3 on a read that stopped on bad areas")
+    p.add_argument("-m", "--machine")
+    p.add_argument("-l", "--label", required=True)
+    p.add_argument("--json", action="store_true")
+    for name in ("check", "write"):
+        p = sub.add_parser(name, help="the TARGET CHECK" if name == "check" else "check, then write and verify")
+        p.add_argument("-i", "--image", required=True, help="an image in the store (as gatbox-disk list shows it)")
+        p.add_argument("-d", "--device", required=True)
+        p.add_argument("--json", action="store_true")
+        if name == "write":
+            p.add_argument("--overwrite", action="store_true", help="the target isn't blank, and that's fine")
+            p.add_argument("--verify-only", action="store_true", help="it already holds the image: read it back twice")
+    args = ap.parse_args()
+    if args.job:
+        return run_job(args.job, args.status or os.path.join(os.path.dirname(args.job), "status.json"))
+    if not args.cmd:
+        ap.error("a command is needed: list, read, retry, check or write")
+    # the store is shared by the owner (terminal) and the dashboard's job, both in its group, and setgid
+    os.umask(0o002)
+    say = (lambda *a: None) if getattr(args, "json", False) else print
+
+    if args.cmd == "list":
+        return show_list(args.json)
+
+    if args.cmd in ("read", "retry"):
+        machine = args.machine or current_machine()
+        r = Read(getattr(args, "device", None), machine, args.label, getattr(args, "media", None),
+                 note=getattr(args, "note", ""), say=say)
+        try:
+            info = r.go(retry=args.cmd == "retry")
+        except Stop as s:
+            return report_stop(s, args.json, r.info)
+        if args.json:
+            print(json.dumps(dict(info, state="done")))
+            return 0
+        st = info["stored"]
+        print(("\nSTORED: " if st["new"] else "\nALREADY IN THE STORE: ") + st["path"])
+        print(f"  {info['bytes']:,} bytes · SHA-1 {info['sha1']} · {info['reads']} read(s)"
+              + (" identical" if info.get("identical") else ""))
+        return 0
+
+    try:
+        c = check(args.image, args.device, say=say)
+    except Stop as s:
+        return report_stop(s, args.json)
+    if args.cmd == "check":
+        if args.json:
+            print(json.dumps(dict(c, state="done")))
+        return 0
+    if args.verify_only and not c["already_written"]:
+        return report_stop(Stop("the target doesn't hold this image", "write it instead"), args.json, c)
+    side = image_in_store(c["image"])[1]
+
+    def confirm(w):
+        print(f"\n  image   {os.path.relpath(c['image'], os.path.realpath(DISKS))}: {c['bytes']:,} bytes · SHA-1 {c['sha1']}"
+              f"\n          from {describe(side.get('source') or {})}")
+        print(f"  target  {c['device']}: {describe(c['identity'])}\n          {say_contents(c['contents'])}")
+        try:
+            typed = input(f"\nType the target's model ({c['identity']['model']}) to write: ")
+        except EOFError:
+            typed = ""
+        w.info["armed"] = {"by": "terminal", "typed": typed.strip() == c["identity"]["model"]}
+        return typed.strip() == c["identity"]["model"]
+
+    w = Write(c, ack=args.overwrite, confirm=confirm, machine=side.get("machine"), realm=side.get("realm"), say=say)
+    try:
+        info = w.go(verify_only=args.verify_only)
+    except Stop as s:
+        return report_stop(s, args.json, w.info)
+    if args.json:
+        print(json.dumps(info))
+    else:
+        print(f"\nVERIFIED: {info['bytes']:,} bytes on {info['device']}; {info['untouched_bytes']:,} bytes beyond them untouched")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -14,6 +14,7 @@ SYSSTATE = os.environ.get("GATBOX_SYSSTATE", "/var/lib/gatbox")          # root'
 SRV = os.environ.get("GATBOX_SRV", "/srv/gatbox")                        # dumps (M7)
 ROMS = os.environ.get("GATBOX_ROMS", os.path.join(SRV, "roms"))          # the dump archive: <machine>/<label>_<sha1:8>.bin
 DUMP_SPOOL = os.environ.get("GATBOX_DUMP_SPOOL", "/var/spool/gatbox-dump")   # dump requests / progress (M7)
+DISK_SPOOL = os.environ.get("GATBOX_DISK_SPOOL", "/var/spool/gatbox-disk")   # disk imaging requests / progress
 MINIPRO_PARTS = os.environ.get("GATBOX_MINIPRO_PARTS", "/usr/local/share/gatbox/minipro-parts-T48.txt")
 MAME_ROMS = os.environ.get("GATBOX_MAME_ROMS", "/usr/local/share/gatbox/mame-roms.json")   # gatbox-mame-roms, at install
 MANUALS = os.environ.get("GATBOX_MANUALS", os.path.join(SRV, "manuals"))   # <slug>/<name>.pdf (+ .json sidecar, .txt)

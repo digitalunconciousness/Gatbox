@@ -81,9 +81,14 @@ The bootstrap's MANIFEST maps repo files to installed paths. `--check` (no root)
 ## Hardware
 **Owned:** Pi 5 4GB + Active Cooler · UT61E + UT-D02 + PL-2303 · XGecu T48 · Eyoyo EY-H2 USB scanner (HID keyboard
 wedge) · Waveshare 7inch HDMI LCD (C) (1024×600 IPS, capacitive USB-HID touch) · coin-cell holder on the RTC
-connector J5 with a **non-rechargeable** cell (fitted 2026-09-26/27, BATT_V ~3.13 V).
-**Not owned: don't write code that assumes these, don't ask the owner to test with them:** ADALM2000, UUGear MEGA4 /
-uhubctl, INA226, relays, MAK Strike, GBS-Control, RP2350B bus driver, InfiRay P2 Pro. The build journal
+connector J5 with a **non-rechargeable** cell (fitted 2026-09-26/27, BATT_V ~3.13 V) · XinTop XT-U33502 IDE/SATA
+USB dock (own PSU) · a 4 TB Western Digital external drive, **bus-powered**: the disk image store (with the owner from
+2026-11-04) · UUGear MEGA4, used as a plain USB hub that powers the store (no uhubctl, no port switching) · a 12 V
+buck converter that powers the Pi in a cabinet when there's no easy AC plug (make and output rating aren't recorded:
+read them off it before anything relies on them). A CF reader is on order (the current one has a broken pin): read
+its USB ID on the Pi before code relies on it.
+**Not owned: don't write code that assumes these, don't ask the owner to test with them:** ADALM2000, uhubctl / any
+USB port power switching, INA226, relays, MAK Strike, GBS-Control, RP2350B bus driver, InfiRay P2 Pro. The build journal
 (`gatbox-journal.md`) is the record of what's owned.
 
 ## Hard rules
@@ -96,9 +101,10 @@ uhubctl, INA226, relays, MAK Strike, GBS-Control, RP2350B bus driver, InfiRay P2
    hand-configured. The bootstrap stays idempotent, and an offline re-run succeeds when everything is installed.
 5. **Show before you change system config** (`/boot/firmware/*`, udev, systemd units, labwc config, `/etc`): show
    the owner the diff and why, and wait for her OK. Repo-only changes don't need approval.
-6. **The only hardware write from the dashboard is a T48 burn**, armed at the Pi (a hold on the 7″ for now, a physical
-   ARM button later), blank-checked and verified. Nothing else writes hardware. No part auto-detect. (The owner's
-   decision, 2026-09-29: it overrides the spec's "No burn anywhere in gatbox-web".)
+6. **The only hardware writes from the dashboard are a T48 burn and a disk write**, each armed at the Pi (a hold on
+   the 7″ for now, a physical ARM button later), checked first (blank check / target check) and verified. Nothing else
+   writes hardware. No part auto-detect. (The owner's decisions: 2026-09-29 for the burn, which overrides the spec's
+   "No burn anywhere in gatbox-web"; 2026-11-02 for the disk write, `docs/plans/2026-11-02-disk-imaging.md` §5.)
 7. **GPIO is 3.3 V only, Pi 5 included.** gpiozero (+lgpio), never RPi.GPIO. GPIO3 and GPIO26 reserved; keep I²C
    (2/3), UART (14/15) and SPI free. Anything at 5 V goes through a divider / opto / level shifter.
 8. **The board under test is always external.** Nothing here energizes a board.
@@ -150,6 +156,15 @@ the bootstrap, CLAUDE.md, the plan/progress and journal entries.
 Bring-up done 2026-09-23 (BRINGUP.md "Bring-up 1/2"). Phase 0 and Phase 1 (rail flight recorder) done and in use:
 first cabinet log 2026-09-25 (Gauntlet Legends). **Phase 2 started 2026-09-28**: progress checklist in BRINGUP.md.
 M0–M7 done 2026-09-29 (the first real burn from the 7″ that evening); M8 on hold.
+
+**Disk imaging (phase D2), branch `disk-imaging`, built 2026-11-03, not installed.** Hard disks, CF and SD cards on the
+USB dock or a reader: READ into the image store, TARGET CHECK, WRITE from the 7″ (a hold arms it, two read-backs verify
+it), the swap checklist. Spec: `docs/plans/2026-11-02-disk-imaging.md`; progress: BRINGUP.md. `gatbox-disk` (a CLI
+and the job), `gatboxlib/disks.py` and gatbox-web's `/api/disk` + the DISK tab are in the repo; the units
+`backend/gatbox-disk.path/.service` are written but not in the MANIFEST. Until Task 4 installs them (the owner sees the
+udev / sysusers / tmpfiles / mount-unit diff first, hard rule 5) the DISK tab lists the USB drives and says the image
+store isn't connected and the disk service isn't installed. Facts about the dock and the store (USB IDs, serials, what
+the bridge passes through) come from Task 0's output, never from a guess.
 
 **Integration with the hub (arcade-tracker), 2026-10-01 → 10-06.** Phases 0–4 merged and in
 use; 5 (network: three ways onto a new Wi-Fi, hotspot recovery) and 6 (orders from the bench)

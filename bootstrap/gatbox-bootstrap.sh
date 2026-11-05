@@ -83,6 +83,7 @@ backend/gatboxlib/seed.py                       /usr/local/lib/gatbox/gatboxlib/
 backend/gatboxlib/filestore.py                  /usr/local/lib/gatbox/gatboxlib/filestore.py          644
 backend/gatboxlib/libsync.py                    /usr/local/lib/gatbox/gatboxlib/libsync.py            644
 backend/gatboxlib/csvlog.py                     /usr/local/lib/gatbox/gatboxlib/csvlog.py             644
+backend/gatboxlib/disks.py                      /usr/local/lib/gatbox/gatboxlib/disks.py              644
 backend/gatboxweb/__init__.py                   /usr/local/lib/gatbox/gatboxweb/__init__.py           644
 backend/gatboxweb/config.py                     /usr/local/lib/gatbox/gatboxweb/config.py             644
 backend/gatboxweb/server.py                     /usr/local/lib/gatbox/gatboxweb/server.py             644
@@ -97,6 +98,7 @@ backend/gatboxweb/romsync.py                    /usr/local/lib/gatbox/gatboxweb/
 backend/gatboxweb/system.py                     /usr/local/lib/gatbox/gatboxweb/system.py             644
 backend/gatboxweb/devices.py                    /usr/local/lib/gatbox/gatboxweb/devices.py            644
 backend/gatboxweb/dump.py                       /usr/local/lib/gatbox/gatboxweb/dump.py               644
+backend/gatboxweb/disk.py                       /usr/local/lib/gatbox/gatboxweb/disk.py               644
 backend/gatboxweb/mame.py                       /usr/local/lib/gatbox/gatboxweb/mame.py               644
 backend/gatboxweb/libsource.py                  /usr/local/lib/gatbox/gatboxweb/libsource.py          644
 backend/gatboxweb/libsync_api.py                /usr/local/lib/gatbox/gatboxweb/libsync_api.py        644

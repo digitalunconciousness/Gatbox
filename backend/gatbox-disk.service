@@ -1,0 +1,49 @@
+# NOT INSTALLED YET. Task 4 of docs/plans/2026-11-02-disk-imaging.md adds this to the bootstrap's MANIFEST, with the
+# udev rule, sysusers, tmpfiles and the image store's mount unit, after Task 0 and the owner's OK (hard rule 5).
+[Unit]
+Description=GATBOX disk job (the dashboard's DISK: read, target check, write; gatbox-disk.path starts it)
+After=gatbox-web.service
+# Ordered after the image store's mount (/srv/gatbox/disks), never Requires= or RequiresMountsFor=: with the drive
+# unplugged those fail the service before the job runs, leave request.json behind and jam the path unit (note §5).
+# The job itself refuses with IMAGE STORE NOT CONNECTED unless the store is mounted and carries its marker.
+After=srv-gatbox-disks.mount
+
+[Service]
+# One job per request: gatbox-disk claims request.json (renames it to running.json), does the READ, RETRY, TARGET
+# CHECK or WRITE, and writes status.json for the dashboard. A write re-checks its arm (30 s), its check (5 min) and
+# the drive's identity before it opens the drive.
+Type=oneshot
+ExecStart=/usr/local/bin/gatbox-disk --job /var/spool/gatbox-disk/request.json --status /var/spool/gatbox-disk/status.json
+# A 40 GB IDE drive at USB 2 speed, read once, or written and read back twice (note §5). An interrupted read resumes
+# from its ddrescue map.
+TimeoutStartSec=3h
+# Its own narrow identity (note §5, §9.3):
+#   - group gatbox-disk is the devices' group: the udev rule gives it rw on whole USB disks only (ID_BUS usb,
+#     DEVTYPE disk); mmcblk and nvme stay root:disk. Only this user holds it.
+#   - group gatbox-disk-queue is the spool's (setgid), shared with gatbox-web, which queues the requests.
+User=gatbox-disk
+Group=gatbox-disk
+SupplementaryGroups=gatbox-disk-queue
+UMask=0007
+Environment=HOME=/tmp
+# block-sd: SCSI disks, which is what a USB dock or card reader shows up as. Nothing else in /dev.
+DevicePolicy=closed
+DeviceAllow=block-sd rw
+# ATA pass-through through the bridge (the drive's own serial and CHS, smartctl -d sat) and nothing else. No
+# CAP_SYS_ADMIN: the verify reads with O_DIRECT, so there's no blockdev --flushbufs (note §4.3, §9.3).
+AmbientCapabilities=CAP_SYS_RAWIO
+CapabilityBoundingSet=CAP_SYS_RAWIO
+# Writes only the image store and its spool. The bare mountpoint on the SD card isn't writable by this user, so an
+# unplugged store can never fill the SD card.
+ProtectSystem=strict
+ReadWritePaths=/srv/gatbox/disks /var/spool/gatbox-disk
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+# Talks only to gatbox-web on this Pi (for the clock source in the sidecar).
+IPAddressAllow=localhost
+IPAddressDeny=any
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes

@@ -383,8 +383,10 @@ The bootstrap creates the file empty (`bash bootstrap/gatbox-bootstrap.sh`, afte
 to a systemd unit, so BRINGUP.md shows it to you as a diff first ("the D3 install diff") and it is not applied until you
 say so. With no file, or an empty one, nothing here runs and the deck behaves as before.
 
-The first sync is a dry run (`GATBOX_SYNC_DRYRUN=1`): it prints what it would send and fetch, changes nothing, and you read
-it before the real one.
+The first sync is a dry run (`GATBOX_SYNC_DRYRUN=1`): it changes nothing, and you read it before the real one. It says the
+totals first (`dry run: push 118 rom_list, 2 rom_image; pull nothing; ...`), then names the first five records of each kind
+and counts the rest, then how many files it would send and fetch. The files step can take a minute and says so.
+`GATBOX_SYNC_DRYRUN=full` names every record. The real run always names every record it moves, in the journal.
 
 ## 7. The apps (cabcrawl and the tracker)
 

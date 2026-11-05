@@ -248,6 +248,12 @@ def run(arc, urlbase, token):
     r = script(urlbase, token, dryrun=True)
     check("the dry run prints the plan, line by line, and says nothing was changed",
           r.returncode == 0 and "send  game|widget-wars" in r.stdout and "dry run:" in r.stdout and "Nothing was changed" in r.stdout, r.stdout + r.stderr)
+    check("the totals are the first thing the dry run says about the plan, and it ends with the file counts",
+          r.stdout.index("dry run:") < r.stdout.index("send  game|widget-wars") and "  files: " in r.stdout, r.stdout)
+    full = script(urlbase, token, dryrun=True, extra={"GATBOX_SYNC_DRYRUN": "full"})
+    check("GATBOX_SYNC_DRYRUN=full is still a dry run, and names every record (no 'and N more' line)",
+          full.returncode == 0 and "Nothing was changed" in full.stdout and " more " not in full.stdout
+          and full.stdout.count("  send  ") >= r.stdout.count("  send  "), full.stdout + full.stderr)
     check("and it changed nothing: the archive is empty, there is no library state, no status written",
           arc.lib.counts() == {} and not os.path.exists(f"{SYNC}/library/state.json") and arc.files.size("0" * 64) is None)
     n_deck = web("GET", "/api/library/sync/digest")[1]["count"]

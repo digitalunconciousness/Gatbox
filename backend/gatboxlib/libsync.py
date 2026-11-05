@@ -541,8 +541,30 @@ def fetch_files(deck, archive, state, deadline, log, limit=20):
 
 # --- the run -------------------------------------------------------------------------------------------------------------
 
-def run(deck, archive, state_dir, dryrun=False, deadline=None, log=print, now=time.time):
-    """One sync pass. -> the library block for status.json. Nothing is written anywhere when `dryrun`."""
+DRYRUN_SAMPLE = 5          # in a dry run, how many records of each kind are named before "and N more"
+
+
+def log_plan(plan, log, sample=None):
+    """One line per record the pass will send, fetch or leave in conflict: `send  game|widget-wars`. With SAMPLE, only the
+    first SAMPLE of each kind and direction are named and the rest counted, so a first sync of a whole library is a screen
+    and not a hundred lines. The real run names every one: that is its record of what moved."""
+    for bucket, side, word in (("push", "deck", "send"), ("pull", "archive", "fetch"), ("conflict", None, "conflict")):
+        shown = {}
+        for item in plan[bucket]:
+            rec = item[side] if side else None
+            kind = rec["kind"] if rec else item["key"].split("|", 1)[0]
+            shown[kind] = shown.get(kind, 0) + 1
+            if sample is None or shown[kind] <= sample:
+                log(f"  {word}  {item['key']}" + (" (removal)" if rec and rec["deleted"] else ""))
+        if sample is not None:
+            for kind, n in sorted(shown.items()):
+                if n > sample:
+                    log(f"  {word}  ... and {n - sample} more {kind} ({n} in all; GATBOX_SYNC_DRYRUN=full names every one)")
+
+
+def run(deck, archive, state_dir, dryrun=False, deadline=None, log=print, now=time.time, sample=DRYRUN_SAMPLE):
+    """One sync pass. -> the library block for status.json. Nothing is written anywhere when `dryrun`. A dry run says
+    the totals first, then names SAMPLE records of each kind (None: every one); a real run names every record it moves."""
     deadline = deadline if deadline is not None else time.monotonic() + 200
     state = State(state_dir)
     status = {"at": now(), "ok": True, "dryrun": bool(dryrun)}
@@ -551,16 +573,17 @@ def run(deck, archive, state_dir, dryrun=False, deadline=None, log=print, now=ti
         used, applied = _resolutions(deck, state, plan, log, dryrun)
         status["resolved"] = applied
         status["plan"] = describe(plan)
-        for bucket, side, word in (("push", "deck", "send"), ("pull", "archive", "fetch")):
-            for item in plan[bucket]:
-                log(f"  {word}  {item['key']}" + (" (removal)" if item[side]["deleted"] else ""))
-        for item in plan["conflict"]:
-            log(f"  conflict  {item['key']}")
         if dryrun:
+            # The totals come first: they are what the person reading it wants, and they used to be the last line of a
+            # hundred.
             log("  dry run: " + "; ".join(f"{k} {v}" for k, v in status["plan"].items()) + ". Nothing was changed.")
+        log_plan(plan, log, sample if dryrun else None)
+        if dryrun:
+            log("  looking at the files to send and fetch (this can take a minute)")
             listed = deck.files()
             status["files"] = {"to_send": len([s for s in listed.get("have", {}) if s not in state.files.get("up", {})]),
                                "to_fetch": len(listed.get("want", []))}
+            log(f"  files: {status['files']['to_send']} to send, {status['files']['to_fetch']} to fetch")
             return status
         done = apply_plan(deck, archive, state, plan, log, now)
         if used:

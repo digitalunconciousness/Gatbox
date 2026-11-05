@@ -75,6 +75,25 @@ sed -i 's|^ARCHIVE_PRIVATE_ALLOW=.*|ARCHIVE_PRIVATE_ALLOW=|' "$T/root/etc/gatbox
 run >/dev/null
 check "emptied: the drop-in is removed" '[ ! -e "$DROP" ]'
 
+echo "archive.conf and the service's restart (the service reads the conf only when it starts):"
+CONFF="$T/root/etc/gatbox-archive/archive.conf"
+STAMPF="$T/root/var/lib/gatbox-archive/conf.sha256"
+conf_hash() { sha256sum < "$CONFF" | cut -d' ' -f1; }
+run >/dev/null
+check "a settled install remembers the conf the service was last started with" '[ "$(cat "$STAMPF")" = "$(conf_hash)" ]'
+check "and --check has nothing to say" 'run --check | grep -q "nothing to change"'
+touch "$CONFF"
+check "touching the conf without changing it asks for nothing" 'run --check | grep -q "nothing to change"'
+echo "ARCHIVE_PRIVATE_BIND=192.0.2.50:8081" >> "$CONFF"
+check "an edit to the conf: --check says the service would restart, and why" 'run --check | grep -q "restart    gatbox-archive (archive.conf changed"'
+out=$(run)
+check "a run takes it up and does not claim there was nothing to change" '[ "$(cat "$STAMPF")" = "$(conf_hash)" ] && ! echo "$out" | grep -q "nothing to change"'
+check "then it is settled again" 'run --check | grep -q "nothing to change"'
+rm -f "$STAMPF"
+check "no stamp (an install from before this existed): --check says it would restart, once" 'run --check | grep -q "restart    gatbox-archive"'
+run >/dev/null
+check "and the run leaves a stamp, so the next one is quiet" '[ "$(cat "$STAMPF")" = "$(conf_hash)" ] && run --check | grep -q "nothing to change"'
+
 echo "the installed tree on its own (no checkout):"
 check "imports and reports its library" 'cd "$T" && ARCHIVE_DATA="$T/data" python3 -c "
 import sys; sys.path.insert(0, \"$L\")

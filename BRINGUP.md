@@ -668,7 +668,9 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
            and `m gatbox-fetch gatbox-manuals` (the manuals folder is group gatbox-manuals, setgid)
         2. `bootstrap/files/tmpfiles-gatbox.conf`: `d /var/spool/gatbox-manuals 2770 gatbox-fetch gatbox-fetch -` (the
            job's spool) and `d /srv/gatbox/library 2775 root gatbox-manuals -` (the library's folder: SQLite needs the
-           directory writable for its -wal and -shm files)
+           directory writable for its -wal and -shm files). **The library's folder is in the bootstrap since 2026-11-05**, with
+           `ReadWritePaths=-/srv/gatbox/library` in `gatbox-web.service` (item 3): `seed --apply` on the Pi stopped with
+           "Permission denied" because nothing made the folder, and the 7" could not have saved a game either
         3. `gatbox-web.service`: `SupplementaryGroups=gatbox-fetch` and `ReadWritePaths=-/var/spool/gatbox-manuals`
            (it writes a request and reads the answer, nothing else), and `ReadWritePaths=-/srv/gatbox/library`
         4. New units `gatbox-manuals.path` (PathExists the request) and `gatbox-manuals.service` (oneshot as

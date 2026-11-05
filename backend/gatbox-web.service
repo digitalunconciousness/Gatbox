@@ -30,6 +30,9 @@ ReadWritePaths=-/var/spool/gatbox-dump
 # setgid); everything else there it only reads.
 SupplementaryGroups=gatbox-manuals
 ReadWritePaths=-/srv/gatbox/manuals
+# The game library (phase B): library.sqlite and its -wal and -shm files, written when the 7" adds or edits a game or
+# confirms a limit (same group as the manuals folder).
+ReadWritePaths=-/srv/gatbox/library
 # Wi-Fi: the dashboard writes a request here and gatbox-wifi (root) acts on it. This service
 # cannot change the network itself -- DynamicUser leaves it no D-Bus, so nmcli fails here.
 SupplementaryGroups=gatbox-wifi

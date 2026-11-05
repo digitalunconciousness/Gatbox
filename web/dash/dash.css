@@ -240,6 +240,10 @@ html.box table.cf-t{font-size:15px}
   border-radius:8px;background:var(--bg2);border:1px solid var(--cyan);color:var(--fg);font:16px var(--mono);
   box-shadow:0 0 14px rgba(125,250,255,.25)}
 #toast.warn{border-color:var(--warn)}#toast.bad{border-color:var(--bad)}
+/* SHUT DOWN's last screen, over everything */
+#kx-off{position:fixed;inset:0;z-index:60;background:var(--bg);display:flex;align-items:center;justify-content:center;
+  text-align:center;padding:24px}
+#kx-off[hidden]{display:none}
 
 /* phone */
 @media (max-width:760px){

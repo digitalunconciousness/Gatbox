@@ -164,6 +164,19 @@ J=$(printf '{"alg":"none"}' | base64 -w0 | tr '+/' '-_' | tr -d =).$(printf '{"e
 curl -sS -o /dev/null -w '%{http_code}\n' -H "Cf-Access-Jwt-Assertion: $J" https://<HOSTNAME>/
 ```
 
+**All of these checks in one command**, from any machine with `curl`. It changes nothing and prints no secret:
+
+```bash
+bash archive/check.sh https://<HOSTNAME>
+```
+
+Put `ARCHIVE_ACCESS_ID` and `ARCHIVE_ACCESS_SECRET` in the environment and it checks the service token's side as well
+(it reaches health, gets no page, and a wrong secret is turned away). On the deck,
+`sudo bash archive/check.sh --conf /etc/gatbox/archive.conf` takes the address and the token from `archive.conf`. For the
+apps' private listener (step 5), `ARCHIVE_READER_TOKEN=gbx_... bash archive/check.sh --private http://<CONTAINER_IP>:8081`
+checks that a reader token reads the feed and that nothing else is served. Run it after any change in the Access
+application.
+
 **If you recreate the application,** attach both policies to the new one before you test: `people` (Allow) and `deck`
 (Service Auth, with the `gatbox-deck` token, not Allow and not "Any Access Service Token"). Without `deck` the service-token
 call gets a `302` again and the deck's sync stops.

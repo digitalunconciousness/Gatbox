@@ -29,7 +29,7 @@ class Chrome:
         # GATBOX_CHROME lets a PC or a CI runner name its own binary; Pi OS has `chromium`.
         browser = browser or os.environ.get("GATBOX_CHROME") or "chromium"
         self.profile, self.browser = profile, browser
-        self.n, self.buf, self.events, self.sid = 0, b"", [], None
+        self.n, self.buf, self.events, self.sid, self.tabs = 0, b"", [], None, []
 
     def __enter__(self):
         to_r, self.to_w = os.pipe()          # we write, the browser reads on its fd 3
@@ -95,8 +95,20 @@ class Chrome:
                     return self.events.pop(i)
             self.events.append(self._read(max(0.01, end - time.monotonic())))
 
+    def close_others(self):
+        """Close every tab but the current one. open() leaves the earlier tabs running, and the dashboard holds a live
+        stream open in each: a browser lets only six connections go to one host, so after enough pages the newest page's
+        requests queue behind streams nothing can read any more. A long test calls this between its sections."""
+        for tid in self.tabs[:-1]:
+            try:
+                self.send("Target.closeTarget", {"targetId": tid}, session=False, timeout=5)
+            except Exception:
+                pass
+        self.tabs = self.tabs[-1:]
+
     def open(self, url, width=1024, height=600):
         tid = self.send("Target.createTarget", {"url": "about:blank"}, session=False)["targetId"]
+        self.tabs.append(tid)
         self.sid = self.send("Target.attachToTarget", {"targetId": tid, "flatten": True}, session=False)["sessionId"]
         self.send("Emulation.setDeviceMetricsOverride",
                   {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": width < 600})

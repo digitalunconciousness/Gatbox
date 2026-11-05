@@ -353,6 +353,12 @@ def main():
 
         c.open(B + "/dash/", 1024, 600)
         c.wait("document.querySelector('#m-profile').textContent.includes('rail')")
+        print("the script itself:")
+        # A second declaration of a function's name in the same scope silently replaces the first. Two branches each add
+        # their own `imagesCard` and git merges them without a conflict; one tab then calls the other's.
+        decls = re.findall(r"^\s*(?:async )?function ([A-Za-z_$][\w$]*)", open(os.path.join(REPO, "web/dash/dash.js"), encoding="utf-8").read(), re.M)
+        check("dash.js declares every function once (a repeat replaces the first without a word)",
+              sorted({n for n in decls if decls.count(n) > 1}) == [])
         print("idle:")
         check("no reading, no simulated value", text("#m-value") == "no reading" and "NO READINGS" in banners())
         shot("00-idle")
@@ -1452,6 +1458,7 @@ def main():
         else:
             print("  skip  the phone's DISK view (no LAN address here)")
         dk_done.set()
+        c.close_others()      # the pages the sections so far opened each still hold a live stream: six is all one host gets
 
         print("the 7\" box (html.box: the kiosk opens the dashboard at 127.0.0.1):")
         check("box: the kiosk's page is in box mode", q("document.documentElement.classList.contains('box')"))

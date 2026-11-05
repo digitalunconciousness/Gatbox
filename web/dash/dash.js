@@ -1336,10 +1336,12 @@
       const d = await api("GET", "/api/system");
       S.sys = d; S.local = !!(d.client && d.client.local);
       S.offset = d.time.epoch * 1000 - Date.now();
-      // a new install changed the dashboard's files: load them (the 7" kiosk never reloads on its own)
+      // a new install changed the dashboard's files: load them (the 7" kiosk never reloads on its own). Not at once:
+      // the install restarts gatbox-web a second or two after it writes them, and a reload into that restart comes
+      // up without its stylesheet or script (2026-11-05). 5 s later the restart is over.
       if (d.dash_version) {
         if (!S.dashVersion) S.dashVersion = d.dash_version;
-        else if (S.dashVersion !== d.dash_version) { location.reload(); return; }
+        else if (S.dashVersion !== d.dash_version && !S.reloading) S.reloading = setTimeout(() => location.reload(), 5000);
       }
     } catch (e) { return; }
     renderHeader();
@@ -1552,7 +1554,7 @@
         b.dataset.done = 1;
         b.textContent = b.dataset.act === "exit" ? "CLOSING…" : "SHUTTING DOWN…";
         fetch("/kiosk/" + b.dataset.act, {method: "POST"});
-        if (b.dataset.act === "shutdown") $("#kx-off").classList.remove("hide");
+        if (b.dataset.act === "shutdown") $("#kx-off").hidden = false;
       }, +b.dataset.ms);
     });
     ["pointerup", "pointerleave", "pointercancel"].forEach(k => b.addEventListener(k, stop));
@@ -2834,4 +2836,5 @@
   setInterval(loadDevices, 15000);
   setInterval(() => { if (S.view === "sessions") loadSessions(); }, 30000);
   connect();
+  window.GDashRunning = true;       // index.html's load check: this script ran to the end
 })();

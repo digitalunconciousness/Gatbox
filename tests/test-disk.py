@@ -61,6 +61,11 @@ def files(machine):
     return sorted(os.listdir(d)) if os.path.isdir(d) else []
 
 
+def arm():
+    """The arm gatbox-web gives a write: 30 seconds from now."""
+    return {"by": "test", "at": time.time(), "until": time.time() + 30}
+
+
 def load_tool():
     """gatbox-disk as a module, for the in-process checks (environment set first: it's read at import)."""
     os.environ.update(env())
@@ -287,7 +292,7 @@ def main():
     c = g.check(image, "sdg", say=quiet)
     usb_disk("sdg", 16 * MiB, "WIDGET", "OTHER DRIVE", port=7, devnum="8:96")   # swapped on the dock after the check
     try:
-        g.Write(c, armed={"by": "test"}, say=quiet).go()
+        g.Write(c, armed=arm(), say=quiet).go()
         swapped = False
     except g.Stop as s:
         swapped = "different drive" in s.what
@@ -297,7 +302,7 @@ def main():
     c = g.check(image, "sdg", say=quiet)
     c["at"] -= 301
     try:
-        g.Write(c, armed={"by": "test"}, say=quiet).go()
+        g.Write(c, armed=arm(), say=quiet).go()
         expired = False
     except g.Stop as s:
         expired = "more than 5 minutes old" in s.what
@@ -311,7 +316,7 @@ def main():
         return real_open(path, flags, *a)
     g.os.open = busy
     try:
-        g.Write(c, armed={"by": "test"}, say=quiet).go()
+        g.Write(c, armed=arm(), say=quiet).go()
         held = False
     except g.Stop as s:
         held = "busy" in s.what
@@ -324,7 +329,7 @@ def main():
     real_read = g.hashed_read
     g.hashed_read = lambda path, length, sha256=False: "0" * 40 if path.endswith("/sdg") else real_read(path, length, sha256)
     try:
-        g.Write(c, armed={"by": "test"}, realm="widget-hub", say=quiet).go()
+        g.Write(c, armed=arm(), realm="widget-hub", say=quiet).go()
         mismatch = False
     except g.Stop as s:
         mismatch = "verify 1 doesn't match" in s.what
@@ -340,6 +345,180 @@ def main():
     info = r.go()
     check("a read's realm is kept in its sidecar",
           json.load(open(info["stored"]["path"][:-4] + ".json"))["realm"] == "widget-hub")
+
+    print("WRITE, what the audit of this path found (in-process):")
+    import fcntl
+
+    def blank_target(model="WIDGET SSD 64G B", data=None):
+        usb_disk("sdg", 8 * MiB, "WIDGET", model, port=7, devnum="8:96", data=data)
+
+    def untouched():
+        return open(f"{DEV}/sdg", "rb").read(len(src)) == bytes(len(src))
+
+    def store_copy(tag):
+        """A second image in the store, its own name and the same sidecar, to damage without touching the first."""
+        base = f"{STORE}/{image[:-4]}"
+        new = f"{STORE}/widget-wars/{tag}"
+        shutil.copy(base + ".img", new + ".img")
+        shutil.copy(base + ".json", new + ".json")
+        return f"widget-wars/{tag}.img", new + ".img"
+
+    def refused(c, what, **kw):
+        try:
+            g.Write(c, armed=arm(), say=quiet, **kw).go()
+        except g.Stop as s:
+            return what.lower() in s.what.lower()
+        return False
+
+    # a damaged image: the bytes in the store no longer hash to the sidecar's SHA-1, and nothing said so until after
+    blank_target()
+    rel, path = store_copy("DAMAGED_20261105_00000000")
+    c = g.check(rel, "sdg", say=quiet)
+    with open(path, "r+b") as f:
+        f.seek(len(src) - 1)
+        last_byte = f.read(1)
+        f.seek(len(src) - 1)
+        f.write(bytes([last_byte[0] ^ 0xFF]))
+    check("an image damaged in the store (same size, one byte wrong): refused before the first byte is written",
+          refused(c, "checksum") and untouched())
+    # an image whose size changed after the check
+    blank_target()
+    rel, path = store_copy("SHORT_20261105_00000001")
+    c = g.check(rel, "sdg", say=quiet)
+    os.truncate(path, len(src) - MiB)
+    check("an image truncated after the check: refused before the first byte is written",
+          refused(c, "size") and untouched())
+
+    # needs_ack was read at check time: a target that was blank then and is not now
+    blank_target()
+    c = g.check(image, "sdg", say=quiet)
+    blank_target(data=iso_card(8 * MiB))                          # the same drive, written to since the check
+    stale = c["needs_ack"] is False and refused(c, "isn't blank")
+    check("a target that was blank at the check and holds an installer now: refused without --overwrite, nothing written",
+          stale and open(f"{DEV}/sdg", "rb").read(32774)[32769:32774] == b"CD001")
+
+    # the arm: whatever the request carries, only a real one counts
+    blank_target()
+    c = g.check(image, "sdg", say=quiet)
+    bad_arms = {"False": False, "empty": {}, "no expiry": {"by": "screen"}, "expiry that isn't a time": {"until": "soon"},
+                "a bool for an expiry": {"until": True}, "already expired": {"by": "screen", "until": time.time() - 5}}
+    results = {}
+    for name, a in bad_arms.items():
+        try:
+            g.Write(c, armed=a, say=quiet).go()
+            results[name] = "WROTE"
+        except g.Stop:
+            results[name] = "stopped"
+    check("an arm that is False, empty, without an expiry, with a nonsense one or already expired: stopped, nothing written",
+          set(results.values()) == {"stopped"} and untouched())
+
+    # a short pwrite must not lose bytes: the loop finishes the piece
+    blank_target()
+    c = g.check(image, "sdg", say=quiet)
+    real_pwrite = os.pwrite
+    g.os.pwrite = lambda fd, data, off: real_pwrite(fd, bytes(data)[:max(1, len(data) // 3)], off)
+    try:
+        info = g.Write(c, armed=arm(), say=quiet).go()
+        short_ok = info["verified"] is True
+    except g.Stop:
+        short_ok = False
+    finally:
+        g.os.pwrite = real_pwrite
+    check("a drive that takes a third of each piece per call: the rest is written, and it verifies",
+          short_ok and open(f"{DEV}/sdg", "rb").read(len(src)) == src)
+
+    # the drive swapped in the instant between the identity check and the open
+    blank_target()
+    c = g.check(image, "sdg", say=quiet)
+    real_open = os.open
+
+    def swap_then_open(path, flags, *a, **kw):
+        if flags & os.O_EXCL and path.endswith("/sdg"):
+            g.os.open = real_open                                  # the fake drive's own set-up opens files too
+            blank_target("SWAPPED IN AT THE LAST MOMENT")
+            g.os.open = swap_then_open
+        return real_open(path, flags, *a, **kw)
+    g.os.open = swap_then_open
+    try:
+        g.Write(c, armed=arm(), say=quiet).go()
+        late_swap = False
+    except g.Stop as s:
+        late_swap = "different drive" in s.what
+    finally:
+        g.os.open = real_open
+    check("the drive swapped between the identity check and the open: stopped after the claim, nothing written",
+          late_swap and untouched())
+
+    # a write-protected target: a Stop that says so, not a traceback
+    blank_target()
+    c = g.check(image, "sdg", say=quiet)
+
+    def protected(path, flags, *a, **kw):
+        if flags & os.O_EXCL and path.endswith("/sdg"):
+            raise OSError(errno.EROFS, "Read-only file system")
+        return real_open(path, flags, *a, **kw)
+    g.os.open = protected
+    try:
+        g.Write(c, armed=arm(), say=quiet).go()
+        locked = False
+    except g.Stop as s:
+        locked = "write-protected" in s.what
+    except OSError:
+        locked = False
+    finally:
+        g.os.open = real_open
+    check("a write-protected target (EROFS on open): stopped, in words, nothing written", locked and untouched())
+
+    # VERIFY ONLY needs to read, not to write: a locked card can still be checked
+    blank_target()
+    c = g.check(image, "sdg", say=quiet)
+    g.Write(c, armed=arm(), say=quiet).go()
+    c = g.check(image, "sdg", say=quiet)
+    seen = []
+
+    def watch_flags(path, flags, *a, **kw):
+        if path.endswith("/sdg"):
+            seen.append(flags)
+        return real_open(path, flags, *a, **kw)
+    g.os.open = watch_flags
+    try:
+        g.Write(c, armed=arm(), say=quiet).go(verify_only=True)
+    finally:
+        g.os.open = real_open
+    claims = [f for f in seen if f & os.O_EXCL]
+    check("VERIFY ONLY claims the drive read-only", claims and all(f & os.O_ACCMODE == os.O_RDONLY for f in claims))
+
+    # one read or write at a time on the store, whoever started it: a held lock stops the second
+    blank_target()
+    c = g.check(image, "sdg", say=quiet)
+    lock = os.open(f"{STORE}/.gatbox-disk.lock", os.O_CREAT | os.O_RDWR, 0o664)
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    try:
+        g.Write(c, armed=arm(), say=quiet).go()
+        busy_store = False
+    except g.Stop as s:
+        busy_store = "another disk" in s.what
+    try:
+        g.Read("sdb", "widget-wars", "WW-LOCKED", "ssd", say=quiet).go()
+        busy_read = False
+    except g.Stop as s:
+        busy_read = "another disk" in s.what
+    finally:
+        os.close(lock)
+    check("a read or write while another holds the store's lock: stopped, nothing written",
+          busy_store and busy_read and untouched())
+    last = [json.loads(l) for l in open(f"{STORE}/writes.jsonl")][-1]
+    check("... and the refused write is in writes.jsonl like any other", last["state"] == "stopped"
+          and "another disk" in last["error"])
+
+    # a drive whose bridge reports no model: nothing typed must not count as the model typed
+    usb_disk("sdi", 8 * MiB, "WIDGET", "", port=9, devnum="8:128")
+    code, out = disk("write", "-i", image, "-d", "sdi", stdin="")
+    check("a drive with an empty model and nothing typed (Enter, or EOF): refused, nothing written",
+          code == 2 and "model wasn't typed" in out and open(f"{DEV}/sdi", "rb").read(len(src)) == bytes(len(src)))
+    code, out = disk("write", "-i", image, "-d", "sdi", stdin="sdi\n")
+    check("... and typing the device name instead writes and verifies it", code == 0 and "VERIFIED" in out
+          and open(f"{DEV}/sdi", "rb").read(len(src)) == src)
 
     print("the dashboard's job (gatbox-disk --job):")
     spool = f"{T}/spool"
@@ -381,6 +560,11 @@ def main():
                           "armed": {"by": "screen", "at": now, "until": now - 1}})
     check("a WRITE job whose 30-second arm ran out: stopped, nothing written", st["state"] == "stopped"
           and "arm ran out" in st["error"] and open(f"{DEV}/sdh", "rb").read(len(src)) == bytes(len(src)))
+    for what, bad in (("false", False), ("empty", {}), ("with no expiry", {"by": "screen"})):
+        code, st, gone = job({"op": "write", "check": checked, "ack": False, "machine": "widget-wars", "armed": bad})
+        check(f"a WRITE job whose arm is {what}: stopped and not treated as armed, nothing written",
+              st["state"] == "stopped" and "arm is malformed" in st["error"] and gone
+              and open(f"{DEV}/sdh", "rb").read(len(src)) == bytes(len(src)))
     stale = dict(checked, at=checked["at"] - 301)
     code, st, gone = job({"op": "write", "check": stale, "ack": False,
                           "armed": {"by": "screen", "at": now, "until": time.time() + 30}})

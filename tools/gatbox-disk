@@ -18,9 +18,11 @@ The spec is docs/plans/2026-11-02-disk-imaging.md. What the 2026-11-02 swap done
     time with O_DIRECT and must hash the same. The image is <label>_<YYYYmmdd>_<sha1:8>.img beside its map and its
     .json sidecar, and the same bytes are never stored twice. Each new image is queued for the archive.
   * TARGET CHECK: big enough, 512-byte sectors, not the image's own source drive, and what's on it now (read-only).
-  * WRITE: a passing check of the same image and drive less than 5 minutes old, the drive identified again, held
-    with O_EXCL (the kernel refuses that while anything is mounted), the image's bytes written and fsynced, then two
-    O_DIRECT reads of exactly that many bytes, both hashing to the image. One line in <store>/writes.jsonl, stopped
+  * WRITE: a passing check of the same image and drive less than 5 minutes old, the drive identified again and what is
+    on it read again (the check's "blank" is minutes old), the image's size and own bytes checked against its checksum
+    before the target is touched, the drive held with O_EXCL (the kernel refuses that while anything is mounted) and
+    identified once more, the image's bytes written and fsynced, then two O_DIRECT reads of exactly that many bytes,
+    both hashing to the image. One read or write at a time on the store. One line in <store>/writes.jsonl, stopped
     or verified. The rest of a larger drive is left untouched.
 
 Not here yet (the note's §10): the MAME CHD check (Task 3: the chdman parser waits for Task 0's real output), the
@@ -34,6 +36,7 @@ fake sysfs tree, plain files standing in for devices, a fake mount table) and GA
 import argparse
 import datetime
 import errno
+import fcntl
 import glob
 import hashlib
 import json
@@ -69,6 +72,7 @@ FLASH = ("cf", "sd", "ssd")
 SECTOR = 512                                                     # the IDE2SAT2 takes nothing else (note §4.2)
 CHECK_FRESH_S = 300                                              # a TARGET CHECK is good for 5 minutes
 CHUNK = 4 << 20                                                  # read and write in 4 MiB pieces
+LOCK = ".gatbox-disk.lock"                                       # in the store: one read or write at a time
 
 
 class Stop(Exception):
@@ -106,6 +110,19 @@ def require_store():
     if not store_mounted():
         raise Stop("IMAGE STORE NOT CONNECTED",
                    f"plug in the image-store drive: {DISKS} must be its mount, with its {MARKER} marker")
+
+
+def take_lock():
+    """One disk read or write at a time, whoever started it (the dashboard's job or the terminal): an exclusive flock
+    on a file in the store. Two of them on one drive would be a write racing a read. -> the open descriptor, which
+    holds the lock until it is closed (and is released by the kernel if this process dies)."""
+    fd = os.open(os.path.join(os.path.realpath(DISKS), LOCK), os.O_CREAT | os.O_RDWR, 0o664)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        raise Stop("another disk read or write is running", "wait for it to finish, then try again") from None
+    return fd
 
 
 def pick(name):
@@ -216,6 +233,14 @@ class Read(Work):
         return folder, base + ".img.part", base + ".map", base + ".read.json"
 
     def go(self, retry=False):
+        require_store()
+        lock = take_lock()
+        try:
+            return self._go(retry)
+        finally:
+            os.close(lock)
+
+    def _go(self, retry):
         require_store()
         if not LABEL.match(self.label):
             raise Stop("label: 1-40 of letters, digits, '.', '_', '-' (it becomes the file name)")
@@ -517,13 +542,20 @@ class Write(Work):
 
     def go(self, verify_only=False):
         c = self.checked
+        lock = None
         try:
             require_store()
+            lock = take_lock()
             if not c.get("target_ok"):
                 raise Stop("there's no passing TARGET CHECK", "check the drive first")
-            until = (self.armed or {}).get("until")
-            if until is not None and time.time() > until:
-                raise Stop("the 30-second arm ran out before the job started", "nothing was written: hold WRITE again")
+            if self.armed is not None:
+                # An arm is a dict with a real expiry. Anything else (False, {}, a string for a time) is not an arm,
+                # and an arm skips the typed model, so it is never taken on trust.
+                until = self.armed.get("until") if isinstance(self.armed, dict) else None
+                if isinstance(until, bool) or not isinstance(until, (int, float)):
+                    raise Stop("the arm is malformed: it has no expiry", "nothing was written: hold WRITE again")
+                if time.time() > until:
+                    raise Stop("the 30-second arm ran out before the job started", "nothing was written: hold WRITE again")
             if time.time() - c.get("at", 0) > CHECK_FRESH_S:
                 raise Stop("the TARGET CHECK is more than 5 minutes old", "check the drive again")
             if c.get("needs_ack") and not self.ack and not verify_only:
@@ -533,31 +565,61 @@ class Write(Work):
             if not same_drive(d["identity"], c["identity"]):
                 raise Stop(f"{c['device']} is a different drive from the one checked ({describe(d['identity'])})",
                            "nothing was written: check the drive that's on the dock now")
+            # The TARGET CHECK said whether the drive was blank, some minutes ago, and a different drive of the same make
+            # and size looks the same. What is on it is read again now, and that is what decides about --overwrite.
+            fresh = contents(d["node"], d["identity"]["logical"])
+            self.info["contents"] = fresh
+            if not fresh["blank"] and not self.ack and not verify_only:
+                raise Stop("the target isn't blank: " + say_contents(fresh),
+                           "acknowledge that it gets overwritten (--overwrite)")
             img, side = image_in_store(c["image"])
             if side.get("sha1") != c["sha1"]:
                 raise Stop("the image changed since the check", "check again")
+            size = c["bytes"]
+            if os.path.getsize(img) != size:
+                raise Stop("the image's size changed since the check", "nothing was written: check again")
+            # The sidecar's SHA-1 was made when the image was stored; the file has had time to go wrong since. Its own
+            # bytes are hashed once, before the target is touched: a damaged image is refused, not written and then
+            # found out by the read-back.
+            self.step("image", "reading the image once to check it against its checksum", progress=0.01)
+            if hashed_read(img, size) != c["sha1"]:
+                raise Stop("the image in the store doesn't match its own checksum",
+                           "it was damaged after it was stored: nothing was written. Read the original drive again")
             self.info["target"] = d["identity"]
             if self.armed is None and (self.confirm is None or not self.confirm(self)):
                 raise Stop("the model wasn't typed: nothing was written")
-            size = c["bytes"]
             try:
-                fd = os.open(d["node"], os.O_WRONLY | os.O_EXCL)   # on a block device: refused while anything holds it
+                # on a block device this claim is refused while anything holds it; VERIFY ONLY only reads, so it asks for no more
+                fd = os.open(d["node"], (os.O_RDONLY if verify_only else os.O_WRONLY) | os.O_EXCL)
             except OSError as e:
                 if e.errno == errno.EBUSY:
                     raise Stop(f"{d['name']} is busy: something has it mounted or open", "nothing was written") from None
+                if e.errno in (errno.EROFS, errno.EACCES, errno.EPERM):
+                    raise Stop(f"{d['name']} is write-protected or read-only", "check the card's lock switch: nothing was written") from None
                 raise
             self.info["verify_only"] = verify_only
             try:
+                # The claim is made, so nothing can swap under it from here without this descriptor going stale. The
+                # drive is identified once more, and the descriptor's own size compared, before anything is written.
+                again = pick(c["device"])
+                if not same_drive(again["identity"], c["identity"]) or os.lseek(fd, 0, os.SEEK_END) != c["identity"]["bytes"]:
+                    raise Stop(f"{c['device']} is a different drive from the one checked ({describe(again['identity'])})",
+                               "nothing was written: check the drive that's on the dock now")
                 if not verify_only:
                     self.info["written"] = True     # from here on a stop leaves the drive partly written
                     self.step("write", f"{size:,} bytes to {d['name']}", progress=0.05)
                     with open(img, "rb") as src:
                         done = 0
                         while done < size:
-                            piece = src.read(min(CHUNK, size - done))
+                            piece = memoryview(src.read(min(CHUNK, size - done)))
                             if not piece:
                                 raise Stop("the image ended early", "the store's copy is damaged: nothing more written")
-                            os.pwrite(fd, piece, done)
+                            off = 0
+                            while off < len(piece):         # pwrite may take less than it was given: finish the piece
+                                n = os.pwrite(fd, piece[off:], done + off)
+                                if n <= 0:
+                                    raise Stop("the drive stopped taking data", "it is partly written now: try another one")
+                                off += n
                             done += len(piece)
                     os.fsync(fd)
                 for n in (1, 2):
@@ -580,6 +642,8 @@ class Write(Work):
             self.info.update(state="stopped", error=f"gatbox-disk failed: {e!r}")
             raise
         finally:
+            if lock is not None:
+                os.close(lock)
             self.log()
 
     def log(self):
@@ -751,12 +815,17 @@ def main():
         print(f"\n  image   {os.path.relpath(c['image'], os.path.realpath(DISKS))}: {c['bytes']:,} bytes · SHA-1 {c['sha1']}"
               f"\n          from {describe(side.get('source') or {})}")
         print(f"  target  {c['device']}: {describe(c['identity'])}\n          {say_contents(c['contents'])}")
+        # What has to be typed can never be empty: a bridge that reports no model would make a bare Enter, or the end of
+        # a script's input, count as the model typed. Without a model the device name is typed instead.
+        model = c["identity"]["model"]
+        want = model or c["device"]
         try:
-            typed = input(f"\nType the target's model ({c['identity']['model']}) to write: ")
+            typed = input(f"\nType the target's {'model' if model else 'device name'} ({want}) to write: ")
         except EOFError:
             typed = ""
-        w.info["armed"] = {"by": "terminal", "typed": typed.strip() == c["identity"]["model"]}
-        return typed.strip() == c["identity"]["model"]
+        ok = bool(want) and typed.strip() == want
+        w.info["armed"] = {"by": "terminal", "typed": ok}
+        return ok
 
     w = Write(c, ack=args.overwrite, confirm=confirm, machine=side.get("machine"), realm=side.get("realm"), say=say)
     try:

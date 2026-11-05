@@ -58,6 +58,7 @@ def profiles(dd=None):
 
 SPECS_CONFIRMED = "machine-specs-confirmed.json"   # state: rail limits CONFIRMed on the dashboard against a manual page
 ACTUALS = "machine-actuals.json"                   # state: the owner's own values for a machine, measured in the field
+LIBRARY_SPECS = "library-specs.json"               # state: the game library's confirmed limits, flat, written by gatbox-web
 
 
 def _state_json(name, sd=None):
@@ -79,16 +80,26 @@ def machine_specs(dd=None, sd=None, actuals=True):
     Three layers, each later one winning the rails it has: the specs file (gatbox-machine-specs.json), limits the owner
     CONFIRMed on the dashboard against a manual page, and a window of her own for a rail on that machine (set with an
     actual value from the field). The manual's numbers are never overwritten: each layer keeps its own file, and the
-    dashboard shows them side by side."""
-    base = (_load(os.path.join(dd or data_dir(), "gatbox-machine-specs.json")) or {}).get("machines", {})
-    conf, act = _state_json(SPECS_CONFIRMED, sd), _state_json(ACTUALS, sd) if actuals else {}
-    if not conf and not act:
+    dashboard shows them side by side.
+
+    On a deck whose game library is seeded, gatbox-web writes library-specs.json (the library's confirmed limits: the
+    specs-file ones and each rail's latest CONFIRMed manual limit) and that replaces the first two layers. The logger
+    only ever reads this flat file, never the library's database."""
+    export = _state_json(LIBRARY_SPECS, sd)
+    from_library = isinstance(export.get("machines"), dict)       # the deck is seeded: the library is the source
+    if from_library:
+        base, conf = export["machines"], {}
+    else:
+        base = (_load(os.path.join(dd or data_dir(), "gatbox-machine-specs.json")) or {}).get("machines", {})
+        conf = _state_json(SPECS_CONFIRMED, sd)
+    act = _state_json(ACTUALS, sd) if actuals else {}
+    if not conf and not act and not from_library:
         return base
     out = {}
     for slug in set(base) | set(conf) | set(act):
         b = base.get(slug) if isinstance(base.get(slug), dict) else {}
         rails = {r: w for r, w in (b.get("rails") or {}).items() if _window(w)}
-        src = {r: "specs file" for r in rails}
+        src = {r: (b.get("sources") or {}).get(r, "specs file") for r in rails}
         for r, c in (conf.get(slug) or {}).items():
             w = isinstance(c, dict) and _window([c.get("lo"), c.get("hi")])
             if w:

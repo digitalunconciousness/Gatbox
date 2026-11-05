@@ -115,8 +115,9 @@
     });
     on("scan", onScan);
     on("dump", onDump);
-    on("specs", x => { if (S.view === "manuals" && x.slug === mnSlug()) loadManuals(); });
-    on("manuals", x => { if (S.view === "manuals" && x.slug === mnSlug()) loadManuals(); });
+    on("specs", x => { if (S.view === "library" && x.slug === mnSlug()) loadManuals(); });
+    on("manuals", x => { if (S.view === "library" && x.slug === mnSlug()) loadManuals(); });
+    on("library", () => { LB.data = null; if (S.view === "library") loadManuals(); });
     on("state", st => onState(st));
     on("heartbeat", () => { S.connected = true; renderHeader(); });
     es.addEventListener("resync", () => { es.close(); setTimeout(connect, 300); });
@@ -178,7 +179,7 @@
     chartDecor(); renderMeter(); renderHeader(); renderNav();
     if (S.view === "machine") loadMachine();
     if (S.view === "dump" && D.st) renderDump();          // FOR <machine> and its chip list follow the machine
-    if (S.view === "manuals" && !M.slug && M.for !== (S.st.machine || null)) { M.for = S.st.machine || null; loadManuals(); }
+    if (S.view === "library" && !M.slug && M.for !== (S.st.machine || null)) { M.for = S.st.machine || null; loadManuals(); }
     if (S.savedFor !== (S.st.machine || null)) loadSaved();
   }
 
@@ -595,7 +596,7 @@
     document.querySelectorAll(".view").forEach(v => v.classList.toggle("on", v.id === "v-" + view));
     if (view === "sessions") loadSessions();
     if (view === "machine") loadMachine();
-    if (view === "manuals") loadManuals();
+    if (view === "library") loadManuals();
     if (view === "system") loadSystem();
     if (view === "devices" || view === "dump") loadDevices();
     if (view === "meter") chart.redraw();
@@ -856,10 +857,10 @@
                                            ((e.spec.sources && srcLabel(e.spec.sources[r])) ? ` · ${srcLabel(e.spec.sources[r])}` : "")));
         if (e.spec.source) d.appendChild(el("div", "mut", e.spec.source));
       } else d.appendChild(el("div", "mut", hubOnly && !e.library ? "None yet."
-        : "None yet: the MANUALS tab has the machine's spec sheet (CONFIRM a limit from its manual)."));
+        : "None yet: the LIBRARY tab has the machine's spec sheet (CONFIRM a limit from its manual)."));
       if (!hubOnly || e.library) {
         const sp = el("button", null, "SPEC SHEET & MANUALS ▸");
-        sp.addEventListener("click", () => { M.slug = M.name = null; show("manuals"); });   // the card is the current machine's
+        sp.addEventListener("click", () => { M.slug = M.name = null; show("library"); });   // the card is the current machine's
         d.appendChild(sp);
       }
     };
@@ -1377,6 +1378,15 @@
       ...(n.interfaces || []).map(i => [i.name, i.ipv4.length ? i.ipv4.join(", ") : (i.up ? "up, no address" : "down")])]);
     tile("Storage", Object.entries(d.disk || {}).map(([k, v]) =>
       [k, v ? `${v.used_pct}% used · ${(v.free / 1e9).toFixed(1)} GB free` : "not there yet (M7)", v && v.used_pct > 90 ? "bad" : null]));
+    const lb = d.library || {}, sz = n => n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : n >= 1e3 ? `${Math.round(n / 1e3)} KB` : `${n || 0} B`;
+    tile("Library", [
+      ["games", lb.seeded ? `${lb.games}${lb.missing ? ` · ${lb.missing} missing a manual` : ""}` : "not set up yet", lb.seeded ? null : "mut"],
+      ...(lb.seeded ? [["documents", `${lb.fetched} on the Pi of ${lb.documents} listed`], ["limits", `${lb.confirmed} confirmed of ${lb.limits}`],
+                       ["ROM images", String(lb.images)]] : []),
+      ["size on the Pi", `${sz((lb.manuals_bytes || 0) + (lb.roms_bytes || 0) + (lb.db_bytes || 0))} · manuals ${sz(lb.manuals_bytes)}, ROM images ${sz(lb.roms_bytes)}`
+                         + (lb.seeded ? `, library ${sz(lb.db_bytes)}` : "")],
+      ["room on /srv", lb.free == null ? "not there yet" : `${(lb.free / 1e9).toFixed(1)} GB free${lb.low ? " · LOW: make room before the next manual or dump" : ""}`,
+       lb.low ? "bad" : null]]);
     const lg = d.logger || {};
     const lt = tile("Logger", [
       ["service", lg.running ? "running" : "NOT RUNNING", lg.running ? "ok" : "bad"],
@@ -1594,7 +1604,9 @@
                           : s === "specs file" ? "specs file" : s;
   const OTHER_RAILS = ["+5V", "+12V", "-5V", "+3.3V", "-12V", "+25V"];
   async function loadManuals() {
-    const B = $("#mn-body"), slug = mnSlug();
+    const B = $("#lb-body"), slug = mnSlug();
+    LB.data = null;                                  // fresh each time: a seed or an import from the command line shows at once
+    try { await libState(); } catch (e) { LB.data = {seeded: false}; }
     const head = el("div", "card"), row = el("div", "btnrow"), other = el("button", null, "OTHER MACHINE");
     row.style.alignItems = "center";
     other.addEventListener("click", pickManualsMachine);
@@ -1605,8 +1617,9 @@
       row.appendChild(back);
     }
     head.appendChild(row);
+    libraryBar(head, slug);
     if (!slug) {
-      add(clear(B), head, el("div", "card mut", "No machine set: OTHER MACHINE picks one to read (the logger's machine stays as it is)."));
+      add(clear(B), head, el("div", "card mut", "No machine set: OTHER MACHINE or ALL GAMES picks one to read (the logger's machine stays as it is)."));
       return;
     }
     let d, s;
@@ -1616,6 +1629,11 @@
     if (mnSlug() !== slug) return;                 // another machine was picked meanwhile
     M.docs = d; M.sheet = s;
     add(clear(B), head, specCard(slug, s, d), docsCard(slug, d));
+    const g = LB.data && LB.data.seeded ? gameOf(slug) : null;
+    if (g) {
+      const ic = await imagesCard(g);
+      if (ic && mnSlug() === slug) B.appendChild(ic);
+    }
   }
   async function pickManualsMachine() {
     let R, O;
@@ -1629,9 +1647,275 @@
     M.slug = pick; M.name = (R.machines.find(m => m.slug === pick) || {}).name || pick;
     loadManuals();
   }
+  // --- LIBRARY: the games (docs/plans/2026-11-03-phase-b-library.md, B4) -----------------------------------------------
+  // Once the deck is seeded the library holds every game: documents, limits, facts, the MAME set. This view reads a game
+  // through the machine-keyed calls above (a game's key works wherever a machine's slug does), and ADD GAME / EDIT change
+  // the game itself. A key is the title as a slug and is permanent, so ADD GAME shows it before saving. Editing is the 7"
+  // only; a phone reads. Before the seed, none of this shows and the view is each machine's manuals as it always was.
+  const LB = {data: null};
+  async function libState() {
+    if (!LB.data) LB.data = await api("GET", "/api/library");
+    return LB.data;
+  }
+  const gameOf = slug => ((LB.data && LB.data.games) || []).find(g => g.key === slug || g.machines.some(m => m.slug === slug));
+  const docsLine = g => g.fetched ? `${g.fetched} manual${g.fetched > 1 ? "s" : ""}` : "NO MANUAL";
+  function libraryBar(head, slug) {
+    const d = LB.data;
+    if (!d || !d.seeded) {
+      head.appendChild(el("div", "mut lb-note", BOX ? "The game library isn't set up yet: these are each machine's own manuals."
+        : "The game library isn't set up on this Pi yet, so this is each machine's own manuals. gatbox-library seed --plan starts it."));
+      return;
+    }
+    const g = slug ? gameOf(slug) : null, row = el("div", "btnrow");
+    row.style.cssText = "align-items:center;margin-top:8px";
+    const btn = (label, cls, f, off) => { const b = el("button", cls, label); b.disabled = !!off; b.addEventListener("click", f); return b; };
+    add(row, btn(`ALL GAMES (${d.count})`, null, () => pickGame(false)),
+        btn(`MISSING (${d.missing})`, d.missing ? "warn" : null, () => pickGame(true), !d.missing));
+    if (S.local) add(row, btn("+ ADD GAME", null, addGame), btn("EDIT GAME", null, () => editGame(g), !g),
+                     slug && !g ? btn("FIND GAME (MAME)", "primary", () => findGame(slug)) : null,
+                     g ? btn("FIND A MANUAL", g.missing ? "primary" : null, () => findManual(g)) : null);
+    head.appendChild(row);
+    const info = el("div", "lb-game");
+    if (g) {
+      add(info, el("b", null, g.title), el("span", "mut", ` ${[g.mfr, g.year].filter(Boolean).join(" ")} · key ${g.key} · ${docsLine(g)}`
+          + (g.machines.length ? ` · machines: ${g.machines.map(m => m.name).join(", ")}` : " · no machine")));
+      if (g.why && g.missing) info.appendChild(el("div", "warn", "Why no manual: " + g.why));
+    } else if (slug) {
+      info.appendChild(el("div", "warn", `${machineName(slug)} has no game in the library yet. ` + (S.local ? "FIND GAME (MAME) searches MAME's list; ALL GAMES picks one; + ADD GAME types it in."
+                                                                                                      : "Pick it on the Pi's own screen.")));
+    }
+    head.appendChild(info);
+  }
+  async function pickGame(onlyMissing) {
+    let d;
+    try { d = await libState(); } catch (e) { return fail(e); }
+    const games = d.games.filter(g => !onlyMissing || g.missing);
+    const pick = await pickFrom(onlyMissing ? `Missing a manual (${games.length})` : `Which game? (${games.length})`, games.map(g => ({
+      key: g.key, title: g.title, find: [g.title.toLowerCase(), g.key, (g.mfr || "").toLowerCase()],
+      sub: [g.mfr, g.year].filter(Boolean).join(" ") + (onlyMissing ? ` · ${g.why || "no reason noted"}` : ` · ${docsLine(g)}`)
+           + (g.machines.length ? "" : " · no machine"), subCls: g.missing ? "warn" : null})), (gameOf(mnSlug()) || {}).key);
+    if (!pick) return;
+    const g = games.find(x => x.key === pick), cur = mnSlug();
+    if (S.local && cur && !gameOf(cur)) {
+      const how = await choose(g.title, `${machineName(cur)} has no game yet. Open ${g.title}, or use it for ${machineName(cur)}?`,
+                               [["use", `USE IT FOR ${machineName(cur).toUpperCase()}`, true], ["open", "JUST OPEN IT"]]);
+      if (!how) return;
+      if (how === "use") return linkMachine(cur, g.key, g.title);
+    }
+    M.slug = g.primary; M.name = g.title;
+    loadManuals();
+  }
+  const machineName = slug => (M.slug === slug ? M.name : null) || (S.st && S.st.machine === slug && S.st.machine_name) || slug;
+  async function linkMachine(slug, key, title) {
+    try {
+      await api("POST", `/api/library/games/${encodeURIComponent(key)}/machines`, {slug});
+      toast(`${machineName(slug)} now uses ${title}`);
+    } catch (e) { fail(e); }
+    LB.data = null;
+    loadManuals();
+  }
+  // FIND GAME: MAME's own list (offline), for a machine the library has no game for. A hit becomes a game (with its MAME
+  // set noted for a dump to settle) and is linked to the machine; a game already in the library is just linked.
+  async function findGame(slug) {
+    const q = await keypad({title: "Search MAME's list for this game's title", max: 60, value: machineName(slug)});
+    if (!q) return;
+    let r;
+    try { r = await api("GET", "/api/library/titles?q=" + encodeURIComponent(q)); } catch (e) { return fail(e); }
+    if (!r.built) return toast(r.why, "warn", 8000);
+    if (!r.results.length) return toast(`Nothing in MAME's list for "${q}". + ADD GAME types it in (pinball, and games MAME lacks).`, "warn", 7000);
+    const pick = await pickFrom(`MAME: ${r.count} for "${q}"`, r.results.map(x => ({
+      key: x.set, title: x.title, find: [x.desc.toLowerCase(), x.set],
+      sub: `${[x.mfr, x.year].filter(Boolean).join(" ")} · set ${x.set}${x.clone_of ? ` (clone of ${x.clone_of})` : ""}${x.in_library ? ` · already in the library` : ""}`,
+      subCls: x.in_library ? "warn" : null})));
+    if (!pick) return;
+    const x = r.results.find(y => y.set === pick);
+    if (x.in_library) {
+      const ok = await choose(`${x.title} is in the library`, `Use it for ${machineName(slug)}?`, [["ok", `USE IT FOR ${machineName(slug).toUpperCase()}`, true]]);
+      if (ok) linkMachine(slug, x.in_library, x.title);
+      return;
+    }
+    const ok = await choose(`Add ${x.title}`, `Its key will be ${x.key}: its permanent ID in the library. MAME set ${x.clone_of || x.set}. ` +
+                            `Then ${machineName(slug)} uses it.`, [["ok", "ADD IT AND USE IT", true]]);
+    if (!ok) return;
+    try {
+      const body = {title: x.title, mfr: x.mfr, kind: "video", key: x.key, mame_set: x.clone_of || x.set};
+      if (x.year) body.year = x.year;
+      const g = await api("POST", "/api/library/games", body);
+      await api("POST", `/api/library/games/${encodeURIComponent(g.key)}/machines`, {slug});
+      toast(`ADDED ${g.title} · key ${g.key} · ${machineName(slug)} uses it`);
+    } catch (e) { fail(e); }
+    LB.data = null;
+    loadManuals();
+  }
+  // FIND A MANUAL: archive.org, through the manuals service (B8). The Pi's own screen only. The service does the searching and
+  // the downloading as its own user; this asks, waits for each answer, and offers the next choice: the items, then the PDFs in
+  // one, then what kind of document it is. A finished download becomes the game's document in the library.
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  async function manualWait(id, seconds) {
+    const end = Date.now() + seconds * 1000;
+    while (Date.now() < end) {
+      await sleep(1500);
+      let m;
+      try { m = await api("GET", "/api/library/manual"); } catch (e) { continue; }
+      if (m.status && m.status.job === id && (m.status.state === "done" || m.status.state === "stopped")) return m.status;
+    }
+    return null;
+  }
+  async function findManual(g) {
+    const base = `/api/library/games/${encodeURIComponent(g.key)}/manual/`;
+    const q = await keypad({title: "Search archive.org for a manual: words from its title", max: 80, value: g.title});
+    if (!q) return;
+    let id;
+    try { id = (await api("POST", base + "search", {query: q})).id; } catch (e) { return fail(e); }
+    toast("Searching archive.org…", null, 20000);
+    let st = await manualWait(id, 60);
+    if (!st) return toast("archive.org didn't answer in time: is the Pi online?", "warn", 8000);
+    if (st.state === "stopped") return toast("The search failed: " + st.error, "bad", 9000);
+    if (!st.candidates.length) return toast(`Nothing on archive.org with "${q}" in its title: try fewer words.`, "warn", 8000);
+    const item = await pickFrom(`archive.org: ${st.candidates.length} for "${q}"`, st.candidates.map(c => ({
+      key: c.identifier, title: c.title, find: [c.title.toLowerCase(), c.identifier.toLowerCase()],
+      sub: `${c.identifier}${c.downloads ? ` · ${c.downloads} downloads` : ""}`})));
+    if (!item) return;
+    const title = st.candidates.find(c => c.identifier === item).title;
+    try { id = (await api("POST", base + "files", {identifier: item})).id; } catch (e) { return fail(e); }
+    toast("Looking inside it…", null, 20000);
+    st = await manualWait(id, 60);
+    if (!st) return toast("archive.org didn't answer in time.", "warn", 8000);
+    if (st.state === "stopped") return toast("Couldn't list that item: " + st.error, "bad", 9000);
+    if (!st.files.length) return toast("That item has no PDF in it: pick another.", "warn", 8000);
+    let file = st.files[0];
+    if (st.files.length > 1) {
+      const pick = await pickFrom("Which PDF?", st.files.map(f => ({key: f.name, title: f.name, find: [f.name.toLowerCase()],
+                                                                   sub: `${(f.size / 1e6).toFixed(1)} MB`})));
+      if (!pick) return;
+      file = st.files.find(f => f.name === pick);
+    }
+    const mb = (file.size / 1e6).toFixed(1);
+    const kind = await choose(`${file.name}`, `${mb} MB, from archive.org's "${title}". It goes into ${g.title}'s documents. What is it?`,
+                              [["manual", "MANUAL", true], ["schematics", "SCHEMATICS"], ["parts", "PARTS"], ["other", "OTHER"]]);
+    if (!kind) return;
+    try { id = (await api("POST", base + "fetch", {identifier: item, file: file.name, title, kind})).id; } catch (e) { return fail(e); }
+    toast(`Downloading ${file.name} (${mb} MB)…`, null, 10000);
+    st = await manualWait(id, 1200);
+    if (!st) return toast("Still downloading: it shows in the documents when it's done.", "warn", 8000);
+    if (st.state === "stopped") return toast("The download failed: " + st.error, "bad", 10000);
+    LB.data = null;
+    toast(`FETCHED ${st.title}: ${st.pages} page${st.pages === 1 ? "" : "s"}`);
+    if (S.view === "library") loadManuals();
+  }
+  async function addGame() {
+    const cur = mnSlug(), orphan = cur && !gameOf(cur) ? cur : null;       // the machine in view, if it has no game yet
+    const title = await keypad({title: "The game's title", max: 120});
+    if (!title) return;
+    const kind = await choose(`${title}: what kind of game?`, "A pinball's key starts with pin-.",
+                              [["video", "VIDEO", true], ["pinball", "PINBALL"], ["other", "OTHER"]]);
+    if (!kind) return;
+    const mfr = await keypad({title: "Maker (empty if you don't know)", max: 120});
+    if (mfr == null) return;
+    const year = await keypad({title: "Year (empty if you don't know)", number: true, max: 4});
+    if (year == null) return;
+    let key;
+    try {
+      key = (await api("GET", `/api/library/key?title=${encodeURIComponent(title)}&kind=${kind}&mfr=${encodeURIComponent(mfr)}&year=${year}`)).key;
+    } catch (e) { return fail(e); }
+    const ok = await choose(`Key: ${key}`, `This is ${title}'s permanent ID in the library. It never changes, even if you fix the title later.`,
+                            [["ok", "ADD IT", true]]);
+    if (!ok) return;
+    const body = {title, kind, mfr, key};
+    if (/^\d{4}$/.test(year)) body.year = +year;
+    try {
+      const g = await api("POST", "/api/library/games", body);
+      LB.data = null;
+      toast(`ADDED ${g.title} · key ${g.key}`);
+      if (orphan && await choose(`Use ${g.title} for ${machineName(orphan)}?`, `${machineName(orphan)} has no game yet.`,
+                                 [["use", `USE IT FOR ${machineName(orphan).toUpperCase()}`, true]])) return linkMachine(orphan, g.key, g.title);
+      M.slug = g.key; M.name = g.title;
+      loadManuals();
+    } catch (e) { fail(e); }
+  }
+  async function editGame(g) {
+    if (!g) return;
+    const what = await choose(`Edit ${g.title}`, `Key ${g.key} stays as it is.`,
+                              [["title", "TITLE"], ["mfr", "MAKER"], ["year", "YEAR"], ["notes", "NOTES"]]);
+    if (!what) return;
+    const cur = what === "year" ? (g.year ? String(g.year) : "") : (g[what] || "");
+    const v = await keypad({title: {title: "Title", mfr: "Maker", year: "Year", notes: "Notes about the game"}[what], value: cur,
+                            number: what === "year", max: {title: 120, mfr: 120, year: 4, notes: 2000}[what], keep: what === "notes"});
+    if (v == null) return;
+    const body = {rev: g.rev};
+    if (what === "year") { if (v && !/^\d{4}$/.test(v)) return toast("A year has four digits", "warn"); body.year = v ? +v : null; }
+    else body[what] = v;
+    try {
+      await api("PUT", `/api/library/games/${encodeURIComponent(g.key)}`, body);
+      LB.data = null;
+      toast(`${g.title}: ${what} saved`);
+      loadManuals();
+    } catch (e) { fail(e); LB.data = null; loadManuals(); }
+  }
+  // --- CHECK: one dump against MAME, the game's chips, her images and the machine's earlier dumps (B6) -----------------
+  // The server does the comparing (GET /api/library/check) and says each result in words and a level; this draws them and,
+  // on the 7", the marks: KNOWN GOOD, KNOWN BAD, UNMARK. Nothing here sends anything anywhere.
+  const CHECK_AGAINST = {mame: "AGAINST MAME", game: "THE GAME'S CHIPS", images: "YOUR IMAGES", machine: "THIS MACHINE'S EARLIER DUMPS"};
+  const imageOf = path => String(path || "").split("/").slice(-2).join("/");
+  function checkButton(image, label) {
+    const b = el("button", "mini", label || "CHECK ▸");
+    b.addEventListener("click", () => openCheck(image));
+    return b;
+  }
+  async function openCheck(image) {
+    let j;
+    try { j = await api("GET", "/api/library/check?image=" + encodeURIComponent(image)); } catch (e) { return fail(e); }
+    const act = await sheet(`CHECK ${j.label}`, (pane, done) => {
+      pane.appendChild(el("div", "mut", `${j.part || "chip"} · ${j.size.toLocaleString("en-US")} bytes · SHA-1 ${j.sha1.slice(0, 8)} · ${j.date || "no date"}`));
+      for (const c of j.checks) {
+        const row = el("div", "ck-row");
+        add(row, el("span", "badge " + c.level, c.word), el("b", null, " " + CHECK_AGAINST[c.against]), el("div", "mut", c.detail));
+        pane.appendChild(row);
+      }
+      if (S.local && j.library) {
+        const row = el("div", "btnrow");
+        for (const [k, t] of [["good", "KNOWN GOOD"], ["bad", "KNOWN BAD"], ["unknown", "UNMARK"]]) {
+          const b = el("button", j.mark.verdict === k && k !== "unknown" ? "on" : null, t);
+          b.disabled = k === "unknown" && j.mark.verdict === "unknown";
+          b.addEventListener("click", () => done(k));
+          row.appendChild(b);
+        }
+        pane.appendChild(row);
+      } else if (!j.library) pane.appendChild(el("div", "mut", "Marks and the game's chips need the game library: it isn't set up yet."));
+    });
+    if (!act) return;
+    let note = j.mark.note;
+    if (act !== "unknown") {
+      note = await keypad({title: "Note (optional): where it came from, what it was checked against", max: 200, value: j.mark.note || ""});
+      if (note == null) return openCheck(image);
+    }
+    try {
+      await api("POST", `/api/library/images/${j.sha256}/mark`, {verdict: act, note: act === "unknown" ? "" : note});
+      toast(act === "unknown" ? "Mark removed" : `${j.label}: marked ${act === "good" ? "KNOWN GOOD" : "KNOWN BAD"}`);
+    } catch (e) { fail(e); }
+    openCheck(image);
+    if (S.view === "library") loadManuals();
+  }
+  async function imagesCard(g) {
+    let r;
+    try { r = await api("GET", `/api/library/games/${encodeURIComponent(g.key)}/images`); } catch (e) { return null; }
+    const c = el("div", "card");
+    c.appendChild(el("h2", null, `ROM images (${r.images.length})`));
+    if (!r.images.length) { c.appendChild(el("div", "mut", "None yet: every chip dumped from a machine of this game lands here.")); return c; }
+    for (const i of r.images) {
+      const b = el("button", "row");
+      const lvl = {good: ["KNOWN GOOD", "ok"], bad: ["KNOWN BAD", "bad"], unknown: ["NOT MARKED", "mut"]}[i.verdict];
+      add(b, el("b", null, (i.label || i.sha1.slice(0, 8)) + " "), el("span", "badge " + lvl[1], lvl[0]),
+          el("div", "mut", `${i.size.toLocaleString("en-US")} bytes · SHA-1 ${i.sha1.slice(0, 8)}${i.match === true ? " · MAME knows it" : i.match === false ? " · NO MATCH in MAME" : ""}${i.note ? " · " + i.note : ""}`));
+      if (i.image) b.addEventListener("click", () => openCheck(i.image));
+      else b.disabled = true;
+      c.appendChild(b);
+    }
+    return c;
+  }
   const pageUrl = (slug, file, page, w) => `/manual/${encodeURIComponent(slug)}/${encodeURIComponent(file)}/${page}.png?w=${w}`;
   function specCard(slug, s, d) {
-    const c = el("div", "card"), docOf = id => d.docs.find(x => x.id === id);
+    const c = el("div", "card"), docOf = id => d.docs.find(x => x.id === id), mach = s.machine !== false;   // a bare game has no actuals
     c.appendChild(el("h2", null, "Spec sheet"));
     foldText(c, "HOW THIS WORKS", "The manual's numbers as the manual gives them (p.N opens the page), and this machine's actual " +
              "values from the field beside them. A manual limit sets the logger's window only once you CONFIRM it; an " +
@@ -1648,7 +1932,7 @@
     if (s.rails.length) {
       const wrap = el("div"), t = el("table", "t spec-t"), hr = el("tr");
       wrap.style.overflowX = "auto";
-      for (const h of ["RAIL", "THE MANUAL", "ACTUAL · THIS MACHINE", "WINDOW IN USE"]) hr.appendChild(el("th", null, h));
+      for (const h of mach ? ["RAIL", "THE MANUAL", "ACTUAL · THIS MACHINE", "WINDOW IN USE"] : ["RAIL", "THE MANUAL", "WINDOW IN USE"]) hr.appendChild(el("th", null, h));
       t.appendChild(hr);
       for (const r of s.rails) {
         const man = el("td"), act = el("td");
@@ -1670,7 +1954,7 @@
         act.appendChild(buttons(btn(r.actual ? "EDIT" : "SET ACTUAL", "", () => setRailActual(slug, r)),
                                 r.actual ? btn("CLEAR", "", () => specCall("DELETE", `/api/actuals/${encodeURIComponent(slug)}`, {rail: r.rail}, `${r.rail}: actual cleared`)) : null));
         const tr = el("tr");
-        add(tr, el("td", "rail", r.rail.replace("-", "−")), man, act,
+        add(tr, el("td", "rail", r.rail.replace("-", "−")), man, mach ? act : null,
             el("td", r.window ? "ok" : "mut", r.window ? `${fmtW(r.window)} · ${srcLabel(r.source)}` : "the profile's"));
         t.appendChild(tr);
       }
@@ -1680,7 +1964,7 @@
     if (s.facts.length) {
       const wrap = el("div"), t = el("table", "t spec-t"), hr = el("tr");
       wrap.style.overflowX = "auto";
-      for (const h of ["", "THE MANUAL", "ACTUAL · THIS MACHINE"]) hr.appendChild(el("th", null, h));
+      for (const h of mach ? ["", "THE MANUAL", "ACTUAL · THIS MACHINE"] : ["", "THE MANUAL"]) hr.appendChild(el("th", null, h));
       t.appendChild(hr);
       for (const f of s.facts) {
         const man = el("td"), act = el("td"), tr = el("tr");
@@ -1689,14 +1973,14 @@
         if (f.actual) add(act, el("b", null, f.actual.value), f.actual.note ? el("div", "quote", f.actual.note) : null);
         act.appendChild(buttons(btn(f.actual ? "EDIT" : "SET ACTUAL", "", () => setFactActual(slug, f.what, f.actual)),
                                 f.actual ? btn("CLEAR", "", () => specCall("DELETE", `/api/actuals/${encodeURIComponent(slug)}`, {fact: f.what}, `${f.what}: actual cleared`)) : null));
-        add(tr, el("td", "rail", f.what), man, act);
+        add(tr, el("td", "rail", f.what), man, mach ? act : null);
         t.appendChild(tr);
       }
       wrap.appendChild(t);
       c.appendChild(wrap);
     }
     const have = new Set(s.rails.map(r => r.rail));
-    c.appendChild(buttons(
+    if (mach) c.appendChild(buttons(
       btn("+ ACTUAL FOR A RAIL", "", async () => {
         const rail = await pickFrom("Which rail?", OTHER_RAILS.filter(r => !have.has(r)).map(r => ({key: r, title: r.replace("-", "−"), sub: "", find: [r]})));
         if (rail) setRailActual(slug, {rail, manual: [], actual: null, window: null});
@@ -1708,7 +1992,7 @@
     try {
       const r = await api(method, path, body);
       toast(msg + (r.new_file ? " · new file started" : ""));
-      if (S.view === "manuals") loadManuals();
+      if (S.view === "library") loadManuals();
     } catch (e) { fail(e); }
   }
   // CONFIRM: the page itself on screen, the manual's words, then the owner's say-so
@@ -1996,7 +2280,8 @@
     for (const r of v.roms) {
       const tr = el("tr"), d = r.dumped[0], fam = famsFor(r.size).map(f => f.label).join(" or ");
       const name = el("td");
-      add(name, el("b", null, r.name), d ? el("div", "ok", `← ${d.label}${d.machine !== slug ? ` (archived under ${d.machine})` : ""}`) : null);
+      add(name, el("b", null, r.name), d ? el("div", "ok", `← ${d.label}${d.machine !== slug ? ` (archived under ${d.machine})` : ""}`) : null,
+          d ? checkButton(`${d.machine}/${d.file}`) : null);
       add(tr, el("td", d ? "ok" : "mut", d ? "✓" : "·"), name,
           el("td", null, KB(r.size) + (fam ? ` · ${fam}` : "")), el("td", null, r.crc || "—"),
           el("td", r.sha1 ? null : "warn", r.sha1 ? r.sha1.slice(0, 8) : (r.status === "nodump" ? "no known dump" : "no hash")),
@@ -2241,7 +2526,7 @@
     L.appendChild(el("h2", null, "Dumps for this machine"));
     B.appendChild(L);
     api("GET", "/api/dumps" + (D.machine ? "?machine=" + encodeURIComponent(D.machine) : ""))
-      .then(r => { dumpList(L, r.dumps); burnList(L, r.burns || []); }).catch(() => {});
+      .then(r => { dumpList(L, r.dumps, D.machine || (S.st && S.st.machine) || "unassigned"); burnList(L, r.burns || []); }).catch(() => {});
   }
   // the part: family tiles (lit for a size: the MAME chip's, or the image's) → minipro's exact names; or SEARCH
   function partSection(p, size) {
@@ -2382,6 +2667,7 @@
           el("div", "mut", `SHA-1 ${s.sha1} · CRC32 ${s.crc32}`),
           el("div", "mut", (a.new ? "archived: " : "already archived: ") + (a.path || "")));
       if (s.blank) c.appendChild(el("div", "warn", "archived although it reads " + s.blank));
+      if (a.path) c.appendChild(checkButton(imageOf(a.path)));
     } else {
       add(c, el("div", "big bad", "STOPPED"), el("div", null, s.error || ""), s.hint ? el("div", "mut", "→ " + s.hint) : null);
       const again = el("div", "btnrow"), same = {part: s.part, label: s.label};
@@ -2404,13 +2690,14 @@
     r.firstChild.after(el("span", "tag " + tone, s.state === "sent" ? "SENT" + (s.hub ? " TO " + s.hub : "") : String(s.state).toUpperCase()));
     if (s.state !== "sent" && s.reason) r.appendChild(el("div", s.state === "refused" ? "bad" : "mut", s.reason));
   }
-  function dumpList(box, list) {
+  function dumpList(box, list, machine) {
     if (!list.length) { box.appendChild(el("div", "mut", "None yet.")); return; }
     for (const d of list.slice(0, 20)) {
       const r = el("div");
       r.style.margin = "4px 0";
       add(r, el("b", null, d.label + " "), el("span", d.match ? "tag ok" : "tag warn", d.match ? "MATCH" : "NO MATCH"),
-          el("div", "mut", `${(d.matches[0] && d.matches[0].set + "/" + d.matches[0].rom) || ""} ${d.part} · ${(d.date || "").slice(0, 16).replace("T", " ")} · ${d.sha1.slice(0, 8)}`));
+          el("div", "mut", `${(d.matches[0] && d.matches[0].set + "/" + d.matches[0].rom) || ""} ${d.part} · ${(d.date || "").slice(0, 16).replace("T", " ")} · ${d.sha1.slice(0, 8)}`),
+          d.file ? checkButton(`${machine}/${d.file}`) : null);
       sentBadge(r, d.sent);
       box.appendChild(r);
     }

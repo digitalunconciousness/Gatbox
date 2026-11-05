@@ -586,6 +586,99 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         (−7, 0) and (+6, +11) px, spread ±6–9 px — the two disagree, so no calibration; re-run once the panel
         is in its box (the viewing angle changes). A steady offset → a libinput calibration
         matrix for the WS170120 (a udev rule: shown first, rule 5); scatter only → nothing more.
+- **Phase B, the library on the deck (branch `phase-b-library`, from 2026-11-03):** spec
+  `docs/plans/2026-11-03-phase-b-library.md`, approved by the owner (LIBRARY replaces MANUALS on the 7"). Repo-only
+  until she says: nothing installed changes.
+  - [x] B1, the store: `backend/gatboxlib/library.py` (SQLite, revisions, canonical hashes, compare-and-set, the
+        feed and the digest, `model_key`, the confirmed rule) and `docs/contract/library-v1/` (README + vectors).
+        `test-library.sh` 59; each of 17 guards broken on purpose fails a test (the 18th is equivalent). The ROM list
+        keeps year, maker, regions, BIOS and disks (what the chip list shows), and `bulk` writes many records in one
+        transaction
+  - [x] B2, the seed: `tools/gatbox-library seed --plan` (read-only; a plan to your home, never git; it flags slugs that
+        look like one game, ids it had to change, an http address, a confirmed limit nothing matches), `seed --apply`
+        (one transaction; what's there is kept, a deleted record stays deleted, so a second run changes nothing),
+        `import --kind manuals|mame-sets|specs FILE` (edits; never confirms or unconfirms a limit), `status`.
+        `test-seed.sh` 38 on an invented deck; 19 of 20 guards broken on purpose fail a test (the 20th is equivalent)
+  - [x] B3, the readers: once the deck is seeded, `gatboxlib/libview.py` builds today's data shapes (the manuals list,
+        the CONFIRMed state, the specs file's limits, mame-roms.json) from the library, and `manuals.py`, `mame.py` and
+        `roster.library` read those instead of the files, which stay the fallback for a machine the seed left out. With
+        no library file nothing changes. CONFIRM / UNCONFIRM write the library, and gatbox-web keeps `library-specs.json`
+        (the confirmed limits, flat) in its state dir: that file replaces the specs-file and confirmed-state layers in
+        `profiles.machine_specs`, so the logger never opens SQLite. A damaged export, or no library, falls back to the
+        files. Two cabinets seeded as one game share their manuals (files stay in each cabinet's folder), limits and ROM
+        list; a retired game's machines read its survivor. The seed now flags a limit confirmed at other numbers than the
+        list has (the logger would stop using it). `test-library-web.sh` 31 (the same answers before and after a seed,
+        CONFIRM through the library to the logger, an outside change within seconds, the fallbacks, the merge), 21 of 22
+        guards broken on purpose fail a test (the 22nd is equivalent); the web-api, manuals, mame, roster, raillog,
+        report and sync suites pass unchanged
+  - [x] B4, the LIBRARY view (it replaces MANUALS: nav, `#v-library`; the machine-keyed spec sheet and documents are
+        inside it). `GET /api/library` (every game with what the library holds and whether it's missing a manual, and
+        why), `/api/library/key` (the key a title would get), `POST /api/library/games` (ADD GAME) and `PUT
+        /api/library/games/<key>` (EDIT: title, maker, year, notes; compare-and-set on `rev`, the key never changes),
+        both the Pi's own screen only (L5). The manuals API takes a game's key as well as a machine's slug, so a game no
+        roster machine is has documents and a spec sheet; actual values stay per machine. On the 7": ALL GAMES, MISSING,
+        + ADD GAME (title, kind, maker, year, then the permanent key shown before saving), EDIT GAME; a phone reads. With
+        no library the tab is each machine's manuals as before and says the library isn't set up. `test-library-web.sh`
+        44, `test-dash.sh` 137 (LIBRARY seeded: 11; screenshots 25a–25e, 26); 18 of 21 new guards broken on purpose
+        fail a test (two of the three that didn't got tests, the third is equivalent)
+  - [x] B7, SYSTEM's Library tile: games and how many are missing a manual, documents on the Pi of those listed,
+        limits confirmed of all, ROM images, the size on the Pi (manuals, ROM images, the database) and the room on
+        /srv, with LOW (under 2 GB free, or 90% used) in red. It's there before the library is set up too: the manuals'
+        size and the room are true either way. `/api/system` carries `library`
+  - [x] B6, CHECK and the known-good marks. `GET /api/library/check?image=<machine>/<file>.bin` compares one archived
+        dump four ways, each as a word, a level and an explanation: MAME's own answer (MATCH / NO MATCH / NOT
+        IDENTIFIED), the game's chips from the library's ROM list (RIGHT CHIP / ANOTHER REVISION / NOT THIS GAME / NOT
+        LISTED), her images (KNOWN GOOD / KNOWN BAD / SEEN BEFORE / NEVER SEEN) and this machine's earlier dumps of
+        the chip (SAME AS LAST TIME / CHANGED / FIRST DUMP). It reads and sends nothing, and works before the library
+        is set up (minus the game's chips and the marks). `POST /api/library/images/<sha256>/mark` sets known good /
+        bad / unmarked with a note (the Pi's own screen only). gatbox-web adopts every archived dump into the library
+        as a `rom_image` within seconds and never changes one that's there, a mark included; a sidecar missing its size,
+        CRC or SHA-1 has them read from the file. On the 7": CHECK ▸ on the DUMP result and list and on each ROM chip
+        that has a dump, the marks inside the sheet, and a "ROM images" card on each game in LIBRARY. A phone reads.
+        `test-library-web.sh` 64, `test-dash.sh` 143 (screenshots 27a–27c, 28), `test-seed.sh` 40; 16 of 16 guards broken
+        on purpose fail a test
+  - [x] B5, the title search and linking a machine to a game. `gatbox-mame-roms --titles OUT` writes MAME's own game list
+        (set, description, year, maker, parent; no devices, no BIOS sets) once per MAME version, and the bootstrap
+        builds it like the chip list (shown in `--check`). `GET /api/library/titles?q=` searches it offline: every word
+        must match, the exact title first, parents before clones; each hit carries the key a new game would get and the
+        game in the library that already is it. `POST /api/library/games` takes a `mame_set` (noted for a dump to settle);
+        `POST /api/library/games/<key>/machines {slug}` links a machine on this Pi's roster to a game (409 if it already
+        has another, unless `replace`), and `DELETE .../machines/<slug>` undoes it; both refresh the logger's limits and
+        are the Pi's own screen only. On the 7": a machine with no game says so and offers FIND GAME (MAME) (type a
+        title, pick the hit, ADD IT AND USE IT); ALL GAMES offers USE IT FOR <machine>; ADD GAME offers it too.
+        `test-library-web.sh` 78, `test-dash.sh` 147 (screenshots 29a–29d); 17 of 17 guards broken on purpose fail a
+        test. **Not done:** a game added after the seed has its MAME set noted but no chip list until MAME's list is
+        built from the library's games too (the chip list is still built from `gatbox-mame-sets.json`): the CHECK says
+        "NO CHIP LIST" until then
+  - [x] B8, manuals on request: FIND A MANUAL on a game with no manual (the 7" only). It types the game's title into
+        the keypad, asks archive.org for texts with every word in their title (most downloaded first), lists the PDFs
+        in the item you pick (biggest first), asks what kind it is, and downloads it into the game's folder. gatbox-web
+        never goes online: it writes `request.json` to `/var/spool/gatbox-manuals` and a separate job (`gatbox-manuals
+        --job`, its own user, the same host rules as `gatbox-manuals fetch`: https from archive.org, a real PDF only)
+        answers in `status.json`, which gatbox-web relays to the screen; a finished download becomes the game's
+        `document` in the library (hash, pages, bytes) and the game stops being MISSING. One job at a time (409
+        otherwise); a request or claim older than 30 minutes, left by a dead job, is cleared. Without the job
+        installed there's no spool and every request says so (503); an unseeded deck answers 409. `test-library-web.sh`
+        93 (a fake archive.org on loopback and a runner standing in for the path unit), `test-dash.sh` 151 (screenshots
+        30a–30d); each guard broken on purpose fails a test. The real archive.org's search and item listing were read
+        once to confirm the shapes; no download was made from here. The unit files `backend/gatbox-manuals.path` and
+        `.service` are in the repo marked NOT INSTALLED: the bootstrap doesn't touch them yet
+  - [ ] ⏸ Install diff, shown first (not made yet; nothing here is installed). One review, in this order:
+        1. `bootstrap/files/sysusers-gatbox.conf`: `u gatbox-fetch - "GATBOX manuals job" /nonexistent /usr/sbin/nologin`
+           and `m gatbox-fetch gatbox-manuals` (the manuals folder is group gatbox-manuals, setgid)
+        2. `bootstrap/files/tmpfiles-gatbox.conf`: `d /var/spool/gatbox-manuals 2770 gatbox-fetch gatbox-fetch -` (the
+           job's spool) and `d /srv/gatbox/library 2775 root gatbox-manuals -` (the library's folder: SQLite needs the
+           directory writable for its -wal and -shm files)
+        3. `gatbox-web.service`: `SupplementaryGroups=gatbox-fetch` and `ReadWritePaths=-/var/spool/gatbox-manuals`
+           (it writes a request and reads the answer, nothing else), and `ReadWritePaths=-/srv/gatbox/library`
+        4. New units `gatbox-manuals.path` (PathExists the request) and `gatbox-manuals.service` (oneshot as
+           `gatbox-fetch`, 20 minute timeout, ProtectSystem=strict, writes only the manuals folder and its spool, no
+           devices, no capabilities, AF_INET/INET6/UNIX only). It has no address filter: it must reach the internet,
+           and the Pi's DNS path isn't recorded, so which hosts it may fetch from is the tool's own allowlist
+        5. The MANIFEST lines already in the bootstrap: `library.py`, `libview.py`, `seed.py`, `libsource.py`,
+           `games.py`, `rom_check.py`, `titles.py`, `manual_request.py`, `gatbox-library`, and the title list build
+           (`/usr/local/share/gatbox/mame-titles.json`, from `mame -listxml` once per MAME version)
+  - [ ] ⏸ Owner: review the seed plan after B2; see the install diff before anything is installed
 - **The integration plan, phase A (2026-10-28):** `docs/superpowers/specs/2026-10-28-gatbox-integration-plan.md`,
   approved by the owner. Repo-only on this side (nothing installed changes except the guard above).
   - [x] Contract v1 is GATBOX's now: the README takes the hub's 10-26 additions and writes down the Phase 8 extras

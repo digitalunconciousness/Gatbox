@@ -168,6 +168,18 @@ a.btnlink{display:inline-flex;align-items:center;justify-content:center;min-heig
   border:1px solid var(--mag);border-radius:8px;font:600 17px/1.1 var(--disp);color:var(--fg);text-decoration:none;
   align-self:flex-start}
 
+/* CHECK: each comparison as a word and a level, then the marks */
+.ck-row{margin:8px 0}
+.ck-row .badge{margin-right:6px}
+.ck-row .badge.mut{color:var(--mut)}
+.ck-row .mut{margin-top:2px;overflow-wrap:anywhere}
+
+/* LIBRARY: the game under the FOR row, and the note before the library is set up */
+.lb-game{margin-top:8px;overflow-wrap:anywhere}
+.lb-game b{font:600 17px/1.2 var(--disp);letter-spacing:.03em}
+.lb-note{margin-top:8px}
+button.warn{color:var(--warn);border-color:var(--warn)}
+
 /* hold-to-act (EXIT KIOSK, SHUT DOWN) */
 .hold{position:relative;overflow:hidden}
 .hold::after{content:"";position:absolute;left:0;bottom:0;height:4px;width:0;background:var(--bad)}

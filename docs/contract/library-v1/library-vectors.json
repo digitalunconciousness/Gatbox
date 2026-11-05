@@ -1,0 +1,173 @@
+{
+ "about": "Test vectors for the game library's format (docs/contract/library-v1/README.md). Every implementation reproduces them.",
+ "canonical": [
+  {
+   "data": {
+    "b": 1,
+    "a": "x"
+   },
+   "json": "{\"a\":\"x\",\"b\":1}",
+   "sha256": "cdab067e9f3beb32d1252cfd63e492592fecbf591b0d08cadb24bb17f3864246"
+  },
+  {
+   "data": {
+    "title": "Café Racer",
+    "year": 1982,
+    "notes": ""
+   },
+   "json": "{\"notes\":\"\",\"title\":\"Café Racer\",\"year\":1982}",
+   "sha256": "e99b8b81035daf1c4e10b134ca3653332a07e7fa9afd9165451836c58071fb39"
+  },
+  {
+   "data": {
+    "title": "Café Racer"
+   },
+   "json": "{\"title\":\"Café Racer\"}",
+   "sha256": "b015643d3d715ebbb14e4a7453103b70d5cb7a29164980d274f084ca3e59746c"
+  },
+  {
+   "data": {
+    "model_key": "widget-wars",
+    "rail": "+5V",
+    "lo": "4.75",
+    "hi": "5.25",
+    "doc_id": "widget-wars-manual",
+    "page": 2,
+    "quote": "+5 VDC 4.75 to 5.25 V",
+    "confirmed": null
+   },
+   "json": "{\"confirmed\":null,\"doc_id\":\"widget-wars-manual\",\"hi\":\"5.25\",\"lo\":\"4.75\",\"model_key\":\"widget-wars\",\"page\":2,\"quote\":\"+5 VDC 4.75 to 5.25 V\",\"rail\":\"+5V\"}",
+   "sha256": "84c8abbae277216470b7067b98a54f3e96d3e0dce7fe0393d1c2cc2674c4afa7"
+  },
+  {
+   "data": {
+    "confirmed": {
+     "by": "gatbox",
+     "at": 1790000000.5
+    },
+    "list": [
+     3,
+     {
+      "z": true,
+      "a": null
+     }
+    ]
+   },
+   "json": "{\"confirmed\":{\"at\":1790000000.5,\"by\":\"gatbox\"},\"list\":[3,{\"a\":null,\"z\":true}]}",
+   "sha256": "b1f4217994b4b03f573ddf4892ca16710dbcde459cde139a2c07d0f4f3e40239"
+  }
+ ],
+ "model_key": [
+  {
+   "title": "Widget Wars",
+   "key": "widget-wars"
+  },
+  {
+   "title": "Ms. Pac-Man",
+   "key": "ms-pac-man"
+  },
+  {
+   "title": "Satan's Hollow",
+   "key": "satans-hollow"
+  },
+  {
+   "title": "Rock & Roll Racing",
+   "key": "rock-and-roll-racing"
+  },
+  {
+   "title": "Café Racer",
+   "key": "cafe-racer"
+  },
+  {
+   "title": "Spider-Man",
+   "kind": "pinball",
+   "key": "pin-spider-man"
+  },
+  {
+   "title": "Spider-Man",
+   "mfr": "Sega",
+   "taken": [
+    "spider-man"
+   ],
+   "key": "spider-man-sega"
+  },
+  {
+   "title": "Spider-Man",
+   "mfr": "Sega",
+   "year": 1991,
+   "taken": [
+    "spider-man",
+    "spider-man-sega"
+   ],
+   "key": "spider-man-sega-1991"
+  },
+  {
+   "title": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+   "key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+   "title": "Unassigned",
+   "key": null,
+   "error": "taken"
+  },
+  {
+   "title": "ゲーム",
+   "key": null,
+   "error": "no key"
+  }
+ ],
+ "volts": [
+  [
+   "4.75",
+   "4.75"
+  ],
+  [
+   "4.750",
+   "4.75"
+  ],
+  [
+   "5.0",
+   "5"
+  ],
+  [
+   "5",
+   "5"
+  ],
+  [
+   "-12.00",
+   "-12"
+  ],
+  [
+   "0.50",
+   "0.5"
+  ],
+  [
+   "50",
+   "50"
+  ],
+  [
+   "-0.0",
+   "0"
+  ],
+  [
+   "+5",
+   null
+  ],
+  [
+   "5.",
+   null
+  ],
+  [
+   ".5",
+   null
+  ],
+  [
+   "4,75",
+   null
+  ],
+  [
+   "1e3",
+   null
+  ]
+ ]
+}

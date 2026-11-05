@@ -28,9 +28,9 @@ import threading
 import time
 import uuid
 
-from gatboxlib import profiles
+from gatboxlib import libview, profiles
 
-from . import config, roster
+from . import config, libsource, roster
 from .meter import Bad
 
 KINDS = ["manual", "schematics", "parts", "kit", "bulletin", "other", "yours"]
@@ -63,6 +63,14 @@ def _num(x, what):
 
 # --- the documents --------------------------------------------------------------------------------------
 def _slug(slug):
+    """A machine on the roster, or (a seeded deck) a game in the library: a game no roster machine is has manuals too."""
+    if slug not in (roster.slugs() or set()) and not libsource.key_for(slug):
+        raise Bad(404, f"not in the roster: {slug!r}")
+    return slug
+
+
+def _machine(slug):
+    """Actual values are measured on one board: a roster machine only, never a bare game."""
     if slug not in (roster.slugs() or set()):
         raise Bad(404, f"not in the roster: {slug!r}")
     return slug
@@ -82,15 +90,31 @@ def _lib(slug):
 def _listed(slug=None):
     d = profiles._load(os.path.join(profiles.data_dir(), LIST)) or {}
     m = d.get("machines") if isinstance(d.get("machines"), dict) else {}
+    lib = libsource.manuals_list()                        # a seeded deck: the library is the source, the file the fallback
+    if lib:
+        m = {**m, **lib}
     return m if slug is None else (m.get(slug) or {})
 
 
+def _dirs(slug):
+    """The folders a game's files can be in: its own, and with the library, those of every roster slug that became it."""
+    return [os.path.join(config.MANUALS, f) for f in libsource.folders(slug)]
+
+
+def _dir_of(slug, name):
+    """The folder holding this file of the game's (the first that has it), else the game's own."""
+    ds = _dirs(slug)
+    return next((d for d in ds if os.path.isfile(os.path.join(d, name))), ds[0])
+
+
 def _files(slug):
-    try:
-        return sorted(n for n in os.listdir(os.path.join(config.MANUALS, slug))
-                      if n.lower().endswith(".pdf") and not n.startswith(".") and "/" not in n)
-    except OSError:
-        return []
+    names = set()
+    for d in _dirs(slug):
+        try:
+            names |= {n for n in os.listdir(d) if n.lower().endswith(".pdf") and not n.startswith(".") and "/" not in n}
+        except OSError:
+            pass
+    return sorted(names)
 
 
 def path(slug, name):
@@ -98,7 +122,7 @@ def path(slug, name):
     slug = _lib(slug)
     if name not in _files(slug):
         raise Bad(404, f"no such document: {name!r}")
-    return os.path.join(config.MANUALS, slug, name)
+    return os.path.join(_dir_of(slug, name), name)
 
 
 def _sidecar(p):
@@ -135,15 +159,17 @@ def docs(slug):
     by_id = {d.get("id"): d for d in entry.get("docs", []) if isinstance(d, dict)}
     out = []
     for n in _files(slug):
-        p = os.path.join(config.MANUALS, slug, n)
+        p = os.path.join(_dir_of(slug, n), n)
         side, stem = _sidecar(p), n[:-4]
-        li = by_id.get(side.get("id") or stem, {})
+        fid = side.get("id") or stem
+        listed_id = fid if fid in by_id else (libview.doc_id_for(fid) if libsource.current() else fid)   # the seed's id
+        li = by_id.get(listed_id, {})
         _, st = _key(p)
         out.append({"file": n, "id": side.get("id") or stem, "title": li.get("title") or side.get("title") or stem,
                     "kind": li.get("kind") or side.get("kind") or "yours", "pages": side.get("pages") or pages_of(p),
                     "bytes": st.st_size, "added": side.get("added", "folder"), "source": li.get("source") or side.get("source"),
                     "date": side.get("date")})
-    here = {d["id"] for d in out}
+    here = {d["id"] for d in out} | {libview.doc_id_for(d["id"]) for d in out}
     missing = [{"id": i, "title": d.get("title"), "kind": d.get("kind")} for i, d in by_id.items() if i not in here]
     order = {k: i for i, k in enumerate(KINDS)}
     out.sort(key=lambda d: (order.get(d["kind"], len(KINDS)), d["title"].lower()))
@@ -267,7 +293,7 @@ def upload(slug, stream, n, title, kind):
         raise Bad(413, f"at most {config.UPLOAD_MAX // (1024 * 1024)} MB")
     title = _text(title, "title", 120) or "Uploaded document"
     kind = kind if kind in KINDS else "yours"
-    d = os.path.join(config.MANUALS, slug)
+    d = _dirs(slug)[0]
     os.makedirs(d, exist_ok=True)
     try:
         os.chmod(d, 0o2775)                              # the owner (group gatbox-manuals) can add files here too
@@ -336,16 +362,29 @@ def _titles(slug):
     return t
 
 
+def _confirmed():
+    """{slug: {rail: {lo, hi, doc, page, source, confirmed}}}: the limits the owner CONFIRMed: the library's, else the state file."""
+    lib = libsource.confirmed_state()
+    return lib if lib is not None else _state(profiles.SPECS_CONFIRMED)
+
+
+def _file_spec():
+    """{slug: {rails: {rail: [lo, hi]}, source}}: the specs file's limits (cited per the owner): the library's, else the file."""
+    lib = libsource.file_spec()
+    if lib is not None:
+        return lib
+    return (profiles._load(os.path.join(profiles.data_dir(), "gatbox-machine-specs.json")) or {}).get("machines", {})
+
+
 def sheet(slug):
     """GET /api/specs/<slug>: per rail, the manual's limits (page, words, confirmed or not), the specs file's, the
     actual value from the field, and the window in use; the spec page's other facts, each with its actual."""
     own, lib = _slug(slug), roster.library(slug)
     # A hub machine with no model this Pi has: no manual limits, but its own actuals still count.
     specs = _listed(lib).get("specs") or {} if lib else {}
-    conf = _state(profiles.SPECS_CONFIRMED).get(lib) or {} if lib else {}
+    conf = _confirmed().get(lib) or {} if lib else {}
     act = _state(profiles.ACTUALS).get(own) or {}
-    file_spec = ((profiles._load(os.path.join(profiles.data_dir(), "gatbox-machine-specs.json")) or {})
-                 .get("machines", {}).get(lib) or {}) if lib else {}
+    file_spec = _file_spec().get(lib) or {} if lib else {}
     eff = profiles.spec_for(own, lib if lib != own else None) or {}
     titles = _titles(lib) if lib else {}
     rails = {}
@@ -371,7 +410,8 @@ def sheet(slug):
     listed = {f["what"] for f in facts}
     facts += [{"what": w, "value": None, "actual": a} for w, a in (act.get("facts") or {}).items() if w not in listed]
     order = lambda r: (0 if r.startswith("+") else 1, float(re.sub(r"[^0-9.]", "", r) or 0))   # noqa: E731
-    return {"slug": own, "library": lib, "rails": [rails[r] for r in sorted(rails, key=order)], "facts": facts}
+    return {"slug": own, "library": lib, "machine": own in (roster.slugs() or set()),
+            "rails": [rails[r] for r in sorted(rails, key=order)], "facts": facts}
 
 
 def confirm(slug, body):
@@ -386,6 +426,8 @@ def confirm(slug, body):
         raise Bad(400, "no such limit on this machine's spec sheet (rail, doc and page must match one)")
     if not (isinstance(p.get("lo"), (int, float)) and isinstance(p.get("hi"), (int, float)) and p["lo"] < p["hi"]):
         raise Bad(400, "that entry has no usable limits")
+    if libsource.current():                               # a seeded deck: the library's limit is confirmed, and the export follows
+        return libsource.confirm(slug, rail, doc, page)
     with _state_lock:
         d = _state(profiles.SPECS_CONFIRMED)
         d.setdefault(slug, {})[rail] = {"lo": p["lo"], "hi": p["hi"], "doc": doc, "page": page,
@@ -398,6 +440,8 @@ def confirm(slug, body):
 def unconfirm(slug, body):
     slug = _lib(slug)
     rail = body.get("rail") if isinstance(body, dict) else None
+    if libsource.current():
+        return libsource.unconfirm(slug, rail)
     with _state_lock:
         d = _state(profiles.SPECS_CONFIRMED)
         if not (d.get(slug) or {}).pop(rail, None):
@@ -409,7 +453,7 @@ def unconfirm(slug, body):
 
 def set_actual(slug, body):
     """PUT /api/actuals/<slug>: {rail, value, window?, note?, from?} or {fact, value, note?}."""
-    _slug(slug)
+    _machine(slug)
     if not isinstance(body, dict):
         raise Bad(400, "expected a JSON object")
     note = _text(body.get("note"), "note", 200)
@@ -448,7 +492,7 @@ def set_actual(slug, body):
 
 def clear_actual(slug, body):
     """DELETE /api/actuals/<slug> {rail} or {fact}."""
-    _slug(slug)
+    _machine(slug)
     if not isinstance(body, dict) or not ({"rail", "fact"} & set(body)):
         raise Bad(400, "expected {rail} or {fact}")
     group, key = ("rails", body["rail"]) if "rail" in body else ("facts", body["fact"])

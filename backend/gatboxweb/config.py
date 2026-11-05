@@ -17,6 +17,8 @@ DUMP_SPOOL = os.environ.get("GATBOX_DUMP_SPOOL", "/var/spool/gatbox-dump")   # d
 MINIPRO_PARTS = os.environ.get("GATBOX_MINIPRO_PARTS", "/usr/local/share/gatbox/minipro-parts-T48.txt")
 MAME_ROMS = os.environ.get("GATBOX_MAME_ROMS", "/usr/local/share/gatbox/mame-roms.json")   # gatbox-mame-roms, at install
 MANUALS = os.environ.get("GATBOX_MANUALS", os.path.join(SRV, "manuals"))   # <slug>/<name>.pdf (+ .json sidecar, .txt)
+MAME_TITLES = os.environ.get("GATBOX_MAME_TITLES", "/usr/local/share/gatbox/mame-titles.json")   # gatbox-mame-roms --titles, at install
+LIBRARY = os.environ.get("GATBOX_LIBRARY", os.path.join(SRV, "library", "library.sqlite"))   # the game library (phase B)
 UPLOAD_MAX = int(os.environ.get("GATBOX_UPLOAD_MAX", str(200 * 1024 * 1024)))   # a PDF from a phone
 SCAND_STATE = os.environ.get("GATBOX_SCAND_STATE", "/run/gatbox-scand/state.json")   # gatbox-scand's (M6)
 

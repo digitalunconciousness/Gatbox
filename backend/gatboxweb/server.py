@@ -20,8 +20,8 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from . import (captures, config, devices, dump, hubs, mame, manuals, meter, orders, phone, report,
-               roster, romsync, sessions, system, wifi)
+from . import (captures, config, devices, dump, games, hubs, libsource, mame, manual_request, manuals, meter, orders,
+               phone, report, rom_check, romsync, roster, sessions, system, titles, wifi)
 from .live import LIVE
 from .meter import Bad
 
@@ -583,6 +583,83 @@ def api_mame(h, m, q):
 
 
 # --- manuals and the spec sheet (2026-09-29) ------------------------------------------------------------------
+def api_library(h, m, q):
+    h.json(200, games.status())
+
+
+def api_library_key(h, m, q):
+    h.json(200, games.propose_key(q1(q, "title", ""), q1(q, "kind", "video"), q1(q, "mfr", ""), q1(q, "year", "")))
+
+
+def api_library_game(h, m, q):
+    h.json(200, games.detail(unquote(m["key"])))
+
+
+def api_library_add(h, m, q):
+    g = games.add(h.body(), h.is_local())
+    h.log_line(f"library: + {g['key']} ({g['title']})")
+    h.json(201, g)
+
+
+def api_library_edit(h, m, q):
+    g = games.edit(unquote(m["key"]), h.body(), h.is_local())
+    h.log_line(f"library: edited {g['key']}")
+    h.json(200, g)
+
+
+def api_library_titles(h, m, q):
+    h.json(200, titles.search(q1(q, "q", "")))
+
+
+def api_library_link(h, m, q):
+    g = games.link(unquote(m["key"]), h.body(), h.is_local())
+    h.log_line(f"library: {g['key']} linked to a machine")
+    h.json(200, g)
+
+
+def api_library_unlink(h, m, q):
+    h.json(200, games.unlink(unquote(m["key"]), unquote(m["slug"]), h.is_local()))
+
+
+def api_manual_status(h, m, q):
+    h.json(200, manual_request.status())
+
+
+def _manual_queued(h, req, what):
+    h.log_line(f"manuals: {what}")
+    LIVE.emit("manual", manual_request.status())
+    h.json(202, req)
+
+
+def api_manual_search(h, m, q):
+    req = manual_request.search(unquote(m["key"]), h.body(), h.is_local())
+    _manual_queued(h, req, f"search {req['query']!r} for {req['key']}")
+
+
+def api_manual_files(h, m, q):
+    req = manual_request.files(unquote(m["key"]), h.body(), h.is_local())
+    _manual_queued(h, req, f"files of {req['identifier']}")
+
+
+def api_manual_fetch(h, m, q):
+    req = manual_request.fetch(unquote(m["key"]), h.body(), h.is_local())
+    _manual_queued(h, req, f"fetch {req['identifier']}/{req['file']} -> {req['folder']}/{req['id']}.pdf")
+
+
+def api_library_check(h, m, q):
+    h.json(200, rom_check.check(q1(q, "image", "")))
+
+
+def api_library_mark(h, m, q):
+    r = rom_check.mark(m["sha"], h.body(), h.is_local())
+    h.log_line(f"library: image {m['sha'][:8]} marked {r['verdict']}")
+    h.json(200, r)
+
+
+def api_library_images(h, m, q):
+    h.json(200, rom_check.images(unquote(m["key"])))
+
+
 def api_manuals_all(h, m, q):
     h.json(200, {"machines": manuals.overview()})
 
@@ -843,6 +920,21 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("GET", r"/api/roster/(?P<slug>[^/]+)", api_roster_entry),
     ("PUT", r"/api/roster/(?P<slug>[^/]+)", api_roster_edit),
     ("GET", r"/api/mame/(?P<slug>[^/]+)", api_mame),
+    ("GET", r"/api/library", api_library),
+    ("GET", r"/api/library/key", api_library_key),
+    ("POST", r"/api/library/games", api_library_add),
+    ("GET", r"/api/library/games/(?P<key>[^/]+)", api_library_game),
+    ("PUT", r"/api/library/games/(?P<key>[^/]+)", api_library_edit),
+    ("GET", r"/api/library/games/(?P<key>[^/]+)/images", api_library_images),
+    ("GET", r"/api/library/titles", api_library_titles),
+    ("POST", r"/api/library/games/(?P<key>[^/]+)/machines", api_library_link),
+    ("DELETE", r"/api/library/games/(?P<key>[^/]+)/machines/(?P<slug>[^/]+)", api_library_unlink),
+    ("GET", r"/api/library/manual", api_manual_status),
+    ("POST", r"/api/library/games/(?P<key>[^/]+)/manual/search", api_manual_search),
+    ("POST", r"/api/library/games/(?P<key>[^/]+)/manual/files", api_manual_files),
+    ("POST", r"/api/library/games/(?P<key>[^/]+)/manual/fetch", api_manual_fetch),
+    ("GET", r"/api/library/check", api_library_check),
+    ("POST", r"/api/library/images/(?P<sha>[^/]+)/mark", api_library_mark),
     ("GET", r"/api/manuals", api_manuals_all),
     ("GET", r"/api/manuals/(?P<slug>[^/]+)", api_manuals),
     ("POST", r"/api/manuals/(?P<slug>[^/]+)", api_manuals_upload),
@@ -981,6 +1073,8 @@ def main():
         pass
     LIVE.start()
     dump.watch()
+    libsource.watch()                                      # the logger's flat export follows the game library
+    manual_request.watch()                                 # a manual fetched on request becomes a library document
     threading.Thread(target=_warm, name="warm", daemon=True).start()
     ThreadingHTTPServer.allow_reuse_address = True
     ThreadingHTTPServer.daemon_threads = True

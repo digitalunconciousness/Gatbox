@@ -598,6 +598,7 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         the source, what's on it now), WRITE (fresh check, re-identified, O_EXCL, fsync, two O_DIRECT read-backs,
         `writes.jsonl`). `test-disk.sh`: 53, and each of 11 guards broken on purpose fails at least one of them.
         Still to come once Task 0 shows them: the drive's own serial and CHS, the HDD health line
+  - [x] Audit of the write path, 2026-11-05 (before any real drive): the image's own bytes are hashed before the target is touched; what's on the target is read again at write time; the drive is identified again after the O_EXCL claim; an arm must carry a numeric expiry; one read or write at a time (flock in the store); short writes finish; a write-protected target is a stop in words; VERIFY ONLY claims read-only; an empty model can't be "typed". `test-disk.sh` 108, each new check failing against the old tool. Design note §4.3
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4
@@ -612,7 +613,7 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         checklist, the store's line, the images; a phone sees the state and can tick the checklist (owner, 11-03), but
         has no READ, WRITE or hold. The READ and WRITE screens say to run the Pi from its wall supply, not the cabinet's
         12 V buck (§1 row 10), and the checklist's 5 V line shows the machine's last saved reading with SAVE READING
-        (§1 row 9). `test-disk.sh` 93, `test-dash.sh` 150 (DISK: 23, against `tests/fakedisk.py`; screenshots 23a–23i, 24)
+        (§1 row 9). `test-disk.sh` 93 (108 after the 2026-11-05 audit), `test-dash.sh` 150 (DISK: 23, against `tests/fakedisk.py`; screenshots 23a–23i, 24)
   - [x] Task 7: CLAUDE.md (hard rule 6 as §5 words it, Owned, installed list), a journal entry
 - **Phase B, the library on the deck (branch `phase-b-library`, from 2026-11-03):** spec
   `docs/plans/2026-11-03-phase-b-library.md`, approved by the owner (LIBRARY replaces MANUALS on the 7"). Repo-only

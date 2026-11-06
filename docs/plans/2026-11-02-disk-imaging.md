@@ -151,6 +151,25 @@ finished times, the clock label, and a free-text note.
 7. **The rest of a larger target is left untouched.** The result card says so ("3.2 GB written, 124.8 GB beyond it
    untouched").
 
+**Added by the audit of 2026-11-05**, before any of this has run on a real drive. Each came from reading the write
+path as an adversary, has a test that fails without it (`tests/test-disk.py`, "WRITE, what the audit of this path
+found"), and none changes what a good write looks like:
+- **The image is checked before the target is touched.** Its size must equal the check's, and its own bytes must hash to
+  the sidecar's SHA-1. The sidecar's hash was made when the image was stored; a store drive that has gone wrong since
+  would otherwise be written to the target and found out only by the read-back.
+- **What's on the target is read again at write time.** `needs_ack` from the check is five minutes old, and a different
+  drive of the same make and size is the same drive until the serial passes through the dock (§3). A target that was
+  blank at the check and holds something now needs the acknowledgement like any other.
+- **After the claim, the drive is identified again**, and the descriptor's own size compared, before the first byte.
+- **An arm is a dict with a numeric expiry.** `false`, `{}`, a string for a time and a bool are not arms (an arm skips the
+  typed model, so it is never taken on trust). A string used to crash the job with a `TypeError`.
+- **One read or write at a time on the store**, whoever started it (the 7" job or the terminal): an exclusive `flock` on
+  `<store>/.gatbox-disk.lock`, released by the kernel if the process dies.
+- **A short `pwrite` finishes its piece** (the return value was ignored). A target that refuses the open as read-only
+  or write-protected is a stop in words, not a traceback. VERIFY ONLY claims the drive read-only.
+- **What is typed at the terminal can't be empty.** A bridge that reports no model made a bare Enter, or a script's end
+  of input, count as the model typed; the device name is typed instead.
+
 ### 4.4 SWAP CHECKLIST (after a VERIFIED write; also usable on its own)
 
 **Before:**

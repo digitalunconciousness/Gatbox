@@ -90,8 +90,14 @@ check "gatbox-web may write there (and is in the group)" 'grep -qx "ReadWritePat
 
 bash "$BOOT" --check > "$T/check" 2>&1; rc=$?
 check "--check runs without root (exit 0 or 3)" '[ $rc = 0 ] || [ $rc = 3 ]'
-out=$(bash "$BOOT" 2>&1); rc=$?
-check "a real run refuses without root"         '[ $rc = 1 ] && [[ $out == *"run with sudo"* ]]'
+# Without root the script refuses at its first check. As root it would go on and run for real (on a Pi, `sudo bash
+# tests/test-bootstrap.sh` has everything it asks for), so this is not run as root.
+if [ "$(id -u)" = 0 ]; then
+    echo "  skip  a real run refuses without root (this is root: the script would go on to install)"
+else
+    out=$(bash "$BOOT" 2>&1); rc=$?
+    check "a real run refuses without root"         '[ $rc = 1 ] && [[ $out == *"run with sudo"* ]]'
+fi
 # A mistyped flag used to fall through to a real run: "--checksudo", from a mangled
 # paste, installed files and restarted services on a live Pi instead of reporting.
 for bad in --chekc --checksudo --dry-run -n extract --check=1; do

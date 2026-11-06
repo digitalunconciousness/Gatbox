@@ -31,7 +31,9 @@ cat > "$T/data/gatbox-barcade-roster.json" <<'EOF'
  "pinball": [], "retired": []}
 EOF
 export GATBOX_DATA="$T/data"
-OHM=$'\u2126'; OMEGA=$'\u03a9'     # sigrok writes OHM SIGN; the display uses Greek omega (gatboxlib.modes)
+# sigrok writes OHM SIGN (U+2126); the display uses Greek omega (U+03A9, gatboxlib.modes). Spelled as UTF-8 bytes: bash's
+# $'\u2126' is only the character in a UTF-8 locale, and is the literal text "\u2126" in the C locale.
+OHM=$(printf '\xe2\x84\xa6'); OMEGA=$(printf '\xce\xa9')
 
 # replay sources: 2026-09-21 timestamps; the logger stamps its own
 mkcsv() { local out=$1; shift

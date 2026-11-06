@@ -57,6 +57,11 @@ class Page(Chrome):
         for e in self.events:
             m, p = e.get("method"), e.get("params", {})
             if m == "Log.entryAdded" and p["entry"]["level"] in ("error", "warning"):
+                # With no fonts folder given the archive has no fonts to serve and the pages use system ones, as designed
+                # (install.sh fetches the two fonts once, with internet): their two 404s are not a fault. With a folder
+                # given, a font that fails is.
+                if not ARCHIVE_FONTS and "/assets/fonts/" in (p["entry"].get("url") or ""):
+                    continue
                 self.problems.append(p["entry"]["text"][:160])
             elif m == "Runtime.exceptionThrown":
                 self.problems.append("script error")

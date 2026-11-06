@@ -163,6 +163,27 @@ def run(tmp):
     check("an API path still answers in JSON", B.call("GET", "/api/v1/library/digest", email=None)[1].getheader("Content-Type").startswith("application/json"))
     check("a made-up page is a 404 page with a way back", "Back to the games" in B.get("/nope")[2] and B.get("/nope")[0] == 404)
 
+    print("the tab's icon (no /favicon.ico request, so no 404 on every page):")
+    import xml.etree.ElementTree as ET
+    from urllib.parse import unquote
+    icon_re = re.compile(r'<link rel="icon" href="(data:image/svg\+xml,[^"]+)"')
+    pages = {"games": B.get("/")[2], "add": B.get("/add")[2], "a 404 page": B.get("/nope")[2],
+             "the signed-out page": B.get("/", email=None)[2]}
+    check("every kind of page names an inline icon: games, add, a 404, the signed-out page",
+          all(icon_re.search(p) for p in pages.values()))
+    m = icon_re.search(pages["games"])
+    svg = unquote(m.group(1).split(",", 1)[1]) if m else ""
+    try:
+        ET.fromstring(svg)
+        valid = True
+    except ET.ParseError:
+        valid = False
+    check("the icon is well-formed SVG in the design tokens (deep violet, headline magenta)",
+          valid and "#150a28" in svg and "#ff2e9f" in svg)
+    c, r, _ = B.get("/")
+    check("the page policy allows it (img-src 'self' data:), so a browser shows it and reports nothing",
+          "img-src 'self' data:" in r.getheader("Content-Security-Policy"))
+
     print("its own files:")
     c, r, css = B.get("/assets/archive.css", email=None)
     check("the stylesheet is served without a sign-in, as CSS", c == 200 and r.getheader("Content-Type").startswith("text/css") and "--mag:#ff2e9f" in css)

@@ -56,6 +56,13 @@ class FormError(Exception):
 
 NAV = (("/", "Games", "games"), ("/add", "Add a game", "add"))
 
+# The tab's icon, inline: the browser asks for /favicon.ico when a page names none, and the archive has no such file, so
+# every page load logged a 404. A data: image is allowed by the page policy (img-src 'self' data:) and is no request at
+# all. A G in the headline magenta on the deep violet, from the design tokens.
+ICON_SVG = ("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='#150a28'/>"
+            "<path d='M22 11h-8a5 5 0 0 0 0 10h8v-5h-4' fill='none' stroke='#ff2e9f' stroke-width='3' stroke-linejoin='round'/></svg>")
+ICON = "data:image/svg+xml," + quote(ICON_SVG, safe="/:=',")
+
 
 def layout(title, body, who=None, active="", footer=True):
     nav = ""
@@ -65,7 +72,7 @@ def layout(title, body, who=None, active="", footer=True):
     return (f'<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width, initial-scale=1">'
             f'<title>{E(title)} | GATBOX archive</title>'
-            f'<link rel="stylesheet" href="/assets/archive.css"></head><body>'
+            f'<link rel="icon" href="{ICON}"><link rel="stylesheet" href="/assets/archive.css"></head><body>'
             f'<a class="skip" href="#main">Skip to the page</a>'
             f'<header><a class="brand" href="/"><span>GAT<b>BOX</b></span><span class="word">archive</span></a>{nav}</header>'
             f'<main id="main">{body}</main>'

@@ -101,8 +101,8 @@ the archive, both ways, after the hubs' work (so a slow file never holds up a se
     ARCHIVE_ACCESS_SECRET=...
 
 The merge, the conflicts and the files are gatboxlib/libsync.py; its state is state/library/ (cursors, the agreed base,
-conflicts.json for the 7"). The library block of status.json says what happened. GATBOX_SYNC_DRYRUN prints the plan and writes
-nothing. The archive refusing the token (revoked, or the Access service token expired) is exit 1: a person has to act. An
+conflicts.json for the 7"). The library block of status.json says what happened. GATBOX_SYNC_DRYRUN=1 prints the plan and writes
+nothing: the totals first, then the first few records of each kind (=full names every one). The archive refusing the token (revoked, or the Access service token expired) is exit 1: a person has to act. An
 archive that is simply out of reach is not.
 
 Environment (the unit sets CREDENTIALS_DIRECTORY and STATE_DIRECTORY; tests set the rest):
@@ -112,7 +112,7 @@ Environment (the unit sets CREDENTIALS_DIRECTORY and STATE_DIRECTORY; tests set 
     GATBOX_SYNC_WEB       gatbox-web's base URL (default http://127.0.0.1)
     GATBOX_SYNC_MAX       sessions per run, per hub (default 10)
     GATBOX_SYNC_ONCE      ignore the ledger: send everything eligible (for a forced re-push)
-    GATBOX_SYNC_DRYRUN    build payloads and report, but post nothing
+    GATBOX_SYNC_DRYRUN    build payloads and report, but post nothing (1: totals and a sample of each kind; full: every record)
 """
 import hashlib
 import re
@@ -341,7 +341,8 @@ def library_step(conf, started):
     left = RUN_BUDGET - (time.monotonic() - started)
     log(f"gatbox-sync: library, archive {conf['url']}" + (" (dry run)" if DRYRUN else ""))
     return libsync.run(deck, archive, os.path.join(STATE, "library"), dryrun=DRYRUN,
-                       deadline=time.monotonic() + max(left, 20.0), log=log)
+                       deadline=time.monotonic() + max(left, 20.0), log=log,
+                       sample=None if os.environ.get("GATBOX_SYNC_DRYRUN") == "full" else libsync.DRYRUN_SAMPLE)
 
 
 def device_id(token):

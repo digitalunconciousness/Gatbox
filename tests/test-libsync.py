@@ -407,6 +407,37 @@ def run(tmp):
     st = r.sync()
     check("the real run after it does what it said", st["pushed"] == 2 and st["pulled"] == 1 and r.same())
 
+    print("a dry run on a whole library (the first sync's shape): the totals first, a sample of each kind, the rest counted:")
+    r = Rig(tmp, "drybig")
+    for i in range(12):
+        game(r.deck, f"deck-game-{i:02d}")
+    for i in range(7):
+        game(r.arc, f"archive-game-{i:02d}")
+    fact(r.deck, "deck-game-00")
+    st = r.sync(dryrun=True)
+    log = r.log
+    first = next((i for i, ln in enumerate(log) if "dry run:" in ln), -1)
+    named = [i for i, ln in enumerate(log) if ln.startswith("  send  ") or ln.startswith("  fetch  ")]
+    check("the totals come before any record is named", first >= 0 and named and first < min(named) and "12 game" in log[first]
+          and "7 game" in log[first])
+    check("five games are named going up and five coming down, the rest counted by kind",
+          sum(ln.startswith("  send  game|") for ln in log) == 5 and sum(ln.startswith("  fetch  game|") for ln in log) == 5
+          and any("send  ... and 7 more game (12 in all" in ln for ln in log) and any("fetch  ... and 2 more game (7 in all" in ln for ln in log))
+    check("a kind that fits is named in full, with no 'more' line (the one fact)",
+          sum(ln.startswith("  send  fact|") for ln in log) == 1 and not any("more fact" in ln for ln in log))
+    check("and the plan totals in the status are the whole of it, not the sample", st["plan"]["push"] == "1 fact, 12 game"
+          and st["plan"]["pull"] == "7 game" and st["dryrun"])
+    check("it says it is looking at the files (the slow step), then how many there are",
+          any("looking at the files" in ln for ln in log) and log[-1].startswith("  files: "))
+    st = r.sync(dryrun=True, sample=None)
+    check("with no sample every record is named", sum(ln.startswith("  send  game|") for ln in r.log) == 12
+          and sum(ln.startswith("  fetch  game|") for ln in r.log) == 7 and not any(" more " in ln for ln in r.log))
+    check("and changes nothing: no write to either library", r.deck.writes == 0 and r.arc.writes == 0)
+    st = r.sync()
+    check("the real run names every record it moves, whatever the dry run's sample",
+          sum(ln.startswith("  send  game|") for ln in r.log) == 12 and sum(ln.startswith("  fetch  game|") for ln in r.log) == 7
+          and not any(" more " in ln for ln in r.log) and st["pushed"] == 13 and st["pulled"] == 7)
+
     print("a bigger library, in batches:")
     r = Rig(tmp, "big")
     for i in range(130):

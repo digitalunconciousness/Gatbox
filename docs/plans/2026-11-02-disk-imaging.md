@@ -407,7 +407,9 @@ listing named from `mame-roms.json`.
 **Task 4, job mode and install:**
 - `gatbox-disk.path/.service`, the store's mount unit (UUID from `/etc/gatbox/disks.conf`), the udev rule (group and
   auto-mount), sysusers (the two groups), tmpfiles (the spool, `disks.conf`, the unwritable bare mountpoint),
-  `mame-tools` and `gddrescue` in the apt list, and the bootstrap MANIFEST;
+  `mame-tools` and `gddrescue` in the apt list, and the bootstrap MANIFEST (`hdparm` and `smartmontools` went in first,
+  2026-11-13, so Task 0 could read a drive's own geometry and size: smartd is disabled and hdparm's packaged udev rule is
+  masked, because both act on every drive without being asked);
 - **system config is shown to the owner, ⏸, before install (hard rule 5).**
 
 **Task 5, gatbox-web:** the routes in §6, SSE `disk`, and the loopback gate.

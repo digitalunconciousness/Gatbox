@@ -165,6 +165,9 @@ and the job), `gatboxlib/disks.py` and gatbox-web's `/api/disk` + the DISK tab a
 udev / sysusers / tmpfiles / mount-unit diff first, hard rule 5) the DISK tab lists the USB drives and says the image
 store isn't connected and the disk service isn't installed. Facts about the dock and the store (USB IDs, serials, what
 the bridge passes through) come from Task 0's output, never from a guess.
+`hdparm` and `smartmontools` are installed by the bootstrap, with smartd disabled and hdparm's own udev rule masked
+(neither may touch a drive unasked). The dock's INQUIRY names the dock, so a drive's identity comes from its own model and
+serial (udev), not from sysfs alone.
 
 **Integration with the hub (arcade-tracker), 2026-10-01 → 10-06.** Phases 0–4 merged and in
 use; 5 (network: three ways onto a new Wi-Fi, hotspot recovery) and 6 (orders from the bench)

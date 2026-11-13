@@ -599,6 +599,10 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         `writes.jsonl`). `test-disk.sh`: 53, and each of 11 guards broken on purpose fails at least one of them.
         Still to come once Task 0 shows them: the drive's own serial and CHS, the HDD health line
   - [x] Audit of the write path, 2026-11-05 (before any real drive): the image's own bytes are hashed before the target is touched; what's on the target is read again at write time; the drive is identified again after the O_EXCL claim; an arm must carry a numeric expiry; one read or write at a time (flock in the store); short writes finish; a write-protected target is a stop in words; VERIFY ONLY claims read-only; an empty model can't be "typed". `test-disk.sh` 108, each new check failing against the old tool. Design note §4.3
+  - [x] From the owner's bench procedure (2026-11-12), 2026-11-13: "blank" is the first 64 MiB empty, not the first MiB (a raw
+        arcade card has no signature and sector 0 can be empty); the check fingerprints those 64 MiB and the write refuses a
+        card that changed since, even with `--overwrite`. `test-disk.sh`: 114. Still to do: identity from the drive's own
+        model and serial (the dock names itself), the same-size false refusal, "power the dock off for every change"
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4

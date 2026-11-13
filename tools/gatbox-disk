@@ -17,7 +17,10 @@ The spec is docs/plans/2026-11-02-disk-imaging.md. What the 2026-11-02 swap done
     call: an old drive's spin-ups) runs ddrescue -r3 on the same map. Flash media (CF, SD, SSD) is read a second
     time with O_DIRECT and must hash the same. The image is <label>_<YYYYmmdd>_<sha1:8>.img beside its map and its
     .json sidecar, and the same bytes are never stored twice. Each new image is queued for the archive.
-  * TARGET CHECK: big enough, 512-byte sectors, not the image's own source drive, and what's on it now (read-only).
+  * TARGET CHECK: big enough, 512-byte sectors, not the image's own source drive, and what's on it now (read-only):
+    a partition table or filesystem, or anything but zeros (or 0xFF) in the first 64 MiB. Arcade cards are raw, with no
+    table and no filesystem, and sector 0 can be empty while the game starts further in. The first 64 MiB are also
+    fingerprinted (non-zero bytes and a hash) and read again at write time: a different card swapped in is refused.
   * WRITE: a passing check of the same image and drive less than 5 minutes old, the drive identified again and what is
     on it read again (the check's "blank" is minutes old), the image's size and own bytes checked against its checksum
     before the target is touched, the drive held with O_EXCL (the kernel refuses that while anything is mounted) and
@@ -72,6 +75,7 @@ FLASH = ("cf", "sd", "ssd")
 SECTOR = 512                                                     # the IDE2SAT2 takes nothing else (note §4.2)
 CHECK_FRESH_S = 300                                              # a TARGET CHECK is good for 5 minutes
 CHUNK = 4 << 20                                                  # read and write in 4 MiB pieces
+HEAD_SCAN = 64 << 20                                             # what 'blank' and the fingerprint look at: the first 64 MiB
 LOCK = ".gatbox-disk.lock"                                       # in the store: one read or write at a time
 
 
@@ -434,9 +438,26 @@ def _fs(b, off):
     return None, ""
 
 
+def scan_head(fd, limit=HEAD_SCAN):
+    """Read the first `limit` bytes of a drive: how many are not zero, whether they are all zero or all 0xFF, and their
+    SHA-1. The non-zero count is the same number `dd ... | tr -d '\\000' | wc -c` gives on the bench, so the two can be
+    compared. Read-only, in 4 MiB pieces."""
+    h, total, nonzero, zero, ff, off = hashlib.sha1(), 0, 0, True, True, 0
+    while off < limit:
+        b = os.pread(fd, min(CHUNK, limit - off), off)
+        if not b:
+            break
+        h.update(b)
+        z = b.count(0)
+        total, nonzero, off = total + len(b), nonzero + len(b) - z, off + len(b)
+        zero, ff = zero and z == len(b), ff and b.count(255) == len(b)
+    return {"bytes": total, "nonzero": nonzero, "zero": zero, "ff": ff, "sha1": h.hexdigest()}
+
+
 def contents(node, logical=SECTOR):
     """What's on a drive now, read-only: its partition table (dos or gpt) and each partition's filesystem and label,
-    or a filesystem on the whole drive. Blank = none of that, and the first MiB all zeros (or all 0xFF)."""
+    or a filesystem on the whole drive. Blank = none of that, and the first 64 MiB all zeros (or all 0xFF): a raw arcade
+    card has no signature at all, and its data can start well past sector 0. `fingerprint` describes those 64 MiB."""
     def read_at(fd, off, n):
         return os.pread(fd, n, off)
     fd = os.open(node, os.O_RDONLY)
@@ -473,9 +494,9 @@ def contents(node, logical=SECTOR):
                                       "fs": fs, "label": label})
         if not entries:
             out["fs"], out["label"] = _fs(head, 0)
-        filler = head[:1 << 20]
-        out["blank"] = (not out["table"] and not out["fs"]
-                        and (filler == bytes(len(filler)) or filler == b"\xff" * len(filler)))
+        scan = scan_head(fd)
+        out["fingerprint"] = {"bytes": scan["bytes"], "nonzero": scan["nonzero"], "sha1": scan["sha1"]}
+        out["blank"] = (not out["table"] and not out["fs"] and (scan["zero"] or scan["ff"]))
         return out
     finally:
         os.close(fd)
@@ -483,14 +504,16 @@ def contents(node, logical=SECTOR):
 
 def say_contents(c):
     if c["blank"]:
-        return "blank: no signatures found, and the first MiB is empty"
+        return "blank: no signatures found, and the first 64 MiB are empty"
     if c["table"]:
         parts = "; ".join(f"partition {p['n']} {p['bytes']:,} bytes" + (f" {p['fs']}" if p["fs"] else "")
                           + (f" '{p['label']}'" if p["label"] else "") for p in c["partitions"])
         return f"{c['table']} partition table: " + (parts or "no partitions")
     if c["fs"]:
         return f"a {c['fs']} filesystem on the whole drive" + (f" '{c['label']}'" if c["label"] else "")
-    return "no signatures found, but the first MiB isn't empty"
+    n = (c.get("fingerprint") or {}).get("nonzero")
+    return "no partition table or filesystem found, but the first 64 MiB aren't empty" + (
+        f" ({n:,} non-zero bytes)" if n else "")
 
 
 def check(image, device, say=print, expect=None):
@@ -569,6 +592,10 @@ class Write(Work):
             # and size looks the same. What is on it is read again now, and that is what decides about --overwrite.
             fresh = contents(d["node"], d["identity"]["logical"])
             self.info["contents"] = fresh
+            was = (c["contents"] or {}).get("fingerprint")
+            if was and was != fresh.get("fingerprint"):
+                raise Stop(f"what is on {c['device']} changed since the check: its first 64 MiB are not the ones that were checked",
+                           "a different card or drive on the dock? nothing was written: run the check again")
             if not fresh["blank"] and not self.ack and not verify_only:
                 raise Stop("the target isn't blank: " + say_contents(fresh),
                            "acknowledge that it gets overwritten (--overwrite)")

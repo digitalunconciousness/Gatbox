@@ -1,0 +1,8 @@
+# GATBOX: keeps the hdparm package's own udev rule from running (installed by gatbox-bootstrap.sh).
+#
+# This file has the same name as the package's /usr/lib/udev/rules.d/85-hdparm.rules, and a rules file in
+# /etc/udev/rules.d shadows a same-named one in /usr/lib, so that rule never loads. It would otherwise run
+# /usr/lib/udev/hdparm on every sd? disk as it appears, and that helper sets a power-management level (-B254) on any
+# drive that reports APM. It skips USB drives only when their path starts with pci-*-usb-, and on a Pi 5 a USB path
+# starts with platform-xhci-hcd, so it would not skip them. A drive in the dock should be touched only when a disk
+# job or `sudo hdparm -I` asks. The hdparm tool itself is installed and works as usual.

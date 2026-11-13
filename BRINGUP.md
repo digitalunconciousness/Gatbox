@@ -591,6 +591,17 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   archive or an unread hardware fact (owner: "code slides in where it makes sense").
   - [ ] Task 0 ⏸ (`docs/plans/2026-11-02-disk-imaging-task0.sh`, read-only): stage 1 now (the dock empty), stage 2 with
         the 4 TB drive, stage 3 with a drive on the dock. The facts go here before code relies on them
+    - Read so far (2026-11-06 UTC, an 80 GB donor on the dock, the CF reader empty), all `usb-storage` (no UAS), throttled=0x0,
+      no resets, over-current or under-voltage in the kernel log, nothing auto-mounted for the dock's fixed disk:
+      - the dock: XinTop XT-U33502 on an Innostor IS611 bridge (USB `1f75:0611`), SuperSpeed 5000M on a USB 3 port;
+      - **its INQUIRY names the dock, not the drive** (`vendor=XinTop model=XT-U33502`), so identity from sysfs alone is the
+        same for every drive. The drive's own model and serial do pass through, as udev properties (`ID_MODEL`,
+        `ID_SERIAL_SHORT`, `ID_BUS=ata`) and the `ata-<model>_<serial>` by-id name, readable without root;
+      - the CF reader: Realtek `0bda:0309` ("Generic- Multi-Card"), one LUN, 480M, a placeholder serial that is the
+        reader's and not the card's (so it cannot tell cards apart);
+      - the donor's reported size is exactly 80,000,000,000 bytes: check native max (`sudo hdparm -N /dev/sdX`) for a
+        hidden area (HPA) before trusting any size.
+    - Still to read: the drive's CHS and HPA (hdparm), the empty dock, a card auto-mounting, the 4 TB drive (stage 2)
   - [x] Task 1, the test doubles: a fake sysfs tree, plain files as devices, a fake mount table, `tests/fake-ddrescue`
   - [x] Task 2, `tools/gatbox-disk` (list, read, retry, check, write), not installed: identity from sysfs, the
         refusals, the store's mount and marker guard, READ (one pass, RETRY on bad areas, a second read for flash,
@@ -604,6 +615,11 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         to §5 and **not installed**: not in the MANIFEST until Task 4
   - [ ] Task 4 ⏸: the units, the udev rule, sysusers (two groups), tmpfiles, the store's mount unit from
         `/etc/gatbox/disks.conf`, `gddrescue` + `mame-tools`; the owner sees the system-config diff first (hard rule 5)
+  - [x] `hdparm` + `smartmontools` in the bootstrap (2026-11-13), ahead of Task 4, for Task 0's remaining reads. Two side
+        effects of installing them are switched off: smartmontools enables **smartd**, which polls every disk (the
+        bootstrap disables it; the tool stays), and hdparm's own **udev rule** sets APM `-B254` on each drive as it appears
+        (its USB guard matches `pci-*-usb-` paths and a Pi 5's are `platform-xhci-hcd`), masked by an empty
+        `/etc/udev/rules.d/85-hdparm.rules`. `test-bootstrap.sh`: 80
   - [x] Task 5, gatbox-web: `/api/disk` (+ images, read, retry, check, write, checklist, checklists, checklist/new),
         SSE `disk`, a write from the Pi's own screen only, after a passing check ≤ 5 min old; one checklist record per
         write. In the MANIFEST (`gatboxweb/disk.py`) and harmless before Task 4: the tab lists the USB drives and says

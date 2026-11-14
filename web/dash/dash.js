@@ -3002,6 +3002,7 @@
       line(base(sto.path));
       line(`${s.label} · ${s.machine} · ${GB(s.bytes)} (${exact(s.bytes)}) · ${s.reads === 2 ? "read twice, both match" : "read once"}`, "mut");
       line(`SHA-1 ${s.sha1}`, "mut");
+      if (s.fingerprint) line(`fingerprint ${s.fingerprint.nonzero.toLocaleString("en-US")} non-zero bytes in the first 64 MiB`, "mut");
       if (s.source) line(`from ${driveName(s.source)}`, "mut");
       line(sto.new ? "Queued for the archive." : "Those bytes were already stored: this read is noted on that image.", "mut");
     } else if (reading && s.needs_retry) {
@@ -3187,6 +3188,7 @@
           arch ? el("span", "tag " + arch[1], arch[0]) : null,
           el("div", "mut", `${x.machine} · ${GB(x.bytes)} · ${stamp(x.started)} · SHA-1 ${(x.sha1 || "").slice(0, 8)}`
                            + (x.source ? " · from " + x.source : "")
+                           + (x.fingerprint != null ? " · fingerprint " + x.fingerprint.toLocaleString("en-US") : "")
                            + (x.also_read ? ` · read again ${x.also_read} time${x.also_read > 1 ? "s" : ""}` : "")));
       c.appendChild(r);
     }

@@ -601,8 +601,12 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   - [x] Audit of the write path, 2026-11-05 (before any real drive): the image's own bytes are hashed before the target is touched; what's on the target is read again at write time; the drive is identified again after the O_EXCL claim; an arm must carry a numeric expiry; one read or write at a time (flock in the store); short writes finish; a write-protected target is a stop in words; VERIFY ONLY claims read-only; an empty model can't be "typed". `test-disk.sh` 108, each new check failing against the old tool. Design note §4.3
   - [x] From the owner's bench procedure (2026-11-12), 2026-11-13: "blank" is the first 64 MiB empty, not the first MiB (a raw
         arcade card has no signature and sector 0 can be empty); the check fingerprints those 64 MiB and the write refuses a
-        card that changed since, even with `--overwrite`. `test-disk.sh`: 114. Still to do: identity from the drive's own
-        model and serial (the dock names itself), the same-size false refusal, "power the dock off for every change"
+        card that changed since, even with `--overwrite`. `test-disk.sh`: 114
+  - [x] Identity, 2026-11-14 (stacked on the above): a drive behind the dock is named by its own ATA model and serial from
+        udev (`/run/udev/data`, no root), the INQUIRY only as the fallback; "the drive the image came from" is the drive's
+        serial, or without one its make, size and first 64 MiB; the image's fingerprint is in the sidecar and on the 7".
+        `test-disk.sh`: 128, `test-dash.sh`: 196. Still to do: "power the dock off for every change" in the 7"'s swap
+        steps, DRIVE INFO (hdparm -I/-N, smartctl), a job record page
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4

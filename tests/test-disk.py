@@ -260,15 +260,31 @@ def main():
     p = c["contents"]["partitions"]
     check("a dos table: each partition's filesystem and label", c["contents"]["table"] == "dos" and len(p) == 1
           and p[0]["fs"] == "ext4" and p[0]["label"] == "WIDGETS" and p[0]["start"] == MiB)
+    # An arcade card is raw: no partition table, no filesystem, and sector 0 (even the first MiB) can be empty while the
+    # game starts further in (the Gauntlet Legends CF was like that). "Blank" must not mean "the first MiB is empty".
+    raw = bytes(4 * MiB) + os.urandom(4 * MiB)
+    usb_disk("sdf", 8 * MiB, "WIDGET", "WIDGET SSD 64G", port=6, devnum="8:80", data=raw)
+    code, out = disk("check", "-i", image, "-d", "sdf", "--json")
+    c = json.loads(out.splitlines()[-1])
+    check("a raw card, first 4 MiB empty and data after: not blank, needs the acknowledgement",
+          code == 0 and not c["contents"]["blank"] and c["needs_ack"])
+    check("its fingerprint is the bench number (non-zero bytes in the first 64 MiB)",
+          c["contents"]["fingerprint"]["nonzero"] == len(raw) - raw.count(0) and c["contents"]["fingerprint"]["bytes"] == len(raw))
+    code, out = disk("check", "-i", image, "-d", "sdf")
+    check("the check says so in words: raw data, with the count", "first 64 MiB aren't empty" in out and "non-zero bytes" in out)
+    usb_disk("sdf", 8 * MiB, "WIDGET", "WIDGET SSD 64G", port=6, devnum="8:80", data=b"\xff" * (8 * MiB))
+    code, out = disk("check", "-i", image, "-d", "sdf", "--json")
+    check("an erased flash card (all 0xFF) is still blank", json.loads(out.splitlines()[-1])["contents"]["blank"])
 
     print("WRITE:")
     usb_disk("sdf", 8 * MiB, "WIDGET", "WIDGET SSD 64G", port=6, devnum="8:80", data=dos_table(8 * MiB))
     code, out = disk("write", "-i", image, "-d", "sdf", stdin="WIDGET SSD 64G\n")
     check("a non-blank target without --overwrite: refused, nothing written", code == 2 and "isn't blank" in out
           and open(f"{DEV}/sdf", "rb").read() == dos_table(8 * MiB))
+    # Zeros for the first 3 MiB and data after them: not blank (a raw card can look like this), so it needs --overwrite.
     tail = os.urandom(8 * MiB - len(src))
     usb_disk("sdf", 8 * MiB, "WIDGET", "WIDGET SSD 64G", port=6, devnum="8:80", data=bytes(len(src)) + tail)
-    code, out = disk("write", "-i", image, "-d", "sdf", stdin="WIDGET SSD\n")
+    code, out = disk("write", "-i", image, "-d", "sdf", "--overwrite", stdin="WIDGET SSD\n")
     check("the model typed wrong: nothing written", code == 2 and "model wasn't typed" in out
           and open(f"{DEV}/sdf", "rb").read(len(src)) == bytes(len(src)))
     code, out = disk("write", "-i", image, "-d", "sdf", "--overwrite", stdin="WIDGET SSD 64G\n")
@@ -298,6 +314,19 @@ def main():
         swapped = "different drive" in s.what
     check("the drive swapped between CHECK and WRITE: stopped, nothing written",
           swapped and open(f"{DEV}/sdg", "rb").read(len(src)) == bytes(len(src)))
+    # The same make and size on the dock, a different card in it: the identity cannot tell, what is on it can.
+    usb_disk("sdg", 8 * MiB, "WIDGET", "WIDGET SSD 64G B", port=7, devnum="8:96")
+    c = g.check(image, "sdg", say=quiet)
+    other = os.urandom(8 * MiB)
+    usb_disk("sdg", 8 * MiB, "WIDGET", "WIDGET SSD 64G B", port=7, devnum="8:96", data=other)   # another card, same identity
+    try:
+        g.Write(c, ack=True, armed=arm(), say=quiet).go()        # --overwrite does not excuse it
+        changed = False
+    except g.Stop as s:
+        changed = "changed since the check" in s.what
+    check("a different card of the same make and size swapped in after the check: stopped even with --overwrite, nothing written",
+          changed and open(f"{DEV}/sdg", "rb").read() == other)
+    usb_disk("sdg", 8 * MiB, "WIDGET", "WIDGET SSD 64G B", port=7, devnum="8:96")
     usb_disk("sdg", 8 * MiB, "WIDGET", "WIDGET SSD 64G B", port=7, devnum="8:96")
     c = g.check(image, "sdg", say=quiet)
     c["at"] -= 301
@@ -393,9 +422,14 @@ def main():
     blank_target()
     c = g.check(image, "sdg", say=quiet)
     blank_target(data=iso_card(8 * MiB))                          # the same drive, written to since the check
-    stale = c["needs_ack"] is False and refused(c, "isn't blank")
-    check("a target that was blank at the check and holds an installer now: refused without --overwrite, nothing written",
+    stale = c["needs_ack"] is False and refused(c, "changed since the check")
+    check("a target that was blank at the check and holds an installer now: refused (it changed), nothing written",
           stale and open(f"{DEV}/sdg", "rb").read(32774)[32769:32774] == b"CD001")
+    # a raw card: no signature anywhere, the first 4 MiB empty and the game after them. Not blank, so --overwrite is needed.
+    blank_target(data=bytes(4 * MiB) + os.urandom(4 * MiB))
+    c = g.check(image, "sdg", say=quiet)
+    check("a raw card with data after an empty first MiB: the write is refused without --overwrite, nothing written",
+          c["needs_ack"] and refused(c, "isn't blank") and open(f"{DEV}/sdg", "rb").read(4 * MiB) == bytes(4 * MiB))
 
     # the arm: whatever the request carries, only a real one counts
     blank_target()

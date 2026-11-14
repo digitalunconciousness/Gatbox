@@ -151,6 +151,19 @@ finished times, the clock label, and a free-text note.
 7. **The rest of a larger target is left untouched.** The result card says so ("3.2 GB written, 124.8 GB beyond it
    untouched").
 
+**Added from the owner's bench procedure (2026-11-12, rev 1), 2026-11-13.** Her notes for Gauntlet Legends' CF say a card whose
+sector 0 is all zeros can still hold data, and the card was raw (no table, no filesystem recognised). So:
+- **"Blank" looks at the first 64 MiB, not the first MiB.** No partition table, no filesystem, and those 64 MiB all zeros
+  (or all 0xFF, erased flash). Anything else needs the acknowledgement. Data that starts after 64 MiB is not seen: the
+  check says "first 64 MiB", never "the drive is empty".
+- **The check fingerprints those 64 MiB** with her own measure (non-zero bytes, the number `dd ... | tr -d '\000' | wc -c`
+  gives on the laptop) and a SHA-1. The write reads them again, and a different fingerprint stops it even with
+  `--overwrite`: the same make and size on the dock is the same drive to the identity check, and her A7 swap proof
+  exists because a swap can fail to take.
+- Not done yet, from the same reading: the dock names itself (INQUIRY says XinTop for every drive), so identity should come
+  from the drive's own model and serial where udev has them, and two same-size cards on the dock are refused as "the drive
+  the image came from"; the 7" should tell her to power the dock off for every change (IDE is not hot-swap).
+
 **Added by the audit of 2026-11-05**, before any of this has run on a real drive. Each came from reading the write
 path as an adversary, has a test that fails without it (`tests/test-disk.py`, "WRITE, what the audit of this path
 found"), and none changes what a good write looks like:

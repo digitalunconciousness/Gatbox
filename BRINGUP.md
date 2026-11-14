@@ -625,6 +625,15 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         branches): `/run/udev/data` is world-readable and gives both drives' own model and serial; both have a USB ancestor, so
         the rule matches; `udevadm verify` said **Unknown group 'gatbox-disk'**, because step 5 loaded the rule before step 6
         made the group: the bootstrap now loads udev again after sysusers. Still before the first READ: format the 4 TB drive
+  - [ ] The store drive ⏸ (the owner runs it, at the Pi): `sudo bash docs/plans/2026-11-02-disk-imaging-store.sh /dev/sdX` ERASES
+        the drive it names, makes one GPT ext4 partition (`-m 0`, `largefile4`), puts the marker and the queue group on its
+        root and writes its UUID to `/etc/gatbox/disks.conf`; then the bootstrap writes and starts the mount unit. It refuses a
+        non-`/dev/sdX` name, anything not behind USB, a mounted drive, anything under 1 TB (the 80 GB donor is not the store), a
+        drive with no serial, and a Pi without the `gatbox-disk` user; and asks for the serial and the word ERASE, typed.
+        `test-disk-store.sh`: 30, on a stand-in machine (no device is opened); six deliberate breakages of the guards each fail it.
+        Read on the Pi (2026-11-14): `lsblk` shows the 4 TB drive's serial, so the script accepts it; its own model is
+        `WDC WD40NMZW-11GX6S1` (not the case's "My Passport"); and the desktop had **mounted** its partition (label BATOCERA), so
+        the script refuses until it is unmounted. Once the udev rule is in, the desktop leaves USB disks alone
   - [x] `hdparm` + `smartmontools` in the bootstrap (2026-11-13), ahead of Task 4, for Task 0's remaining reads. Two side
         effects of installing them are switched off: smartmontools enables **smartd**, which polls every disk (the
         bootstrap disables it; the tool stays), and hdparm's own **udev rule** sets APM `-B254` on each drive as it appears

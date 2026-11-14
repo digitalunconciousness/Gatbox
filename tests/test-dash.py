@@ -302,7 +302,7 @@ def setup():
                GATBOX_DATA=f"{T}/data", MPLCONFIGDIR=f"{T}/cache/mpl", GATBOX_DUMP_SPOOL=f"{T}/spool",
                GATBOX_ROMS=f"{T}/roms", GATBOX_MINIPRO_PARTS=f"{T}/parts.txt", GATBOX_MAME_ROMS=f"{T}/mame-roms.json",
                GATBOX_MANUALS=f"{T}/manuals", GATBOX_LIBRARY=f"{T}/lib/library.sqlite", GATBOX_MAME_TITLES=f"{T}/mame-titles.json",
-               GATBOX_MANUALS_SPOOL=f"{T}/mspool", GATBOX_SYSFS=FD.sys, GATBOX_DEV=FD.dev, GATBOX_MOUNTINFO=FD.mountinfo,
+               GATBOX_MANUALS_SPOOL=f"{T}/mspool", GATBOX_SYSFS=FD.sys, GATBOX_DEV=FD.dev, GATBOX_MOUNTINFO=FD.mountinfo, GATBOX_UDEV=FD.udev,
                GATBOX_DISKS=FD.store, GATBOX_DISK_SPOOL=f"{T}/dspool")
     subprocess.run([sys.executable, os.path.join(REPO, "tools/gatbox-mame-roms"), "--titles", f"{T}/mame-titles.json"], check=True,
                    capture_output=True, env=dict(os.environ, GATBOX_MAME=os.path.join(REPO, "tests/fake-mame")))
@@ -1342,6 +1342,9 @@ def main():
               len(stored) == 1 and _re.fullmatch(r"WW-HDD_\d{8}_[0-9a-f]{8}\.img", stored[0]) is not None
               and stored[0] in text("#dk-body") and "read once" in text("#dk-body")
               and settles(c, "[...document.querySelectorAll('#dk-body .dk-img b')].some(b => b.textContent.startsWith('WW-HDD'))", 10))
+        side = json.load(open(f"{FD.store}/gauntlet-legends/{stored[0][:-4]}.json"))
+        check("... and the image's fingerprint (non-zero bytes in its first 64 MiB, the bench number) is on the result card",
+              f"fingerprint {side['fingerprint']['nonzero']:,} non-zero bytes in the first 64 MiB" in text("#dk-body"))
         shot("23c-disk-stored")
 
         FD.usb_disk("sde", MiB, "WIDGET", "OLDSPINNER 40", port=5, devnum="8:64", data=os.urandom(MiB))

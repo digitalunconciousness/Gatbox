@@ -4,6 +4,7 @@ opens a real block device. Every name in it is invented (Widget Wars, the WIDGET
 
     F = FakeDisks(tmpdir)
     F.usb_disk("sda", 3 << 20, "WIDGET", "WIDGETDRIVE 1000", port=1, devnum="8:0", data=b"...")
+    F.usb_disk("sdb", 80 << 20, "XinTop", "XT-U33502", port=2, devnum="8:16", ata=("WDC WD800JD-75MSA1", "WD-WIDGET0001"))
     F.mount_table()                    # the Pi's own root and boot, and the store on sdc1
     subprocess.run([...gatbox-disk...], env=F.env())
 """
@@ -18,15 +19,30 @@ class FakeDisks:
     def __init__(self, root):
         self.root = root
         self.sys, self.dev, self.store, self.mountinfo = f"{root}/sys", f"{root}/dev", f"{root}/store", f"{root}/mountinfo"
+        self.udev = f"{root}/udev"          # a fake /run/udev/data: what udev keeps for a device, as E: lines
+        self.devnums = {}
         self.log = f"{root}/ddrescue.log"
         self.blocks = {}                    # name -> its sysfs block directory
-        for d in (self.sys, self.dev, self.store):
+        for d in (self.sys, self.dev, self.store, self.udev):
             os.makedirs(d, exist_ok=True)
         open(f"{self.store}/.gatbox-image-store", "w").write("GATBOX image store\n")
 
     def usb_disk(self, name, nbytes, vendor, model, port, vid="1234", pid="5678", logical=512, devnum="8:0", parts=(),
-                 data=None, driver="uas"):
-        """A whole disk behind a USB bridge, as the kernel lays it out, and a plain file of NBYTES standing in for it."""
+                 data=None, driver="uas", ata=None, udev=None):
+        """A whole disk behind a USB bridge, as the kernel lays it out, and a plain file of NBYTES standing in for it.
+        VENDOR and MODEL are the INQUIRY (the bridge's). `ata=(model, serial)` is a drive that passed its own IDENTIFY
+        through (udev says ID_BUS=ata); `udev={...}` writes any other properties (a reader's own serial on a USB bus)."""
+        props = dict(udev or {})
+        if ata:
+            props.update(ID_BUS="ata", ID_ATA="1", ID_MODEL=ata[0].replace(" ", "_"),
+                         ID_MODEL_ENC=ata[0].replace(" ", "\\x20") + "\\x20" * 6, ID_SERIAL_SHORT=ata[1])
+        self.devnums[name] = devnum
+        db = f"{self.udev}/b{devnum}"
+        if props:
+            with open(db, "w") as f:
+                f.write("".join(f"E:{k}={v}\n" for k, v in props.items()))
+        elif os.path.exists(db):
+            os.remove(db)
         usb = f"{self.sys}/devices/platform/axi/1000120000.pcie/xhci-hcd.0/usb2/2-{port}"
         os.makedirs(f"{usb}/2-{port}:1.0", exist_ok=True)
         for f, v in (("idVendor", vid), ("idProduct", pid), ("serial", "WIDGETDOCK0001")):
@@ -69,6 +85,9 @@ class FakeDisks:
             os.remove(f"{self.sys}/block/{name}")
         if os.path.exists(f"{self.dev}/{name}"):
             os.remove(f"{self.dev}/{name}")
+        db = f"{self.udev}/b{self.devnums.pop(name, '')}"
+        if os.path.isfile(db):
+            os.remove(db)
         self.blocks.pop(name, None)
 
     def other_disk(self, name, kind):
@@ -102,7 +121,7 @@ class FakeDisks:
 
     def env(self, **extra):
         """gatbox-disk's and gatbox-web's environment for this fake machine."""
-        e = dict(os.environ, GATBOX_SYSFS=self.sys, GATBOX_DEV=self.dev, GATBOX_MOUNTINFO=self.mountinfo,
+        e = dict(os.environ, GATBOX_SYSFS=self.sys, GATBOX_DEV=self.dev, GATBOX_MOUNTINFO=self.mountinfo, GATBOX_UDEV=self.udev,
                  GATBOX_DISKS=self.store, GATBOX_DDRESCUE=os.path.join(REPO, "tests/fake-ddrescue"),
                  GATBOX_API="http://127.0.0.1:9", FAKE_DDRESCUE_LOG=self.log)
         e.update({k: str(v) for k, v in extra.items()})

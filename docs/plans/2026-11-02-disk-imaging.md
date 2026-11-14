@@ -160,9 +160,14 @@ sector 0 is all zeros can still hold data, and the card was raw (no table, no fi
   gives on the laptop) and a SHA-1. The write reads them again, and a different fingerprint stops it even with
   `--overwrite`: the same make and size on the dock is the same drive to the identity check, and her A7 swap proof
   exists because a swap can fail to take.
-- Not done yet, from the same reading: the dock names itself (INQUIRY says XinTop for every drive), so identity should come
-  from the drive's own model and serial where udev has them, and two same-size cards on the dock are refused as "the drive
-  the image came from"; the 7" should tell her to power the dock off for every change (IDE is not hot-swap).
+- **Identity, 2026-11-14.** The dock's INQUIRY names the dock (`XinTop XT-U33502`) for every drive in it, so a drive is now
+  named by what it says itself: udev's ATA model and serial (`ID_BUS=ata`, `ID_MODEL_ENC`, `ID_SERIAL_SHORT`, read from
+  `/run/udev/data`, no root), the INQUIRY only as the fallback. A serial on a USB bus is the reader's or the dock's and is
+  not trusted. "The drive the image came from" is decided by the drive's own serial when both sides have one, and
+  otherwise by make, size and whether it starts with the image's own bytes, so a new card of the same size is no longer
+  refused. The image's fingerprint (non-zero bytes in the first 64 MiB, and a hash) is in its sidecar and on the 7".
+- Not done yet, from the same reading: the 7" should tell her to power the dock off for every drive or card change (IDE
+  is not hot-swap, her ground rule 7).
 
 **Added by the audit of 2026-11-05**, before any of this has run on a real drive. Each came from reading the write
 path as an adversary, has a test that fails without it (`tests/test-disk.py`, "WRITE, what the audit of this path

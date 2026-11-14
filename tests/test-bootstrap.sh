@@ -88,6 +88,31 @@ check "tmpfiles creates the library folder 2775 root:gatbox-manuals" 'grep -qE "
 check "the bootstrap makes it, and --check reports it"  'grep -q "! -d /srv/gatbox/library" "$BOOT" && grep -q "/srv/gatbox/library (tmpfiles.d" "$BOOT"'
 check "gatbox-web may write there (and is in the group)" 'grep -qx "ReadWritePaths=-/srv/gatbox/library" "$WEBU" && grep -qx "SupplementaryGroups=gatbox-manuals" "$WEBU"'
 
+# Disk imaging's read-only tools (hdparm -I/-N, smartctl -i/-H). Installing the two packages has side effects that are
+# switched off on purpose: smartmontools enables smartd, which polls every disk it finds, and hdparm ships a udev rule
+# that sets an APM level on each drive as it appears (its USB guard knows pci-*-usb- paths, and a Pi 5's are
+# platform-xhci-hcd, so it would not skip the dock).
+PKGLINES=$(sed -n '/^PKGS=(/,/^      mame)/p' "$BOOT")
+check "the package list names hdparm and smartmontools"   'grep -qw hdparm <<<"$PKGLINES" && grep -qw smartmontools <<<"$PKGLINES"'
+check "the hdparm udev rule is masked by a same-named /etc file" \
+    'grep -qE "^bootstrap/files/85-hdparm-off\.rules +/etc/udev/rules\.d/85-hdparm\.rules +644" "$BOOT"'
+check "and that file exists and holds no rule, only comments" \
+    '[ -s "$REPO/bootstrap/files/85-hdparm-off.rules" ] && ! grep -qvE "^[[:space:]]*(#|$)" "$REPO/bootstrap/files/85-hdparm-off.rules"'
+check "the install step switches smartd off"              'grep -q "disable --now smartmontools.service" "$BOOT"'
+# --check with stand-ins for dpkg-query and systemctl, so the answer does not depend on what this machine has installed.
+FB="$T/fakebin"; mkdir -p "$FB"
+printf '#!/bin/sh\nexit 1\n' > "$FB/dpkg-query"                       # no package is installed
+printf '#!/bin/sh\nexit 0\n' > "$FB/systemctl"                        # every unit is enabled and active
+chmod +x "$FB/dpkg-query" "$FB/systemctl"
+PATH="$FB:$PATH" bash "$BOOT" --check > "$T/check-none" 2>&1
+check "--check tells a Pi without them to install both"   'grep -q "install    package hdparm" "$T/check-none" && grep -q "install    package smartmontools" "$T/check-none"'
+check "--check tells a Pi with smartd enabled to disable it" 'grep -q "disable    smartd (smartmontools.service)" "$T/check-none"'
+printf '#!/bin/sh\nprintf "install ok installed"\n' > "$FB/dpkg-query" # every package is installed
+printf '#!/bin/sh\ncase "$*" in *smartmontools*) exit 1;; esac\nexit 0\n' > "$FB/systemctl"   # smartd is off
+PATH="$FB:$PATH" bash "$BOOT" --check > "$T/check-have" 2>&1
+check "--check says neither when both are installed and smartd is off" \
+    '! grep -qE "package (hdparm|smartmontools)|disable    smartd" "$T/check-have"'
+
 bash "$BOOT" --check > "$T/check" 2>&1; rc=$?
 check "--check runs without root (exit 0 or 3)" '[ $rc = 0 ] || [ $rc = 3 ]'
 # Without root the script refuses at its first check. As root it would go on and run for real (on a Pi, `sudo bash

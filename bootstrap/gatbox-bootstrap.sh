@@ -20,7 +20,9 @@
 #
 # What it does:
 #   1  packages: sigrok-cli, python3-matplotlib, python3-qrcode (scanner labels), rsync, git, curl, util-linux-extra (hwclock), the minipro build
-#      deps, mame (for `mame -romident` only). apt is skipped entirely when they're all present.
+#      deps, mame (for `mame -romident` only), hdparm + smartmontools (disk imaging: read-only queries for a drive's own
+#      model, serial, geometry and size through the dock; smartd is switched off and hdparm's udev rule masked, see step 1).
+#      apt is skipped entirely when they're all present.
 #   2  removes ModemManager (hijacks ttyUSB0) and brltty (grabs USB-serial adapters)
 #   3  groups (dialout, plugdev, gpio, i2c, spi, video) for your user; I2C + SPI on; hostname catbox/raspberrypi -> gatbox
 #   4  power fix: PSU_MAX_CURRENT=5000 (EEPROM) + usb_max_current_enable=1 (config.txt); RTC charging guard
@@ -123,6 +125,7 @@ data/gatbox-barcade-roster.json                 /usr/local/share/gatbox/gatbox-b
 data/gatbox-mame-sets.json                      /usr/local/share/gatbox/gatbox-mame-sets.json         644  optional
 data/gatbox-manuals.json                        /usr/local/share/gatbox/gatbox-manuals.json           644  optional
 bootstrap/files/99-gatbox-dmm.rules             /etc/udev/rules.d/99-gatbox-dmm.rules                 644
+bootstrap/files/85-hdparm-off.rules             /etc/udev/rules.d/85-hdparm.rules                     644
 bootstrap/files/minipro-0.7.4/60-minipro.rules  /etc/udev/rules.d/60-minipro.rules                    644
 bootstrap/files/minipro-0.7.4/61-minipro-plugdev.rules /etc/udev/rules.d/61-minipro-plugdev.rules    644
 bootstrap/files/minipro-0.7.4/61-minipro-uaccess.rules /etc/udev/rules.d/61-minipro-uaccess.rules    644
@@ -142,6 +145,7 @@ PKGS=(sigrok-cli python3-matplotlib python3-qrcode rsync git curl util-linux-ext
       build-essential pkg-config libusb-1.0-0-dev zlib1g-dev       # minipro build
       libarchive-tools                                              # bsdtar: XGecu .rar -> T48 firmware (minipro's dump-alg script)
       poppler-utils                                                 # pdftoppm / pdftotext / pdfinfo: the manuals viewer
+      hdparm smartmontools                                          # disk imaging: hdparm -I/-N and smartctl -i/-H, run on demand
       mame)                                                        # mame -romident only, no gameplay
 # minipro: pinned upstream release. Bump deliberately: check its T48 support and changelog, and refresh
 # bootstrap/files/minipro-<tag>/ (its udev rules, which its `make install` skips on Pi OS) at the same time.
@@ -268,6 +272,8 @@ if [ "${1:-}" = "--check" ]; then
     for u in gatbox-raillog.service gatbox-web.service gatbox-scand.service gatbox-dump.path gatbox-rtc-sync.timer \
              gatbox-sync.timer; do
         systemctl -q is-enabled "$u" 2>/dev/null || DIFFS+=("enable     $u"); done
+    systemctl -q is-enabled smartmontools.service 2>/dev/null \
+        && DIFFS+=("disable    smartd (smartmontools.service): the disk jobs call smartctl on demand, nothing polls the drives")
     getent passwd gatbox-dump >/dev/null || DIFFS+=("create     user gatbox-dump (sysusers.d)")
     getent passwd gatbox-sync >/dev/null || DIFFS+=("create     user gatbox-sync (sysusers.d)")
     getent group gatbox-wifi >/dev/null || DIFFS+=("create     group gatbox-wifi (sysusers.d)")
@@ -342,6 +348,12 @@ if ((${#missing[@]})); then
     log "installed: ${missing[*]}"
 else
     log "all present (apt skipped): ${PKGS[*]}"
+fi
+# smartmontools' own postinst enables smartd, a daemon that polls every disk it finds on a timer. The deck reads a drive
+# when a disk job asks (smartctl -i/-H) and nothing else should talk to a drive in the middle of a read, so the tool stays
+# and the daemon goes. A unit an admin has disabled stays disabled across the package's upgrades.
+if systemctl -q is-enabled smartmontools.service 2>/dev/null || systemctl -q is-active smartmontools.service 2>/dev/null; then
+    systemctl disable --now smartmontools.service >/dev/null 2>&1 && log "smartd (smartmontools.service) disabled: smartctl stays, the daemon polling drives does not"
 fi
 log "sigrok-cli $(sigrok-cli --version 2>/dev/null | head -n 1 | awk '{print $2}'), mame $(dpkg-query -W -f='${Version}' mame 2>/dev/null)"
 drivers=$(sigrok-cli -L 2>/dev/null || true)

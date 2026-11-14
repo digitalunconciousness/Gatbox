@@ -613,8 +613,15 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4
-  - [ ] Task 4 ⏸: the units, the udev rule, sysusers (two groups), tmpfiles, the store's mount unit from
-        `/etc/gatbox/disks.conf`, `gddrescue` + `mame-tools`; the owner sees the system-config diff first (hard rule 5)
+  - [ ] Task 4 ⏸ (built 2026-11-14, **not installed**: the owner reads this diff first, hard rule 5, then runs the bootstrap):
+        the user `gatbox-disk` (its own group is the devices' group) and the group `gatbox-disk-queue` (sysusers); the spool
+        `/var/spool/gatbox-disk` 2770 and the store's bare mountpoint (tmpfiles; its mode and owner are `-` so a mounted drive's
+        root is never reset); `/etc/gatbox/disks.conf` created empty; the udev rule `98-gatbox-disk.rules` (whole disks with
+        any USB parent: group `gatbox-disk` 0660 and `UDISKS_IGNORE`; **`SUBSYSTEMS=="usb"`, not `ID_BUS=="usb"`, because the
+        dock's SATA drive has `ID_BUS=ata`**); `gatbox-disk.service` + `.path`, `tools/gatbox-disk`; `gddrescue`; gatbox-web
+        joins the spool's group; the store's mount unit `srv-gatbox-disks.mount`, written from the UUID in `disks.conf` only
+        (mounted when the drive appears, `nodev,nosuid,noexec`, nothing requires it). `mame-tools` waits for Task 3.
+        `test-bootstrap.sh`: 108. Still before the first READ: format the 4 TB drive (the guarded store script)
   - [x] `hdparm` + `smartmontools` in the bootstrap (2026-11-13), ahead of Task 4, for Task 0's remaining reads. Two side
         effects of installing them are switched off: smartmontools enables **smartd**, which polls every disk (the
         bootstrap disables it; the tool stays), and hdparm's own **udev rule** sets APM `-B254` on each drive as it appears

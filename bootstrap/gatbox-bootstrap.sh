@@ -532,7 +532,16 @@ svc() {   # <unit> <installed path glob>...: enable it; restart only if its file
 if changed /etc/sysusers.d/gatbox.conf || ! getent passwd gatbox-dump >/dev/null || ! getent group gatbox-manuals >/dev/null \
    || ! getent passwd gatbox-sync >/dev/null || ! getent group gatbox-wifi >/dev/null \
    || ! getent passwd gatbox-disk >/dev/null || ! getent group gatbox-disk-queue >/dev/null; then
-    systemd-sysusers /etc/sysusers.d/gatbox.conf && log "users gatbox-dump (T48 dumps, group plugdev), gatbox-sync (hub push) and gatbox-disk (disk jobs, its own devices' group), groups gatbox-manuals and gatbox-disk-queue"
+    systemd-sysusers /etc/sysusers.d/gatbox.conf && SYSUSERS_RAN=1 && log "users gatbox-dump (T48 dumps, group plugdev), gatbox-sync (hub push) and gatbox-disk (disk jobs, its own devices' group), groups gatbox-manuals and gatbox-disk-queue"
+fi
+# udev resolves GROUP= when it LOADS a rule. Step 5 loaded 98-gatbox-disk.rules before this step could make the gatbox-disk
+# group, so on a first install udev ignored GROUP="gatbox-disk" ("Unknown group": udevadm verify on the Pi said so) and left the
+# dock's drive root:disk until a reboot, and a re-run would not have fixed it (it reloads udev only when a rule file changed).
+# Load the rules again now that the group exists, and re-apply them to the drives already plugged in.
+if [ "${SYSUSERS_RAN:-0}" = 1 ] && [ -f /etc/udev/rules.d/98-gatbox-disk.rules ]; then
+    udevadm control --reload-rules
+    udevadm trigger --action=change --subsystem-match=block --property-match=DEVTYPE=disk
+    log "udev rules loaded again: the gatbox-disk group exists now"
 fi
 if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /var/spool/gatbox-disk ] || [ ! -d /srv/gatbox/disks ] || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ] || [ ! -d /srv/gatbox/manuals ] || [ ! -d /srv/gatbox/library ] || [ ! -d /etc/gatbox ] || [ ! -d /etc/gatbox/hubs.d ] || [ ! -e /etc/gatbox/hub.conf ] || [ ! -e /etc/gatbox/archive.conf ] || [ ! -d /var/spool/gatbox-wifi ]; then
     systemd-tmpfiles --create /etc/tmpfiles.d/gatbox.conf && log "/srv/gatbox/roms + /srv/gatbox/manuals + /srv/gatbox/library + /var/spool/gatbox-dump + /var/spool/gatbox-disk + /srv/gatbox/disks (bare) + /etc/gatbox (+ hubs.d, disks.conf)"

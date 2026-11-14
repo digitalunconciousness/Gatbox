@@ -144,6 +144,11 @@ check "gatbox-disk.path is enabled and --check lists it" 'grep -q "svc gatbox-di
 all_in() { local f=$1 w; shift; for w in "$@"; do grep -qF -- "$w" "$f" || return 1; done; }     # every string is in the file
 check "--check reports the user, group, spool, mountpoint and the owner's group" \
     'all_in "$BOOT" "user gatbox-disk" "group gatbox-disk-queue (sysusers" "/var/spool/gatbox-disk" "/srv/gatbox/disks" "+= gatbox-disk-queue"'
+# udev resolves GROUP= when it loads a rule, so it has to load this one again AFTER sysusers has made the group: on the Pi,
+# `udevadm verify` said "Unknown group 'gatbox-disk'" because step 5 loaded the rule before step 6 created the group.
+check "udev loads its rules again after sysusers has run, and only when it ran" \
+    'awk "/systemd-sysusers \/etc\/sysusers/ { s = NR } /udevadm control --reload-rules/ { r[NR] = 1 } END { for (n in r) if (n + 0 > s) ok = 1; exit !ok }" "$BOOT" \
+     && grep -q "SYSUSERS_RAN:-0}\" = 1 \] && \[ -f /etc/udev/rules.d/98-gatbox-disk.rules" "$BOOT"'
 # The store's mount unit
 UUID=5210F177-0573-4CB3-9080-AB25F051F744; uuid=${UUID,,}
 unit=$(bash "$BOOT" --print-store-unit "$UUID" 2>&1); rc=$?

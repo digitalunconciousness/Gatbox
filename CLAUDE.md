@@ -160,10 +160,11 @@ M0–M7 done 2026-09-29 (the first real burn from the 7″ that evening); M8 on 
 **Disk imaging (phase D2), branch `disk-imaging`, built 2026-11-03, not installed.** Hard disks, CF and SD cards on the
 USB dock or a reader: READ into the image store, TARGET CHECK, WRITE from the 7″ (a hold arms it, two read-backs verify
 it), the swap checklist. Spec: `docs/plans/2026-11-02-disk-imaging.md`; progress: BRINGUP.md. `gatbox-disk` (a CLI
-and the job), `gatboxlib/disks.py` and gatbox-web's `/api/disk` + the DISK tab are in the repo; the units
-`backend/gatbox-disk.path/.service` are written but not in the MANIFEST. Until Task 4 installs them (the owner sees the
-udev / sysusers / tmpfiles / mount-unit diff first, hard rule 5) the DISK tab lists the USB drives and says the image
-store isn't connected and the disk service isn't installed. Facts about the dock and the store (USB IDs, serials, what
+and the job), `gatboxlib/disks.py` and gatbox-web's `/api/disk` + the DISK tab are in the repo; the units, the udev rule,
+the sysusers and tmpfiles entries and the store's mount unit are in the MANIFEST as of Task 4 (2026-11-14) and install with
+the bootstrap once the owner has read that diff (hard rule 5). Until then the DISK tab lists the USB drives and says the
+image store isn't connected and the disk service isn't installed. The store's UUID is site config in
+`/etc/gatbox/disks.conf` (git-ignored territory, like `hub.conf`). Facts about the dock and the store (USB IDs, serials, what
 the bridge passes through) come from Task 0's output, never from a guess.
 `hdparm` and `smartmontools` are installed by the bootstrap, with smartd disabled and hdparm's own udev rule masked
 (neither may touch a drive unasked). The dock's INQUIRY names the dock, so a drive's identity comes from its own model and

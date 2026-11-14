@@ -1,0 +1,10 @@
+# GATBOX disk imaging (installed by gatbox-bootstrap.sh; docs/plans/2026-11-02-disk-imaging.md §5).
+#
+# A whole disk behind a USB bridge (the dock, a card reader, the image store's own case): group gatbox-disk, which only
+# the disk job's user holds, may read and write it, and the desktop is told to leave it alone (no auto-mount, no
+# file-manager entry). The image store is mounted by its own unit (srv-gatbox-disks.mount), which this does not affect.
+#
+# SUBSYSTEMS (plural) matches any parent in the usb subsystem. ENV{ID_BUS}=="usb" would not do: once udev has asked a SATA
+# drive through the dock, ID_BUS is "ata" (Task 0, 2026-11-06), so that match would miss exactly the drives this is for.
+# mmcblk and nvme are not behind USB, so they stay root:disk, and so do partitions (DEVTYPE "partition").
+SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", SUBSYSTEMS=="usb", GROUP="gatbox-disk", MODE="0660", ENV{UDISKS_IGNORE}="1"

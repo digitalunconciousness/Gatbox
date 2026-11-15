@@ -163,8 +163,9 @@ socket-activated stdlib service (its own user, no network, no devices, the store
 (`mmls`, `fsstat`, `fls`, `icat`), Pillow and `pdftoppm`; gatbox-web forwards the loopback routes `/api/browse/*` (GETs, and one POST that starts or stops an image's index) and refuses a
 phone. `gatboxlib/browse.py` is the logic. It is read-only and sends nothing to a drive, so hard rule 6 is unchanged. F2 (an
 index and name search) is built on top (`gatboxlib/browseindex.py`: a disposable SQLite and FTS5 index in `_browse/` on the store, one volume
-per pass, searchable only when whole, standing still for a disk job). F3 (text search) is next: its readers (`gatboxlib/browsetext.py`) and a read-time measurement script for the Pi are built, the index and screen wait for the
-measurement; spec `docs/plans/2026-11-15-drive-browser.md`,
+per pass, searchable only when whole, standing still for a disk job). F3 (text search inside documents) is built on top: `gatboxlib/browsetext.py` reads the documents (text, HTML, PDF, Office, OpenDocument,
+ePub, and the old Office formats through catdoc) and the index's text phase reads them out of the image one at a time, on its own when the
+estimate is short; F4 (phone, copy out, deleted files, OCR) is not started; spec `docs/plans/2026-11-15-drive-browser.md`,
 progress in BRINGUP.md.
 A READ for no machine no longer queues for the archive (nothing drains that queue yet).
 

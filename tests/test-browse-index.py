@@ -87,6 +87,10 @@ def main():
     sha_f = json.load(open(f"{store}/{FA[:-4]}.json"))["sha1"]
     sha_r = json.load(open(f"{store}/{R[:-4]}.json"))["sha1"]
 
+    def cov(r):
+        c = r["coverage"]
+        return c["images"], c["indexed"], c["indexing"]
+
     def wait(timeout=90):
         end = time.time() + timeout
         while X.IDX.busy() and time.time() < end:
@@ -104,7 +108,7 @@ def main():
     print("before anything is indexed:")
     r = X.search("img")
     check("a search finds nothing, and says no image has been searched: 0 of 3", r["total"] == 0 and r["results"] == []
-          and r["coverage"] == {"images": 3, "indexed": 0, "indexing": 0})
+          and cov(r) == (3, 0, 0))
     check("the index is not created by looking: no file yet", not os.path.exists(X.db_path()))
     X.IDX.kick()
     X.state()
@@ -124,7 +128,7 @@ def main():
     check("a word finds the file by its path, with its kind, size and image", r["total"] == 1 and r["results"][0]["path"] == "Photos/2019/IMG_0001.jpg"
           and r["results"][0]["kind"] == "photo" and r["results"][0]["image"] == E and r["results"][0]["folder"] == "Photos/2019"
           and r["results"][0]["size"] > 0 and r["results"][0]["label"] == "ext" and r["results"][0]["volume"] == "Ext4")
-    check("... and it has searched 1 of 3 images, saying so", r["coverage"] == {"images": 3, "indexed": 1, "indexing": 0})
+    check("... and it has searched 1 of 3 images, saying so", cov(r) == (3, 1, 0))
     check("a name with an underscore, a prefix and capitals all find it", X.search("IMG_0001")["total"] == 1 and X.search("im")["total"] == 1
           and X.search("MANU")["results"][0]["path"] == "Docs/manual.pdf")
     both = X.search("photos 2019")
@@ -178,7 +182,7 @@ def main():
           and "no filesystem" in s[sha_r]["error"])
     r = X.search("2019")
     check("a search covers both images and shows which each result is in", {x["label"] for x in r["results"]} == {"ext", "fat"}
-          and r["coverage"] == {"images": 3, "indexed": 2, "indexing": 0})
+          and cov(r) == (3, 2, 0))
     fatpaths = {x["path"] for x in X.search("img", kind="photos")["results"]}
     check("FAT paths are indexed the way they are listed", "Photos/2019/IMG_0001.jpg" in fatpaths or any(p.lower().endswith("img_0001.jpg") for p in fatpaths))
 
@@ -347,7 +351,7 @@ def main():
           and "import os\nimport re\nimport sqlite3\nimport subprocess" in src and src.count("subprocess.Popen(") == 1)
     import re
     code_only = re.sub(r'"""[\s\S]*?"""', "", "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#")))
-    banned = [w for w in ("mount", "umount", "losetup", "mkfs", "wipefs", "sfdisk", "dd", "icat", "mmls", "fsstat", "sudo") if re.search(rf"\b{w}\b", code_only)]
+    banned = [w for w in ("mount", "umount", "losetup", "mkfs", "wipefs", "sfdisk", "dd", "mmls", "fsstat", "sudo") if re.search(rf"\b{w}\b", code_only)]
     check("... and never names a mount, a format, dd or a partitioner", not banned)
     if banned:
         print("        found:", banned)
@@ -472,6 +476,22 @@ def web_side(E, sha_e):
         check("GET /api/browse/locate", code == 200 and [x["name"] for x in loc["dirs"]] == ["Photos", "2019"])
         code, ls = req(f"/api/browse/ls?image={E}&vol={loc['vol']}&dir={loc['dirs'][-1]['inode']}&at={loc['inode']}")
         check("GET /api/browse/ls?at=: the folder's page with the file", code == 200 and loc["inode"] in [e["inode"] for e in ls["entries"]] and ls["at"] == loc["inode"])
+        end = time.time() + 60
+        while time.time() < end and (req("/api/browse/index")[1]["images"][sha_e].get("text") or {}).get("state") != "done":
+            time.sleep(0.3)
+        code, j = req("/api/browse/search?q=cabinet&in=text")
+        check("the text of the documents was read after the names, and a word inside one finds it with a snippet, through gatbox-web",
+              code == 200 and j["total"] == 1 and j["results"][0]["path"] == "Docs/notes.txt" and "\x01cabinet\x02" in j["results"][0]["snippet"]
+              and j["coverage"]["text"]["read"] >= 1)
+        check("search in=evil -> 400", req("/api/browse/search?q=cabinet&in=evil")[0] == 400)
+        code, j = req("/api/browse/index", "POST", {"action": "text_remove", "image": E})
+        check("POST text_remove: the text is gone, the names stay", code == 200 and j["images"][sha_e]["text"]["state"] == "none"
+              and req("/api/browse/search?q=cabinet&in=text")[1]["total"] == 0 and req("/api/browse/search?q=notes")[1]["total"] >= 1)
+        code, j = req("/api/browse/index", "POST", {"action": "text", "image": E})
+        end = time.time() + 60
+        while time.time() < end and req("/api/browse/index")[1]["images"][sha_e]["text"]["state"] != "done":
+            time.sleep(0.3)
+        check("POST text: it is read again", code == 200 and req("/api/browse/search?q=cabinet&in=text")[1]["total"] == 1)
         check("a bad action, a body that is not JSON, and a route that is not the index's -> 400, 400, 405",
               req("/api/browse/index", "POST", {"action": "format"})[0] == 400
               and req("/api/browse/index", "POST", b"not json")[0] == 400
@@ -484,6 +504,9 @@ def web_side(E, sha_e):
             res = [req("/api/browse/search?q=img", base=ph)[0], req("/api/browse/locate?id=1", base=ph)[0], req("/api/browse/index", base=ph)[0],
                    req("/api/browse/index", "POST", {"action": "all"}, base=ph)[0]]
             check("from a phone (the LAN address): search, locate, index state and index control are all 403", res == [403, 403, 403, 403])
+            check("... and a phone cannot read text or start reading it either", req("/api/browse/search?q=cabinet&in=text", base=ph)[0] == 403
+                  and req("/api/browse/index", "POST", {"action": "text_remove", "image": E}, base=ph)[0] == 403
+                  and req("/api/browse/search?q=cabinet&in=text")[1]["total"] == 1)
             check("... and the phone's POST changed nothing", req("/api/browse/index")[1]["images"][sha_e]["state"] == "done")
         else:
             print("  skip  the phone's 403 (no LAN address here)")

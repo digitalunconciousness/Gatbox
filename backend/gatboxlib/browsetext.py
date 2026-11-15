@@ -56,6 +56,8 @@ def _decode(data):
     elif data[:2] in (b"\xff\xfe", b"\xfe\xff"):
         text = data.decode("utf-16", "replace")
     else:
+        if b"\x00" in data[:4096]:                       # text has no NUL bytes (UTF-16 without a mark is read as binary, and said so)
+            raise Unreadable("binary", "this is not a text file")
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:

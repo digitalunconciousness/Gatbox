@@ -1716,6 +1716,10 @@ def main():
                   settles(c, "[...document.querySelectorAll('#dk-body button.dk-idx')].some(b => /INDEXED \\d+ files/.test(b.textContent))", 60)
                   and "tap to remove" in text("#dk-body"))
             check("... the image's own row still opens it", q("[...document.querySelectorAll('#dk-body button.dk-recrow')].some(b => b.textContent.startsWith('BROWSE-EXT'))"))
+            check("TEXT: the documents were read on their own after the names (a short job): READ n of m, and how many could not be read",
+                  settles(c, "[...document.querySelectorAll('#dk-body button.dk-txt')].some(b => /TEXT READ \\d+ of \\d+/.test(b.textContent))", 60)
+                  and "could not be read" in text("#dk-body"))
+            shot("26a2-files-text-read")
             fb_btn("SEARCH", 15, exact=True)
             c.wait("document.querySelector('#pane .kp-field')", 10)
             tap_keys("IMG")
@@ -1728,6 +1732,25 @@ def main():
                   q("[...document.querySelectorAll('#dk-body .dk-hit button')].every(b => b.getBoundingClientRect().height >= 55.5)") and not q(BOX_SMALL)
                   and q("document.querySelector('#dk-body').scrollWidth <= document.querySelector('#dk-body').clientWidth + 1"))
             shot("26b-files-search")
+            fb_btn("INSIDE DOCUMENTS", 15, exact=True)
+            check("INSIDE DOCUMENTS: IMG is a file's name, not in any document, so no results, and the line says how much was read and what could not be, with the reasons",
+                  dk_has("No results", 20) and re.search(r"read \d+ of \d+ documents in 1 image", text("#dk-body")) and "could not be read (" in text("#dk-body")
+                  and "not read yet" not in text("#dk-body") and not q("[...document.querySelectorAll('#dk-body .seg button')].some(b => b.textContent === 'PHOTOS')"))
+            q("document.querySelector('#dk-body .dk-q').click()")
+            c.wait("document.querySelector('#pane .kp-field')", 10)
+            tap_keys("⌫⌫⌫WIDGET")
+            check("a word inside a document finds it: the name, the folder, a snippet with the match marked, and the image",
+                  dk_has("notes.txt", 30) and q("document.querySelector('#dk-body .dk-hit .dk-snip .hl').textContent.toLowerCase()") == "widget"
+                  and "Docs/" in text("#dk-body .dk-hit") and "BROWSE-EXT" in text("#dk-body .dk-hit"))
+            check("... rows and buttons as tall as a finger, no text under 14 px, nothing wider than the 7\"",
+                  q("[...document.querySelectorAll('#dk-body .dk-hit button')].every(b => b.getBoundingClientRect().height >= 55.5)") and not q(BOX_SMALL)
+                  and q("document.querySelector('#dk-body').scrollWidth <= document.querySelector('#dk-body').clientWidth + 1"))
+            shot("26e-files-search-text")
+            fb_btn("NAMES", 15, exact=True)
+            q("document.querySelector('#dk-body .dk-q').click()")
+            c.wait("document.querySelector('#pane .kp-field')", 10)
+            tap_keys("⌫⌫⌫⌫⌫⌫IMG")
+            dk_has("IMG_0001.jpg", 20)
             fb_btn("PHOTOS", 15, exact=True)
             check("a kind chip narrows: PHOTOS keeps it, DOCS finds none and says so",
                   dk_has("IMG_0001.jpg", 15))
@@ -1753,8 +1776,9 @@ def main():
             check("... the results, not the folder", dk_has("FIND: IMG", 15) and q("!!document.querySelector('#dk-body .dk-hit')"))
             fb_btn("ALL IMAGES", 15, exact=True)
             q("document.querySelector('#dk-body button.dk-idx').click()")
-            check("tap to remove: not indexed again",
-                  settles(c, "[...document.querySelectorAll('#dk-body button.dk-idx')].some(b => b.textContent.includes('NOT INDEXED'))", 20))
+            check("tap to remove: this image's names and its text are gone (the first row, not just any: the others were never indexed)",
+                  settles(c, "document.querySelector('#dk-body button.dk-idx').textContent.includes('NOT INDEXED') "
+                             "&& document.querySelector('#dk-body button.dk-txt').textContent.includes('index the names first')", 30))
             fb_btn("SEARCH", 15, exact=True)
             check("... and a search says 0 of 3 searched, with the reason, not 'nothing there'", dk_has("searched 0 of 3 images", 20) and "is not searched" in text("#dk-body"))
             shot("26d-files-search-not-indexed")

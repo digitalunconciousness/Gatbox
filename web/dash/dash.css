@@ -440,9 +440,11 @@ html.box .vw-top button{min-height:56px;min-width:64px}
 /* FILES: the name index and search (F2) */
 .dk-imgrow,.dk-hit{display:flex;gap:8px;align-items:stretch;margin:4px 0}
 .dk-imgrow>.dk-recrow,.dk-hit>.dk-frow{flex:1;margin:0;min-width:0}
-.dk-idx{width:230px;min-height:64px;text-align:left}
+.dk-idx{width:176px;min-height:64px;text-align:left}
 .dk-where{width:150px;min-height:64px}
 .dk-q{display:block;text-align:left;min-height:56px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dk-years{flex-wrap:wrap}
 .dk-path{overflow-wrap:anywhere}
 button.dk-frow.hit{border-color:var(--mag);box-shadow:0 0 10px rgba(255,46,159,.35) inset}
+.dk-snip{margin:2px 0;color:var(--text)}
+.dk-snip .hl{color:var(--cyan)}

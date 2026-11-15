@@ -67,6 +67,20 @@
   stand-in that sleeps found it by hanging. Two of my first tests were also wrong: a zip's "password" bit is reset by Python's own
   writer, so the test sets it in the bytes, and a check for "too many parts" passed on a zip that was refused for having no
   document part. F3b, the index and the screen, waits for her numbers.
+- Her F3 report came back the same evening and changed the design: reading a document out of the image is about 20 ms and
+  extracting it 3 ms, and none of 600 reads took a second, so F0's one 3-second file did not come back. Inode order was 15%
+  faster against 6% noise between two identical runs, so the text pass sorts by it and builds nothing around it. The script's first
+  version printed "0.0 h" for 744 documents (right and useless) and, by chance, tried no PDF; it now prints readable times, reads
+  the largest documents for a big-file rate and tries every kind.
+- F3b of the browser, the text search, built on that and not installed. Text is a second phase after the names, one document at a
+  time in inode order, each committed as it is read, so nothing is lost by a stop or a crash; a short job starts on its own and a
+  long one waits for a tap, with the estimate shown. Four things the tests showed me: looking at the index took the write lock
+  (every connection ran the schema script), which kept a search from opening while the worker wrote, so a connection now makes the
+  schema only for a new file; committing every twenty documents would have held a transaction open across slow ones and kept the
+  screen's own stop waiting, so each document is committed; a file of random bytes was read as Windows-1252 text about one time in
+  twenty (it passed my test most runs), so a NUL byte now makes a file binary; and a dashboard check that waited for "some image
+  says NOT INDEXED" was true from the start, because the other images were never indexed, and it hid a race until the removal got
+  slower.
 - Not done: a first READ from the 7″ and any WRITE on real media; the hidden-area question; the cab-side checks in
   the procedure's 5.4 are the owner's. Task 3 (the MAME check on an image) still waits on a `chdman` output. The deck
   does not record the device letter, the two hash passes with their times, or a write's time and speed, so those lines of

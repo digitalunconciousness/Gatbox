@@ -101,8 +101,9 @@ def main():
     check("Windows-1252 (no byte-order mark, not UTF-8): café", X.extract(put("l.txt", "caf\xe9 au lait".encode("cp1252")), "txt")[0] == "café au lait")
     check("UTF-16 with a byte-order mark", X.extract(put("u.txt", "Widget über".encode("utf-16")), "txt")[0] == "Widget über")
     check("UTF-8 with a byte-order mark: the mark is not text", X.extract(put("b.txt", b"\xef\xbb\xbfhello"), "txt")[0] == "hello")
-    check("a binary file named .txt is refused as binary, an empty one and a blank one as no text",
+    check("a binary file named .txt is refused as binary (a single NUL byte is enough, whatever else it holds), an empty one and a blank one as no text",
           reason(lambda: X.extract(put("bin.txt", os.urandom(4000)), "txt")) == "binary"
+          and reason(lambda: X.extract(put("nul.txt", b"mostly letters " * 40 + b"\x00" + b"and more letters"), "txt")) == "binary"
           and reason(lambda: X.extract(put("e.txt", b""), "txt")) == "no text" and reason(lambda: X.extract(put("w.txt", "  \n\t "), "txt")) == "no text")
     t, _ = X.extract(put("p.html", "<html><head><title>Cab notes</title><style>p{color:red}</style><script>var secret=1;</script></head>"
                          "<body><h1>Rail test</h1><p>5 V &amp; 12 V &lt;ok&gt;</p></body></html>"), "html")

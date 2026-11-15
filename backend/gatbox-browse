@@ -59,7 +59,7 @@ def route_ls(q):
 
 
 def route_search(q):
-    return X.search(q1(q, "q"), q1(q, "kind") or "all", q1(q, "year"), q1(q, "min"), q1(q, "max"), q1(q, "page") or 0)
+    return X.search(q1(q, "q"), q1(q, "kind") or "all", q1(q, "year"), q1(q, "min"), q1(q, "max"), q1(q, "page") or 0, scope=q1(q, "in") or "names")
 
 
 def route_locate(q):

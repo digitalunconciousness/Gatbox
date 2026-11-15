@@ -322,13 +322,28 @@ documents and search. Then, to the seven below: **"recommended"**, all of them.
     before each run) so that inode order's gain can be told from the noise between two identical runs, times the readers per
     kind, and projects the time for every document in the volume both by file count and by bytes. It prints no name and changes
     nothing. **No indexing time is promised until her report is in.**
-  - **F3b (waits for the report): the text index, search and screen.** What is decided and what the report decides. Decided: text
-    is a second phase after the name index, per file and resumable (a pause costs nothing), one file at a time, in inode order
-    unless the report says order does not matter, standing still for a disk job; a table of text with FTS5 `snippet()` for the
-    results; coverage per image ("N of M documents read, K could not be, by reason") next to every search; the search gets a
-    scope, NAMES or INSIDE DOCUMENTS. Left to the report: whether text is read automatically after the names or only on a tap
-    (hours of reading are not a default), the per-file time limit, and any estimate shown on the screen (it will be the running
-    average of the files already read, never a prediction).
+  - **F3b (built 2026-11-15, stacked on F3a, not installed): the text index, search and screen.** The report (§3) settled it: for
+    small documents reading is cheap, so text is read on its own when it is short and waits for a tap when it is long.
+    - A second phase after the names, **per document, in inode order, one at a time, each committed as it is read**: a pause, a
+      stop, a crash or a restart costs nothing, and the next pass starts after what was read. (The first version committed every
+      twenty documents; a transaction held open across slow documents would have kept the screen's own stop and remove waiting.)
+      Names go first: asking for another image's names while text is being read lets the names run, and the text goes on after.
+    - **On its own when the estimate is 30 minutes or less** (25 ms a document plus bytes at 5 MB/s, §3), shown on the screen with
+      its basis (`TEXT NOT READ · 38,000 documents · 61 GB · about 3 h (tap to read)` when it is longer). Once it runs, the screen
+      shows the running average of the documents already read, never a prediction.
+    - It stands still for a disk job, and for an unplugged store. It can be stopped (what was read stays and is searchable; the cell
+      says the count and a tap goes on), removed (text only; the names stay), and is dropped with the names when an image is.
+    - Every document with a reader is accounted for: read, or not with the reason (`encrypted`, `damaged`, `no text`, `too big`,
+      `too slow`, `binary`). The search says "read 234 of 237 documents in 1 image; 3 could not be read (1 damaged, 1 no text, 1 too
+      big)" and, when some are unread, that they are not searched and where to read them. A reader that raises on a hostile file is
+      counted `damaged` and the pass goes on. `.rtf` and the kinds with no reader are not counted at all.
+    - The search takes a scope, **NAMES** or **INSIDE DOCUMENTS**. A result has its path, folder, image and a **snippet with the
+      match marked** (FTS5 `snippet()`; the screen draws it as text, never markup). Words, as in the names: each a prefix, all
+      required. **No phrase search and no "near"**, and no OCR: a scanned PDF is `no text`, which is F4.
+    - Limits: 1 MB of text a document (a word past it is not found, and the document says nothing about being cut on the screen yet), 64 MB a
+      file, 120 s to read one out of the image, 60 s to extract it. The schema is version 2 (a version 1 file from F2 is rebuilt).
+    - What it found in F3a's readers: a file with fewer than 10% control bytes was read as Windows-1252 text even when it was random
+      binary (a 4% chance per file); a NUL byte now makes a file binary.
 - **F4 (not covered by this OK):** a phone with a pairing PIN, copying files out, deleted files, OCR, HEIC, duplicate
   detection across drives.
 

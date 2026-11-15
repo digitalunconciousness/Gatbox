@@ -14,7 +14,7 @@ from . import config
 from .meter import Bad
 
 PARAMS = ("image", "vol", "dir", "sort", "order", "kind", "page", "inode", "size", "w", "begin",
-          "q", "year", "min", "max", "id", "at")                                                      # all the service reads
+          "q", "year", "min", "max", "id", "at", "in")                                                      # all the service reads
 
 
 class _Conn(http.client.HTTPConnection):

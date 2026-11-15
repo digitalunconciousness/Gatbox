@@ -2863,7 +2863,7 @@
              ackFor: null, holding: false, pending: false, expT: null, info: false, swap: null, rec: null,
              fb: {view: "images", img: null, label: "", vols: null, vol: null, volName: "", path: [], sort: "name", order: "asc", kind: "all",
                   page: 0, ls: null, file: null, info: null, text: null, err: null, busy: null, stats: {}, poll: null,
-                  index: null, ixPoll: null, q: "", skind: "all", syear: null, spage: 0, sres: null, from: null, at: null, hit: null, hitRow: null}};
+                  index: null, ixPoll: null, q: "", scope: "names", skind: "all", syear: null, spage: 0, sres: null, from: null, at: null, hit: null, hitRow: null}};
   const GB = n => n >= 1e12 ? (n / 1e12).toFixed(2) + " TB" : n >= 1e9 ? (n / 1e9).toFixed(1) + " GB"
                 : n >= 1e6 ? Math.round(n / 1e6) + " MB" : (n || 0).toLocaleString("en-US") + " bytes";
   const exact = n => (n || 0).toLocaleString("en-US") + " bytes";
@@ -3415,6 +3415,7 @@
   const fbDir = () => FB.path.length ? FB.path[FB.path.length - 1].inode : null;
   const FB_TAG = {folder: ["FOLDER", "cy"], photo: ["PHOTO", "ok"], document: ["DOCUMENT", "warn"], link: ["LINK", "mut"]};
   const num = n => (n || 0).toLocaleString("en-US");
+  const fbDur = s => s < 90 ? `${Math.max(1, Math.round(s))} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`;
   async function fbGo(promise, what) {
     FB.busy = what; FB.err = null; renderDisk();
     try { return await promise; }
@@ -3449,7 +3450,8 @@
     clearTimeout(FB.ixPoll);
     try { FB.index = await api("GET", "/api/browse/index"); } catch (e) { FB.index = {images: {}, error: String(e.message || e)}; }
     renderDisk();
-    const busy = Object.values(FB.index.images || {}).some(i => ["queued", "indexing", "waiting"].includes(i.state));
+    const busy = Object.values(FB.index.images || {}).some(i => ["queued", "indexing", "waiting"].includes(i.state)
+                                                                  || (i.text && ["queued", "reading", "waiting"].includes(i.text.state)));
     if (busy && S.view === "disk" && K.mode === "files" && (FB.view === "images" || FB.view === "search")) FB.ixPoll = setTimeout(fbIndexLoad, 3000);
   }
   async function fbIndexDo(action, image) {
@@ -3470,7 +3472,8 @@
   }
   async function fbSearch() {
     if (!FB.q) { FB.sres = null; renderDisk(); return; }
-    const r = await fbGo(api("GET", "/api/browse/search?" + fbQ({q: FB.q, kind: FB.skind, year: FB.syear, page: FB.spage})), "searching…");
+    const r = await fbGo(api("GET", "/api/browse/search?" + fbQ({q: FB.q, kind: FB.scope === "text" ? "all" : FB.skind, year: FB.syear, page: FB.spage,
+                                                                 in: FB.scope === "text" ? "text" : ""})), "searching…");
     if (r) { FB.sres = r; FB.spage = r.page; }
     renderDisk();
   }
@@ -3552,6 +3555,24 @@
     b.addEventListener("click", () => fbIndexDo(act, x.image));
     return b;
   }
+  // the second half of an image's index: its documents' text. What it is, and what a tap does.
+  function fbTextCell(x) {
+    const ix = FB.index && FB.index.images && FB.index.images[x.sha1], t = ix && ix.text;
+    const b = el("button", "dk-idx dk-txt");
+    if (!ix || ix.state !== "done" || !t) { b.disabled = true; add(b, el("b", "mut", "TEXT"), el("div", "mut", "index the names first")); return b; }
+    const [head, hint, act, cls] = {
+      nodocs: ["NO DOCUMENTS", "nothing to read here", null, "mut"],
+      none: ["TEXT NOT READ", `${num(t.eligible)} documents · ${GB(t.bytes)} · about ${fbDur(t.estimate_s)} (tap to read)`, "text", null],
+      queued: ["TEXT QUEUED", "tap to cancel", "text_stop", "cy"],
+      reading: [`TEXT ${num(t.read)} of ${num(t.eligible)}`, (t.seconds_left != null ? `about ${fbDur(t.seconds_left)} left · ` : "") + "tap to stop", "text_stop", "cy"],
+      waiting: ["TEXT WAITING", "for the disk job · tap to stop", "text_stop", "cy"],
+      partial: [`TEXT ${num(t.read)} of ${num(t.eligible)}`, "stopped · tap to go on", "text", "warn"],
+      done: [`TEXT READ ${num(t.read)} of ${num(t.eligible)}`, (t.skipped ? `${num(t.skipped)} could not be read · ` : "") + "tap to remove", "text_remove", "ok"],
+    }[t.state];
+    add(b, el("b", cls, head), el("div", "mut", hint));
+    if (act) b.addEventListener("click", () => fbIndexDo(act, x.image)); else b.disabled = true;
+    return b;
+  }
   function fbImageList(c) {
     const imgs = K.images;
     c.appendChild(el("h2", null, "Inside an image"));
@@ -3566,38 +3587,59 @@
       b.addEventListener("click", () => fbIndexDo("all"));
       bar.appendChild(b);
     }
-    if (states.some(s => s === "queued" || s === "indexing" || s === "waiting")) {
+    const reading = imgs.some(x => ["queued", "reading", "waiting"].includes(((ix[x.sha1] || {}).text || {}).state));
+    if (reading || states.some(s => s === "queued" || s === "indexing" || s === "waiting")) {
       const b = el("button", null, "STOP INDEXING");
-      b.addEventListener("click", () => fbIndexDo("stop_all"));
+      b.addEventListener("click", async () => { await fbIndexDo("stop_all"); await fbIndexDo("text_stop_all"); });
       bar.appendChild(b);
     }
     c.appendChild(bar);
     if (FB.index && FB.index.reason) c.appendChild(el("div", "warn", `Indexing is standing still: ${FB.index.reason}.`));
     c.appendChild(el("div", "mut", "Nothing is mounted and nothing is changed. Tap an image to look inside it, or index it so SEARCH can find its files "
-                                   + "(its list of files is read once, in the background, and waits for a disk job)."));
+                                   + "(its list of files is read once). TEXT then reads what is inside its documents. Both go on in the background and wait for a disk job."));
     for (const x of imgs.slice(0, 40)) {
       const row = el("div", "dk-imgrow"), r = el("button", "row dk-recrow");
       add(r, el("b", null, x.label || base(x.image)),
           el("div", "mut", `${x.machine} · ${GB(x.bytes)} · ${stamp(x.started)}${x.source ? " · from " + x.source : ""}`));
       r.addEventListener("click", () => fbOpenImage(x));
-      add(row, r, fbIdxCell(x));
+      add(row, r, fbIdxCell(x), fbTextCell(x));
       c.appendChild(row);
     }
+  }
+  // a snippet from the text search: the match is between \u0001 and \u0002; it is text, never markup
+  function fbSnippet(t) {
+    const d = el("div", "dk-snip");
+    for (const part of t.split(/(\u0001[^\u0002]*\u0002)/)) {
+      if (part.startsWith("\u0001")) d.appendChild(el("b", "hl", part.slice(1, -1)));
+      else if (part) d.appendChild(document.createTextNode(part));
+    }
+    return d;
   }
   function fbSearchView(c) {
     const qb = el("button", "dk-q", FB.q ? "FIND: " + FB.q : "TYPE WHAT TO FIND");
     qb.addEventListener("click", fbSearchType);
     c.appendChild(add(el("div", "btnrow dk-find"), fbBack("ALL IMAGES", fbImages), qb));
-    const kinds = el("div", "seg");
-    for (const [k, t] of [["all", "ALL"], ["photos", "PHOTOS"], ["documents", "DOCS"], ["other", "OTHER"]]) {
-      const b = el("button", FB.skind === k ? "on" : null, t);
-      b.addEventListener("click", () => { FB.skind = k; FB.spage = 0; FB.syear = null; fbSearch(); });
-      kinds.appendChild(b);
+    const scope = el("div", "seg");
+    for (const [k, t] of [["names", "NAMES"], ["text", "INSIDE DOCUMENTS"]]) {
+      const b = el("button", FB.scope === k ? "on" : null, t);
+      b.addEventListener("click", () => { FB.scope = k; FB.spage = 0; FB.syear = null; fbSearch(); });
+      scope.appendChild(b);
     }
-    c.appendChild(kinds);
+    c.appendChild(scope);
+    if (FB.scope !== "text") {
+      const kinds = el("div", "seg");
+      for (const [k, t] of [["all", "ALL"], ["photos", "PHOTOS"], ["documents", "DOCS"], ["other", "OTHER"]]) {
+        const b = el("button", FB.skind === k ? "on" : null, t);
+        b.addEventListener("click", () => { FB.skind = k; FB.spage = 0; FB.syear = null; fbSearch(); });
+        kinds.appendChild(b);
+      }
+      c.appendChild(kinds);
+    }
     const R = FB.sres;
     if (!R) {
-      c.appendChild(el("div", "mut", "SEARCH looks at the names of the files and folders, in every image that has been indexed. Each word can be the start of a word in the path."));
+      c.appendChild(el("div", "mut", FB.scope === "text"
+        ? "INSIDE DOCUMENTS looks at the words in the text of documents that have been read (TEXT on ALL IMAGES). Each word can be the start of a word."
+        : "NAMES looks at the names of the files and folders, in every image that has been indexed. Each word can be the start of a word in the path."));
       return;
     }
     if (R.years && R.years.length) {
@@ -3611,12 +3653,22 @@
     }
     const cv = R.coverage, count = `${R.total ? num(R.total) + (R.capped ? "+" : "") : "No"} result${R.total === 1 ? "" : "s"}`
                                     + (R.pages > 1 ? ` · page ${R.page + 1} of ${R.pages}` : "");
-    c.appendChild(el("div", cv.indexed < cv.images ? "warn" : "mut",
-      `${count} · searched ${cv.indexed} of ${cv.images} image${cv.images === 1 ? "" : "s"}` + (cv.indexing ? `, ${cv.indexing} being indexed now` : "")
-      + (cv.indexed < cv.images ? ". One that is not indexed is not searched: INDEX it on ALL IMAGES." : ".")));
+    if (FB.scope === "text") {
+      const tx = cv.text, left = tx.documents - tx.read - tx.skipped, why = Object.entries(tx.codes).map(([k, n]) => `${num(n)} ${k}`).join(", ");
+      c.appendChild(el("div", left > 0 || tx.reading ? "warn" : "mut",
+        `${count} · read ${num(tx.read)} of ${num(tx.documents)} documents in ${tx.images} image${tx.images === 1 ? "" : "s"}`
+        + (tx.skipped ? `; ${num(tx.skipped)} could not be read (${why})` : "")
+        + (tx.reading ? "; reading goes on" : "")
+        + (left > 0 ? `. ${num(left)} are not read yet, so they are not searched: TEXT on ALL IMAGES reads them.` : ".")));
+    } else {
+      c.appendChild(el("div", cv.indexed < cv.images ? "warn" : "mut",
+        `${count} · searched ${cv.indexed} of ${cv.images} image${cv.images === 1 ? "" : "s"}` + (cv.indexing ? `, ${cv.indexing} being indexed now` : "")
+        + (cv.indexed < cv.images ? ". One that is not indexed is not searched: INDEX it on ALL IMAGES." : ".")));
+    }
     for (const h of R.results) {
       const row = el("div", "dk-hit"), main = el("button", "row dk-frow"), tag = FB_TAG[h.kind];
       add(main, add(el("div", "dk-fn"), el("b", null, h.name), tag ? el("span", "tag " + tag[1], tag[0]) : null),
+          h.snippet ? fbSnippet(h.snippet) : null,
           el("div", "mut dk-path", h.folder ? h.folder + "/" : "top of the volume"),
           el("div", "mut", `${h.kind === "folder" ? "folder" : GB(h.size)}${h.mtime ? " · " + stamp(h.mtime) : ""} · ${h.label} · ${h.volume}`));
       const where = el("button", "dk-where", "SHOW IN FOLDER");

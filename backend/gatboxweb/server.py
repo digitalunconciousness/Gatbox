@@ -20,7 +20,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from . import (captures, config, devices, disk, dump, games, hubs, libconflicts, libsource, libsync_api, mame,
+from . import (browse, captures, config, devices, disk, dump, games, hubs, libconflicts, libsource, libsync_api, mame,
                mame_request, manual_request, manuals, meter, orders, phone, report, rom_check, romsync, roster,
                sessions, system, titles, wifi)
 from .live import LIVE
@@ -628,6 +628,16 @@ def api_disk_record(h, m, q):
     h.json(200, disk.record(q1(q, "image")))
 
 
+def _browse(route):
+    """A route of the drive browser (FILES): for the Pi's own screen only, answered by gatbox-browse."""
+    def handler(h, m, q):
+        if not h.is_local():
+            raise Bad(403, "FILES is on the Pi's own screen: what is inside a drive is not shown anywhere else")
+        status, ctype, body = browse.call(route, {k: v[0] for k, v in q.items()})
+        h.send(status, body, ctype, cache="private, max-age=3600" if route == "/preview" and status == 200 else "no-store")
+    return handler
+
+
 def api_disk_checklist_get(h, m, q):
     h.json(200, disk.checklist(q1(q, "write")))
 
@@ -1054,6 +1064,12 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("GET", r"/api/disk", api_disk_get),
     ("GET", r"/api/disk/images", api_disk_images),
     ("GET", r"/api/disk/record", api_disk_record),
+    ("GET", r"/api/browse/volumes", _browse("/volumes")),
+    ("GET", r"/api/browse/ls", _browse("/ls")),
+    ("GET", r"/api/browse/stats", _browse("/stats")),
+    ("GET", r"/api/browse/info", _browse("/info")),
+    ("GET", r"/api/browse/text", _browse("/text")),
+    ("GET", r"/api/browse/preview", _browse("/preview")),
     ("POST", r"/api/disk/read", api_disk_read),
     ("POST", r"/api/disk/retry", api_disk_retry),
     ("POST", r"/api/disk/check", api_disk_check),

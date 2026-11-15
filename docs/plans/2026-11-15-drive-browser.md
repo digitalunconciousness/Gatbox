@@ -197,10 +197,13 @@ Bad image names, paths out of the store and unknown volumes are refused with the
 
 - apt: `sleuthkit`, `python3-pil`, and in F3 `catdoc` if she wants old Office files (§9). `poppler-utils` is already there.
 - sysusers: `gatbox-browse` (user and group), and gatbox-web joins the group to reach the socket.
-- A unit `gatbox-browse.service` (§6.1), with its runtime directory for the socket.
+- `gatbox-browse.socket` (`/run/gatbox-browse/browse.sock`, mode 660, group `gatbox-browse`) and `gatbox-browse.service`
+  (§6.1), started by the socket. As built (F1), the unit sets no network (`PrivateNetwork`, `AF_UNIX` only), no devices, no
+  capabilities, a read-only view of the store with only `_browse` writable, no sight of `/etc/gatbox`, `/var/lib/gatbox-web`,
+  the library, manuals or ROM folders, `SystemCallFilter=@system-service`, `MemoryMax=512M`, `TasksMax=64`.
 - `gatbox-web.service`: `SupplementaryGroups=gatbox-browse`.
-- tmpfiles: nothing on the store itself (the service makes `_browse` when the drive is mounted, as §6.3 says); the bare
-  mountpoint stays untouched.
+- tmpfiles: nothing on the store itself. The service's own `ExecStartPre=+` makes `_browse` (mode 0700) when the store is
+  mounted and carries its marker, and does nothing otherwise; the bare mountpoint stays untouched.
 - No udev, `/boot` or `/etc/gatbox` change.
 
 ## 8. Limits, so a bad file cannot hurt the Pi
@@ -211,7 +214,7 @@ Bad image names, paths out of the store and unknown volumes are refused with the
 | A file read for preview or text | 64 MB at most for any file; 1 MB of text kept for the index |
 | Photo decoding | a pixel limit (Pillow's bomb guard, tightened) and a 50 MB source limit |
 | Office archives | an uncompressed-size cap and a member-count cap before anything is parsed |
-| A folder | paged at 200 rows, streamed, never held whole |
+| A folder | sent 200 rows a page, but held whole in memory while it is sorted (F1 builds the list from `fls`, then sorts and pages it), so a folder is cut at 100,000 entries and says so |
 | The daemon | a memory ceiling and a task ceiling in the unit |
 | Thumbnails | a total size cap, oldest dropped first |
 | Indexing | one file at a time, paused for any disk job |
@@ -240,8 +243,22 @@ documents and search. Then, to the seven below: **"recommended"**, all of them.
   with `tests/test-drive-f0.sh` (invented ext4, FAT32 and random images; the report never carries a name or label, the image
   is unchanged, each failure path stops cleanly). The owner read the bootstrap diff, ran it, and ran the script on 2026-11-15;
   the report and what it changes are in §3. **Done.**
-- **F1: browse and preview, no index.** `gatbox-browse` (volumes, listings, stats, previews), the loopback routes, the FILES view,
-  the unit, sysusers, the bootstrap lines, and the archive-queue check from §5.6.
+- **F1: browse and preview, no index (built 2026-11-15, not installed).** `gatbox-browse` (volumes, listings, stats, previews),
+  the loopback routes, the FILES view, the unit and its socket, sysusers, the bootstrap lines, and the archive-queue change from §5.6.
+  What it does and does not do, as built:
+  - A socket-activated daemon (`gatbox-browse.socket` starts it, it exits after 300 s idle, and also when it sees the store
+    NOT CONNECTED, so the next start sees the store's current mounts). gatbox-web forwards six loopback GETs (`volumes`, `ls`,
+    `stats`, `info`, `text`, `preview`) and refuses all of them to a phone with a 403 that names the Pi's own screen.
+  - A folder is named by its inode and every row carries its own, so FILES walks down by inode and never builds a path.
+  - Counts per volume (`stats`) read the whole listing once, in the background, and are cached on the store under `_browse/stats`;
+    they wait for a disk job (the daemon looks for `request.json` or `running.json` in the disk spool) and say so.
+  - Previews: a photo as a JPEG at the viewer's width, a PDF page through `pdftoppm` from a cached copy, text as the first
+    64 KB (UTF-8, then Latin-1). Anything over 64 MB, over 50 million pixels, damaged, or of a kind with no preview says so in words.
+    An extracted file is cached (256 MB, oldest dropped) so PDF pages and a zoom do not read the image again.
+  - **No thumbnails in F1.** The note's §6.3 had them; with a file coming out of the image at about 6 MB/s they are background
+    work, which F2 brings with the index.
+  - No file is ever opened by the web process. `ReadOnlyPaths` on the store, no network, no devices, `MemoryMax=512M`.
+  - The same change stops a READ for no machine from queueing for the archive: the sidecar says `archive: none, not for a machine`.
 - **F2: the index and name search.** The indexer with pause and resume, `browse.sqlite`, search routes and the results list.
 - **F3: text search.** PDF, text and Office extraction, snippets, per-image coverage, the optional `catdoc`.
 - **F4 (not covered by this OK):** a phone with a pairing PIN, copying files out, deleted files, OCR, HEIC, duplicate

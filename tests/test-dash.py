@@ -25,6 +25,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "tests"))
 from cdp import Chrome  # noqa: E402
 from fakedisk import MiB, FakeDisks, fat_card  # noqa: E402
+import fakeimage  # noqa: E402
 from fakearchive import start_archive
 
 KEEP = len(sys.argv) > 1
@@ -303,7 +304,12 @@ def setup():
                GATBOX_ROMS=f"{T}/roms", GATBOX_MINIPRO_PARTS=f"{T}/parts.txt", GATBOX_MAME_ROMS=f"{T}/mame-roms.json",
                GATBOX_MANUALS=f"{T}/manuals", GATBOX_LIBRARY=f"{T}/lib/library.sqlite", GATBOX_MAME_TITLES=f"{T}/mame-titles.json",
                GATBOX_MANUALS_SPOOL=f"{T}/mspool", GATBOX_SYSFS=FD.sys, GATBOX_DEV=FD.dev, GATBOX_MOUNTINFO=FD.mountinfo, GATBOX_UDEV=FD.udev,
-               GATBOX_DISKS=FD.store, GATBOX_DISK_SPOOL=f"{T}/dspool")
+               GATBOX_DISKS=FD.store, GATBOX_DISK_SPOOL=f"{T}/dspool", GATBOX_BROWSE_SOCK=f"{T}/browse.sock")
+    # the drive browser's service (FILES), over the same fake store, on its own socket (systemd would start it on demand)
+    procs["browse"] = subprocess.Popen([sys.executable, os.path.join(REPO, "backend/gatbox-browse"), "--socket", f"{T}/browse.sock", "--idle", "3000"],
+                                       env=dict(os.environ, GATBOX_LIB=os.path.join(REPO, "backend"), GATBOX_DISKS=FD.store,
+                                                GATBOX_MOUNTINFO=FD.mountinfo, GATBOX_BROWSE_DIR=f"{FD.store}/_browse",
+                                                GATBOX_DISK_SPOOL=f"{T}/dspool"), stderr=subprocess.DEVNULL, start_new_session=True)
     subprocess.run([sys.executable, os.path.join(REPO, "tools/gatbox-mame-roms"), "--titles", f"{T}/mame-titles.json"], check=True,
                    capture_output=True, env=dict(os.environ, GATBOX_MAME=os.path.join(REPO, "tests/fake-mame")))
     os.environ["GATBOX_DATA"] = f"{T}/data"               # the logger's gatbox-meta reads the same data
@@ -1570,6 +1576,138 @@ def main():
         dk_tap("ALL RECORDS")
         check("ALL RECORDS: back to the list", settles(c, "!document.querySelector('#dk-body .dk-rec') && !!document.querySelector('#dk-body button.dk-recrow')", 5))
         dk_seg("CHECKLIST")
+
+        # FILES: look inside a stored image (docs/plans/2026-11-15-drive-browser.md). The tools it needs may be missing: skip, saying so.
+        gone = fakeimage.missing()
+        try:
+            import PIL  # noqa: F401
+        except ImportError:
+            gone.append("python3-pil")
+        if gone:
+            print(f"  skip  FILES (the browser's tools are not installed here: {', '.join(gone)})")
+        else:
+            print("FILES (a real gatbox-browse over an invented ext4 image):")
+            ftree = f"{T}/ftree"
+            os.makedirs(ftree)
+            fakeimage.sample_tree(ftree, many=230)
+            fimg = f"{T}/fimg.img"
+            fakeimage.ext4_image(fimg, ftree)
+            frel = fakeimage.put_in_store(FD.store, "gauntlet-legends", "BROWSE-EXT", fimg)
+            nfiles = sum(1 for d, _, fs in os.walk(ftree) for f in fs if not os.path.islink(os.path.join(d, f)))
+
+            def fb_row(name):
+                return f"[...document.querySelectorAll('#dk-body .dk-frow')].find(b => b.querySelector('b').textContent === {json.dumps(name)})"
+
+            def fb_tap(name):
+                q(fb_row(name) + ".click()")
+
+            def fb_wait_row(name, timeout=25):
+                return settles(c, "!!(" + fb_row(name) + ")", timeout)
+
+            def fb_btn(text, timeout=25, exact=False):
+                # the sort buttons carry an arrow once on ("NAME ↑"), so a prefix match; ALL must be exact (ALL IMAGES starts with it)
+                test = f"(b.textContent === {json.dumps(text)} || {'false' if exact else 'b.textContent.startsWith(' + json.dumps(text + ' ') + ')'})"
+                finder = f"[...document.querySelectorAll('#dk-body button:not(.dk-frow)')].find(b => {test})"
+                ok = settles(c, f"!!({finder})", timeout)
+                if ok:
+                    q(finder + ".click()")
+                return ok
+            dk_seg("FILES")
+            check("FILES: the stored images are listed, with how it works, and nothing is changed",
+                  settles(c, "[...document.querySelectorAll('#dk-body button.dk-recrow')].some(b => b.textContent.startsWith('BROWSE-EXT'))", 15)
+                  and "Nothing is mounted and nothing is changed" in text("#dk-body"))
+            q("[...document.querySelectorAll('#dk-body button.dk-recrow')].find(b => b.textContent.startsWith('BROWSE-EXT')).click()")
+            check("an image: its partitions. The Linux volume says Ext4, its size and what is used; the swap says it is swap space",
+                  dk_has("Ext4", 25) and "swap space" in text("#dk-body") and "used" in text("#dk-body") and "free" in text("#dk-body"))
+            check("... a volume with a filesystem has OPEN and COUNT WHAT'S ON IT; one without has neither, and shows its first bytes",
+                  q("[...document.querySelectorAll('#dk-body .dk-vol')].filter(v => v.textContent.includes('OPEN')).length") == 1
+                  and "COUNT WHAT'S ON IT" in text("#dk-body") and "first bytes:" in text("#dk-body"))
+            check("... no text under 14 px on the 7\"", not q(BOX_SMALL))
+            shot("25a-files-volumes")
+            fb_btn("COUNT WHAT'S ON IT")
+            check("COUNT WHAT'S ON IT: counted in the background, then the files, folders and kinds are shown",
+                  dk_has(f"{nfiles} files", 40) and "photos:" in text("#dk-body") and "documents:" in text("#dk-body") and "commonest:" in text("#dk-body"))
+            shot("25b-files-counted")
+            fb_btn("OPEN")
+            check("OPEN: the root folder, its folders first, then the files, with a tag on each and a size and date",
+                  fb_wait_row("Photos") and fb_wait_row("big.bin") and q("[...document.querySelectorAll('#dk-body .dk-frow')][0].textContent.includes('FOLDER')")
+                  and "2 MB" in q(fb_row("big.bin") + ".textContent"))
+            check("... the breadcrumbs are buttons: ALL IMAGES, the image, the volume", q("[...document.querySelectorAll('#dk-body .dk-crumbs button')].map(b => b.textContent)")[0] == "ALL IMAGES")
+            check("the sort and the kind buttons sit side by side in a bar as tall as a finger, none of it clipped (dk-bar is the progress bar's class)",
+                  q("""(() => { const b = document.querySelector('#dk-body .dk-sortkind'); if (!b) return false;
+                         const r = b.getBoundingClientRect(), segs = [...b.querySelectorAll('.seg')].map(s => s.getBoundingClientRect());
+                         return r.height >= 55 && b.scrollHeight <= b.clientHeight + 1 && segs.length === 2 && Math.abs(segs[0].top - segs[1].top) < 2
+                                && getComputedStyle(b).backgroundColor === 'rgba(0, 0, 0, 0)'
+                                && [...b.querySelectorAll('button')].every(x => { const g = document.createRange(); g.selectNodeContents(x); return g.getClientRects().length === 1; }); })()"""))
+            shot("25c-files-folder")
+            fb_btn("SIZE")
+            first_file = "[...document.querySelectorAll('#dk-body .dk-frow')].filter(b => !b.textContent.includes('FOLDER'))[0]"
+            check("SIZE: largest first (the list is redrawn when the new order arrives), folders still above the files",
+                  settles(c, "!!(" + first_file + ") && " + first_file + ".querySelector('b').textContent === 'huge.pdf'", 15)
+                  and q("document.querySelectorAll('#dk-body .dk-frow')[0].textContent.includes('FOLDER')")
+                  and q("document.querySelector('#dk-body .dk-files .seg button.on').textContent.startsWith('SIZE')"))
+            fb_btn("PHOTOS")
+            check("PHOTOS: only the folders and the photos",
+                  settles(c, "![...document.querySelectorAll('#dk-body .dk-frow')].some(b => b.querySelector('b').textContent === 'big.bin')", 15)
+                  and fb_wait_row("bomb.png"))
+            fb_btn("ALL", 15, exact=True)
+            fb_btn("NAME", 15)
+            check("ALL and NAME: everything back, folders first, by name", fb_wait_row("big.bin") and fb_wait_row("Photos"))
+            fb_tap("Photos")
+            check("a folder: tap it, and its folders and files are listed; the breadcrumbs grow", fb_wait_row("2019") and "Photos" in text("#dk-body .dk-crumbs"))
+            fb_tap("2019")
+            check("... down again, by inode", fb_wait_row("IMG_0001.jpg") and fb_wait_row("red.png"))
+            fb_tap("IMG_0001.jpg")
+            check("a photo: tap it, and the viewer opens on it, drawn by gatbox-browse; no search and no PDF link",
+                  settles(c, "!document.querySelector('#viewer').classList.contains('hide') && document.querySelector('#vw-img').complete && document.querySelector('#vw-img').naturalWidth > 0", 40)
+                  and "/api/browse/preview" in q("document.querySelector('#vw-img').src") and q("document.querySelector('#vw-title').textContent") == "IMG_0001.jpg"
+                  and q("document.querySelector('#vw-search').classList.contains('hide')") and q("document.querySelector('#vw-pdf').classList.contains('hide')"))
+            shot("25d-files-photo")
+            q("document.querySelector('#vw-close').click()")
+            check("CLOSE: back on the same folder, where it was", fb_wait_row("red.png") and "2019" in text("#dk-body .dk-crumbs"))
+            q("[...document.querySelectorAll('#dk-body .dk-crumbs button')][2].click()")      # the volume's crumb: the root again
+            fb_wait_row("Docs")
+            fb_tap("Docs")
+            fb_wait_row("manual.pdf")
+            fb_tap("manual.pdf")
+            check("a PDF: the viewer opens with its page count, and NEXT draws page 2",
+                  settles(c, "document.querySelector('#vw-page').textContent === '1 / 3' && document.querySelector('#vw-img').complete && document.querySelector('#vw-img').naturalWidth > 0", 40))
+            q("document.querySelector('#vw-next').click()")
+            check("... page 2 of 3", settles(c, "document.querySelector('#vw-page').textContent === '2 / 3' && document.querySelector('#vw-img').complete", 40))
+            q("document.querySelector('#vw-close').click()")
+            fb_tap("notes.txt")
+            check("a text file: its text, in a block, with its encoding", dk_has("Widget Wars cabinet notes", 30) and "UTF-8" in text("#dk-body"))
+            shot("25e-files-text")
+            fb_btn("BACK TO THE FOLDER", 15)
+            fb_tap("budget.xlsx")
+            check("a file with no preview says so, in words", dk_has("no preview for this kind of file", 30))
+            fb_btn("BACK TO THE FOLDER", 15)
+            q("[...document.querySelectorAll('#dk-body .dk-crumbs button')][2].click()")
+            fb_wait_row("huge.pdf")
+            fb_tap("huge.pdf")
+            check("a file over the 64 MB limit: 'too large to preview', with its size", dk_has("too large to preview", 30) and "70 MB" in text("#dk-body"))
+            shot("25f-files-too-large")
+            fb_btn("BACK TO THE FOLDER", 15)
+            fb_tap("bomb.png")
+            check("a photo with too many pixels: refused in words, not drawn", dk_has("too large to draw", 30))
+            fb_btn("BACK TO THE FOLDER", 15)
+            fb_tap("broken.jpg")
+            check("a damaged photo: 'could not be read'", dk_has("could not be read", 30))
+            fb_btn("BACK TO THE FOLDER", 15)
+            check("... and BACK still works: the folder is where it was", fb_wait_row("broken.jpg"))
+            fb_tap("Notes")
+            check("a folder of 232 items is paged: 'page 1 of 2', NEXT gives the rest",
+                  dk_has("page 1 of 2", 25) and q("document.querySelectorAll('#dk-body .dk-frow').length") == 200)
+            fb_btn("NEXT", 15)
+            check("... page 2: the other 32", dk_has("page 2 of 2", 25) and q("document.querySelectorAll('#dk-body .dk-frow').length") == 32)
+            check("rows are at least 56 px tall for a finger, and no text is under 14 px on the 7\"",
+                  q("[...document.querySelectorAll('#dk-body .dk-frow')].every(b => b.getBoundingClientRect().height >= 55.5)") and not q(BOX_SMALL))
+            shot("25g-files-paged")
+            # the image store unplugged: FILES says so
+            FD.mount_table(store=False)
+            check("with the store unplugged: FILES says the images are on the store", dk_has("plug it in", 25))
+            FD.mount_table()
+            dk_has("Inside an image", 25) or dk_seg("FILES")
         FD.mount_table(store=False)
         dk_seg("READ")
         check("the store unplugged: NOT CONNECTED, READ off and it says why, the nav says so",

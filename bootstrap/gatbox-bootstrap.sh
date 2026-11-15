@@ -281,6 +281,26 @@ Options=noatime,nodev,nosuid,noexec
 WantedBy=dev-disk-by\\x2duuid-${esc}.device
 EOF
 }
+# The disk rule (98-gatbox-disk.rules) puts every whole disk behind USB in the group gatbox-disk. udev works out a rule's
+# GROUP= when it loads the rule, and a daemon that loaded this one before the group existed kept leaving drives root:disk
+# after it was told to reload (the Pi, 2026-11-14: only a restart fixed it; why a reload was not enough was not established).
+# This lists the USB disks that are not in the group yet, so a re-run mends an install that was cut short, and --check can
+# say so. Nothing is listed while the rule or the group is missing: there is nothing to compare with.
+DISK_RULE=/etc/udev/rules.d/98-gatbox-disk.rules
+SYS_BLOCK=/sys/block
+DEV_DIR=/dev
+unfixed_disk_nodes() {
+    local gid n real
+    [ -f "$DISK_RULE" ] || return 0
+    gid=$(getent group gatbox-disk 2>/dev/null | cut -d: -f3)
+    [ -n "$gid" ] || return 0
+    for n in "$SYS_BLOCK"/sd*; do
+        [ -e "$n" ] && [ -e "$DEV_DIR/${n##*/}" ] || continue
+        real=$(readlink -f "$n")
+        [[ $real == */usb[0-9]*/* ]] || continue               # the rule's SUBSYSTEMS=="usb": not behind USB, not ours
+        [ "$(stat -c %g "$DEV_DIR/${n##*/}" 2>/dev/null)" = "$gid" ] || printf '%s\n' "${n##*/}"
+    done
+}
 # minipro --version exits 1 when no programmer is plugged in, but still prints its version and supported list
 minipro_info() { minipro --version 2>&1 || true; }
 minipro_version() { minipro_info | sed -n 's/^minipro version \([^ ]*\).*/\1/p' | head -n 1; }
@@ -305,6 +325,9 @@ fi
 
 if [ "${1:-}" = "--check" ]; then
     DISKS_CONF=${GATBOX_DISKS_CONF:-$DISKS_CONF}; STORE_MOUNT=${GATBOX_STORE_MOUNT:-$STORE_MOUNT}   # a test points these elsewhere; --check only reads
+    DISK_RULE=${GATBOX_DISK_RULE:-$DISK_RULE}; SYS_BLOCK=${GATBOX_SYS_BLOCK:-$SYS_BLOCK}; DEV_DIR=${GATBOX_DEV:-$DEV_DIR}
+    ETC_GATBOX=${GATBOX_ETC:-/etc/gatbox}
+    NOTES=()   # what this check could not look at, said after the list: not a change
     while read -r src dst mode opt; do check_file "$src" "$dst" "$mode" "$opt"; done < <(manifest)
     while read -r src rel mode; do check_file "$src" "$HOME/$rel" "$mode"; done < <(user_manifest)
     grep -qE "$TOUCH_LINE" "$HOME/.config/labwc/rc.xml" 2>/dev/null \
@@ -325,6 +348,8 @@ if [ "${1:-}" = "--check" ]; then
     [ -d /var/spool/gatbox-disk ] || DIFFS+=("create     /var/spool/gatbox-disk (tmpfiles.d)")
     [ -d /srv/gatbox/disks ] || DIFFS+=("create     /srv/gatbox/disks, the image store's bare mountpoint (tmpfiles.d)")
     id -nG "$(id -un)" | grep -qw gatbox-disk-queue || DIFFS+=("group      $(id -un) += gatbox-disk-queue (the disk spool)")
+    stale=$(unfixed_disk_nodes | xargs)
+    [ -z "$stale" ] || DIFFS+=("restart    systemd-udevd and re-apply the disk rule: $stale is not in group gatbox-disk yet")
     # disks.conf is 0600 root: without root there is nothing to compare, so nothing is said.
     if [ -r "$DISKS_CONF" ]; then
         uuid=$(store_uuid)
@@ -335,10 +360,16 @@ if [ "${1:-}" = "--check" ]; then
     getent group gatbox-wifi >/dev/null || DIFFS+=("create     group gatbox-wifi (sysusers.d)")
     [ -d /var/spool/gatbox-wifi ] || DIFFS+=("create     /var/spool/gatbox-wifi (tmpfiles.d)")
     [ -d /srv/gatbox/roms ] && [ -d /var/spool/gatbox-dump ] || DIFFS+=("create     /srv/gatbox/roms + /var/spool/gatbox-dump (tmpfiles.d)")
-    [ -d /etc/gatbox ] || DIFFS+=("create     /etc/gatbox (tmpfiles.d; hub.conf goes in by hand)")
-    [ -d /etc/gatbox/hubs.d ] || DIFFS+=("create     /etc/gatbox/hubs.d (tmpfiles.d; one <name>.conf per extra hub, by hand)")
-    [ -e /etc/gatbox/hub.conf ] || DIFFS+=("create     /etc/gatbox/hub.conf, empty (tmpfiles.d; empty means no hub)")
-    [ -e /etc/gatbox/archive.conf ] || DIFFS+=("create     /etc/gatbox/archive.conf, empty (tmpfiles.d; empty means no archive, the library is not synced)")
+    [ -d "$ETC_GATBOX" ] || DIFFS+=("create     /etc/gatbox (tmpfiles.d; hub.conf goes in by hand)")
+    if [ -d "$ETC_GATBOX" ] && [ ! -x "$ETC_GATBOX" ]; then
+        # 0750 root: without root a test for what is inside it fails whether the file is there or not, and would say "create"
+        # for files that exist.
+        NOTES+=("/etc/gatbox is readable by root only: its hubs.d, hub.conf, archive.conf and disks.conf were not looked at. Run this with sudo to include them.")
+    else
+        [ -d "$ETC_GATBOX/hubs.d" ] || DIFFS+=("create     /etc/gatbox/hubs.d (tmpfiles.d; one <name>.conf per extra hub, by hand)")
+        [ -e "$ETC_GATBOX/hub.conf" ] || DIFFS+=("create     /etc/gatbox/hub.conf, empty (tmpfiles.d; empty means no hub)")
+        [ -e "$ETC_GATBOX/archive.conf" ] || DIFFS+=("create     /etc/gatbox/archive.conf, empty (tmpfiles.d; empty means no archive, the library is not synced)")
+    fi
     # Only when the hotspot is armed at all: an unarmed Pi is not missing anything.
     if systemctl -q is-enabled gatbox-ap-fallback.service 2>/dev/null \
        || systemctl -q is-enabled gatbox-ap-fallback.timer 2>/dev/null; then
@@ -354,8 +385,9 @@ if [ "${1:-}" = "--check" ]; then
     command -v minipro >/dev/null && ! parts_ok && DIFFS+=("generate   $PARTS_LIST")
     mame_roms_wanted && ! mame_roms_ok && DIFFS+=("generate   $MAME_ROMS (from mame -listxml: a minute or two)")
     mame_titles_wanted && ! mame_titles_ok && DIFFS+=("generate   $MAME_TITLES (MAME's title list, once per MAME version: a minute or two)")
-    if ((${#DIFFS[@]})); then printf 'a run would change:\n'; printf '  %s\n' "${DIFFS[@]}"; exit 3; fi
+    if ((${#DIFFS[@]})); then printf 'a run would change:\n'; printf '  %s\n' "${DIFFS[@]}"; ((${#NOTES[@]})) && printf 'note: %s\n' "${NOTES[@]}"; exit 3; fi
     echo "nothing to change: this Pi matches the checkout"
+    ((${#NOTES[@]})) && printf 'note: %s\n' "${NOTES[@]}"
     exit 0
 fi
 
@@ -398,9 +430,24 @@ printf '%sGDD-GAT/01 bootstrap%s  %s  %s  user=%s  checkout=%s (%s)\n' "$M" "$N"
 step "1/9 packages"
 missing=()
 for p in "${PKGS[@]}"; do pkg_ok "$p" || missing+=("$p"); done
+# smartmontools' postinst starts smartd, which polls every drive it finds. On the Pi's first install (2026-11-14) its SMART
+# ENABLE hung the dock's bridge until the kernel reset it, twice, with the 80 GB drive on it. The disable step below came too
+# late to prevent that. dpkg's own switch for this is policy-rc.d: while apt runs, one that refuses to start smartmontools
+# (exit 101) and allows everything else (deb-systemd-invoke reads it, and calls it with the unit name and the action). It is
+# taken away again as soon as apt finishes, and it is skipped when the Pi already has a policy-rc.d of its own.
+POLICY=/usr/sbin/policy-rc.d
+POLICY_MARK="# GATBOX bootstrap: temporary, removed when apt finishes"
+[ -f "$POLICY" ] && grep -qxF "$POLICY_MARK" "$POLICY" && rm -f "$POLICY"      # ours, left behind by a run that was cut short
+hold_smartd=0
+if printf '%s\n' "${missing[@]:-}" | grep -qx smartmontools && [ ! -e "$POLICY" ]; then
+    printf '#!/bin/sh\n%s\ncase "$1" in smartmontools|smartmontools.service|smartd|smartd.service) exit 101;; esac\nexit 0\n' "$POLICY_MARK" > "$POLICY"
+    chmod 755 "$POLICY"; hold_smartd=1
+fi
 if ((${#missing[@]})); then
     apt-get update -q || warn "apt-get update failed (offline?): using the package lists already on the Pi"
-    apt-get install -y -q "${missing[@]}" || die "couldn't install: ${missing[*]} (offline?)"
+    apt-get install -y -q "${missing[@]}"; apt_rc=$?
+    [ "$hold_smartd" = 1 ] && rm -f "$POLICY"
+    [ "$apt_rc" = 0 ] || die "couldn't install: ${missing[*]} (offline?)"
     log "installed: ${missing[*]}"
 else
     log "all present (apt skipped): ${PKGS[*]}"
@@ -534,14 +581,19 @@ if changed /etc/sysusers.d/gatbox.conf || ! getent passwd gatbox-dump >/dev/null
    || ! getent passwd gatbox-disk >/dev/null || ! getent group gatbox-disk-queue >/dev/null; then
     systemd-sysusers /etc/sysusers.d/gatbox.conf && SYSUSERS_RAN=1 && log "users gatbox-dump (T48 dumps, group plugdev), gatbox-sync (hub push) and gatbox-disk (disk jobs, its own devices' group), groups gatbox-manuals and gatbox-disk-queue"
 fi
-# udev resolves GROUP= when it LOADS a rule. Step 5 loaded 98-gatbox-disk.rules before this step could make the gatbox-disk
+# udev works out GROUP= when it LOADS a rule. Step 5 loaded 98-gatbox-disk.rules before this step could make the gatbox-disk
 # group, so on a first install udev ignored GROUP="gatbox-disk" ("Unknown group": udevadm verify on the Pi said so) and left the
-# dock's drive root:disk until a reboot, and a re-run would not have fixed it (it reloads udev only when a rule file changed).
-# Load the rules again now that the group exists, and re-apply them to the drives already plugged in.
-if [ "${SYSUSERS_RAN:-0}" = 1 ] && [ -f /etc/udev/rules.d/98-gatbox-disk.rules ]; then
-    udevadm control --reload-rules
+# dock's drive root:disk. Telling the running udevd to reload did not mend that on the Pi (2026-11-14): the group only took
+# after systemd-udevd was restarted, so it is restarted here (it starts again with the rules, and the group, it finds now), and
+# the rule is re-applied to the drives already plugged in. This runs when sysusers has just made the group, and also when a
+# USB disk is still outside the group, so a re-run mends an install that was cut short.
+if [ -f "$DISK_RULE" ] && { [ "${SYSUSERS_RAN:-0}" = 1 ] || [ -n "$(unfixed_disk_nodes)" ]; }; then
+    systemctl restart systemd-udevd
     udevadm trigger --action=change --subsystem-match=block --property-match=DEVTYPE=disk
-    log "udev rules loaded again: the gatbox-disk group exists now"
+    udevadm settle --timeout=10
+    log "systemd-udevd restarted and the disk rule re-applied: the gatbox-disk group exists now"
+    still=$(unfixed_disk_nodes | xargs)
+    [ -z "$still" ] || warn "still outside group gatbox-disk after that: $still (unplug it and plug it back in, or reboot)"
 fi
 if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /var/spool/gatbox-disk ] || [ ! -d /srv/gatbox/disks ] || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ] || [ ! -d /srv/gatbox/manuals ] || [ ! -d /srv/gatbox/library ] || [ ! -d /etc/gatbox ] || [ ! -d /etc/gatbox/hubs.d ] || [ ! -e /etc/gatbox/hub.conf ] || [ ! -e /etc/gatbox/archive.conf ] || [ ! -d /var/spool/gatbox-wifi ]; then
     systemd-tmpfiles --create /etc/tmpfiles.d/gatbox.conf && log "/srv/gatbox/roms + /srv/gatbox/manuals + /srv/gatbox/library + /var/spool/gatbox-dump + /var/spool/gatbox-disk + /srv/gatbox/disks (bare) + /etc/gatbox (+ hubs.d, disks.conf)"

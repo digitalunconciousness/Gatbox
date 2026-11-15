@@ -427,7 +427,8 @@ listing named from `mame-roms.json`.
   auto-mount), sysusers (the two groups), tmpfiles (the spool, `disks.conf`, the unwritable bare mountpoint),
   `mame-tools` and `gddrescue` in the apt list, and the bootstrap MANIFEST (`hdparm` and `smartmontools` went in first,
   2026-11-13, so Task 0 could read a drive's own geometry and size: smartd is disabled and hdparm's packaged udev rule is
-  masked, because both act on every drive without being asked);
+  masked, because both act on every drive without being asked; and from 2026-11-15 smartd is also kept from starting during
+  the install itself, a policy-rc.d that lasts only while apt runs, because its first poll hung the dock's bridge);
 - **system config is shown to the owner, ⏸, before install (hard rule 5).**
 
 **Task 5, gatbox-web:** the routes in §6, SSE `disk`, and the loopback gate.

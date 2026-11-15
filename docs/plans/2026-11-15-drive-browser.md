@@ -281,7 +281,28 @@ documents and search. Then, to the seven below: **"recommended"**, all of them.
     (`ls` takes `at=<inode>`) with the row marked. A result's own tap opens the file as from a folder.
   - Not indexed: deleted entries and links (hidden in v1, as in the folder view). Limits: 10,000,000 entries a volume, 500,000
     folders remembered (a file below the rest opens from the top of its volume), results counted up to 10,000.
-- **F3: text search.** PDF, text and Office extraction, snippets, per-image coverage, the optional `catdoc`.
+- **F3: text search.** PDF, text and Office extraction, snippets, per-image coverage, `catdoc`.
+  - **F3a (built 2026-11-15, stacked on F2, not installed): the readers and the measurement.** `gatboxlib/browsetext.py` reads
+    plain text (UTF-8, UTF-16 with a mark, else Windows-1252), HTML, PDF (`pdftotext`), `.docx`, `.xlsx`, `.pptx`, `.odt`, `.ods`,
+    `.odp` and `.epub` (zips read by hand), and `.doc`, `.xls`, `.ppt` (catdoc's `catdoc`, `xls2csv`, `catppt`, which the
+    bootstrap now installs). It keeps at most 1 MB of folded text a file. A file it cannot read is refused with one of six
+    codes the screen will count, so an empty result can say why: `encrypted`, `damaged`, `no text` (a scan: OCR is F4), `too big`,
+    `too slow`, `binary`, or `no reader`. The limits are built to refuse: no XML parser at all (the text is lifted out of the XML
+    with patterns, so there are no entity tricks), at most 4,000 parts in a zip, 32 MB from a part and 128 MB from a file, a zip
+    that expands more than 200 times refused, a password-protected part refused, and the tools through the browse core's runner
+    (a time limit, the whole process group killed, output cut at 4 MB). Not read: `.rtf` and anything else with no reader.
+    `docs/plans/2026-11-15-drive-browser-f3.py` is the measurement §3 asked for: it lists one volume, takes 200 random
+    documents, reads them out of the image three times (random, inode order, random again, the image's cached pages dropped
+    before each run) so that inode order's gain can be told from the noise between two identical runs, times the readers per
+    kind, and projects the time for every document in the volume both by file count and by bytes. It prints no name and changes
+    nothing. **No indexing time is promised until her report is in.**
+  - **F3b (waits for the report): the text index, search and screen.** What is decided and what the report decides. Decided: text
+    is a second phase after the name index, per file and resumable (a pause costs nothing), one file at a time, in inode order
+    unless the report says order does not matter, standing still for a disk job; a table of text with FTS5 `snippet()` for the
+    results; coverage per image ("N of M documents read, K could not be, by reason") next to every search; the search gets a
+    scope, NAMES or INSIDE DOCUMENTS. Left to the report: whether text is read automatically after the names or only on a tap
+    (hours of reading are not a default), the per-file time limit, and any estimate shown on the screen (it will be the running
+    average of the files already read, never a prediction).
 - **F4 (not covered by this OK):** a phone with a pairing PIN, copying files out, deleted files, OCR, HEIC, duplicate
   detection across drives.
 

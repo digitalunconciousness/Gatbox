@@ -23,7 +23,8 @@
 #   1  packages: sigrok-cli, python3-matplotlib, python3-qrcode (scanner labels), rsync, git, curl, util-linux-extra (hwclock), the minipro build
 #      deps, mame (for `mame -romident` only), hdparm + smartmontools (disk imaging: read-only queries for a drive's own
 #      model, serial, geometry and size through the dock; smartd is switched off and hdparm's udev rule masked, see step 1),
-#      sleuthkit + python3-pil (the drive browser: reading the files inside a stored image, never mounting it). Step 6 adds its
+#      sleuthkit + python3-pil (the drive browser: reading the files inside a stored image, never mounting it), and catdoc (its
+#      text search reads old Word, Excel and PowerPoint files with it). Step 6 adds its
 #      user gatbox-browse and its socket-activated service (gatbox-browse.socket), which sees the image store read-only.
 #      apt is skipped entirely when they're all present.
 #   2  removes ModemManager (hijacks ttyUSB0) and brltty (grabs USB-serial adapters)
@@ -99,6 +100,7 @@ backend/gatboxlib/csvlog.py                     /usr/local/lib/gatbox/gatboxlib/
 backend/gatboxlib/disks.py                      /usr/local/lib/gatbox/gatboxlib/disks.py              644
 backend/gatboxlib/browse.py                     /usr/local/lib/gatbox/gatboxlib/browse.py             644
 backend/gatboxlib/browseindex.py                /usr/local/lib/gatbox/gatboxlib/browseindex.py        644
+backend/gatboxlib/browsetext.py                 /usr/local/lib/gatbox/gatboxlib/browsetext.py         644
 backend/gatboxweb/__init__.py                   /usr/local/lib/gatbox/gatboxweb/__init__.py           644
 backend/gatboxweb/config.py                     /usr/local/lib/gatbox/gatboxweb/config.py             644
 backend/gatboxweb/server.py                     /usr/local/lib/gatbox/gatboxweb/server.py             644
@@ -162,6 +164,7 @@ PKGS=(sigrok-cli python3-matplotlib python3-qrcode rsync git curl util-linux-ext
       poppler-utils                                                 # pdftoppm / pdftotext / pdfinfo: the manuals viewer
       hdparm smartmontools                                          # disk imaging: hdparm -I/-N and smartctl -i/-H, run on demand
       gddrescue                                                     # ddrescue: the disk job's READ (mame-tools comes with Task 3)
+      catdoc                                                        # the drive browser's text search (F3): catdoc, xls2csv, catppt read old Word, Excel and PowerPoint files (poppler-utils reads PDFs)
       sleuthkit python3-pil                                         # the drive browser (docs/plans/2026-11-15-drive-browser.md): fls, fsstat, mmls, icat read a stored image, nothing is mounted; Pillow makes thumbnails
       mame)                                                        # mame -romident only, no gameplay
 # minipro: pinned upstream release. Bump deliberately: check its T48 support and changelog, and refresh

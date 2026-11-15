@@ -694,7 +694,15 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           limits, the service staying up while it works, a phone's 403), `test-dash.sh`: 271. Mutation checks, each fails a test.
           **Not on a real drive yet:** the 80 GB image's 200,331 entries should take about half a minute and about 15 MB of index.
           Read-only check at the Pi after the install: index it from the 7", then `ls -l /srv/gatbox/disks/_browse/`.
-    - [ ] F3 text search. Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
+    - [x] F3a built, 2026-11-15, **not installed** (stacked on F2): the text readers (`gatboxlib/browsetext.py`: text, HTML, PDF, Word,
+          Excel, PowerPoint, OpenDocument, ePub, and the old Office formats through catdoc) and the measurement script
+          `docs/plans/2026-11-15-drive-browser-f3.py`. **The bootstrap gains `catdoc`** (apt): `--check` lists it, and the owner reads
+          that diff and runs the bootstrap. `test-browse-text.sh`: 33, `test-drive-f3.sh`: 18, `test-bootstrap.sh`: 146; each of 13
+          breakages of them fails a test. Not tested here: a real `.doc`, `.xls` or `.ppt` (no tool to make one; catdoc is
+          stood in for), so the Pi's report is also the first sight of them.
+    - [ ] F3's report from the Pi, into the note's §3, then F3b. Run, with the dock idle (it reads the store's drive for ten minutes or
+          more): `sg gatbox-disk-queue -c 'python3 docs/plans/2026-11-15-drive-browser-f3.py'`
+    - [ ] F3b the text index, search and screen. Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4

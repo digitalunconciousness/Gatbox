@@ -257,6 +257,27 @@ def main():
     check("a second process writing while this one does: both finish, all 120 facts there", other.wait(60) == 0
           and len(lib.all("fact")) == 120)
 
+    print("\nthe file's mode (the Pi, 2026-11-14: gatbox-web could not write a 0644 file the owner made):")
+    old = os.umask(0o022)
+    try:
+        lib = fresh()
+        check("a new library made under umask 022 is group-writable (0664)", os.stat(lib.path).st_mode & 0o777 == 0o664)
+        held = lib._conn()                          # while a connection is open SQLite keeps its -wal and -shm beside the file
+        held.execute("INSERT OR REPLACE INTO meta VALUES ('mode-test', '1')")
+        side = [os.stat(lib.path + s).st_mode & 0o777 for s in ("-wal", "-shm")]
+        held.close()
+        check("... and so are the -wal and -shm SQLite makes beside it (they take the file's mode)", side == [0o664, 0o664])
+        os.chmod(lib.path, 0o644)
+        L.Library(lib.path)
+        check("a 0644 library its owner opens again is mended to 0664", os.stat(lib.path).st_mode & 0o777 == 0o664)
+        os.chmod(lib.path, 0o600)
+        L.Library(lib.path)
+        check("... and a stricter mode keeps its owner bits (0600 becomes 0660, not 0666)", os.stat(lib.path).st_mode & 0o777 == 0o660)
+        check("the library still works after that: a write and a read", lib.put("game", "mode-test", GAME, 0)["result"] == "created"
+              and lib.get("game", "mode-test")["data"]["title"] == "Widget Wars")
+    finally:
+        os.umask(old)
+
     print(f"\nlibrary: {passed} passed, {failed} failed")
 
 

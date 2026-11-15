@@ -86,6 +86,25 @@ check "--check reports hubs.d"                   'grep -q "/etc/gatbox/hubs.d (t
 WEBU="$REPO/backend/gatbox-web.service"
 check "tmpfiles creates the library folder 2775 root:gatbox-manuals" 'grep -qE "^d /srv/gatbox/library +2775 +root +gatbox-manuals" "$TMPF"'
 check "the bootstrap makes it, and --check reports it"  'grep -q "! -d /srv/gatbox/library" "$BOOT" && grep -q "/srv/gatbox/library (tmpfiles.d" "$BOOT"'
+# library.sqlite and the -wal/-shm beside it are written by two accounts, so they must be group-writable (the Pi, 2026-11-14: the
+# owner's file was 0644 and gatbox-web failed every write with "attempt to write a readonly database").
+check "tmpfiles makes library.sqlite* group-writable (0664, group gatbox-manuals), adjusting only what exists (z, not f)" \
+    'grep -qE "^z /srv/gatbox/library/library\.sqlite\* +0664 +- +gatbox-manuals" "$TMPF" && ! grep -qE "^f /srv/gatbox/library" "$TMPF"'
+if [ "$(id -u)" = 0 ] && command -v systemd-tmpfiles >/dev/null 2>&1; then
+    # The real line, run by systemd-tmpfiles against a scratch root: the three files change, the owner stays, a stranger is left alone.
+    R="$T/tmpf-root"; mkdir -p "$R/etc/tmpfiles.d" "$R/srv/gatbox/library"
+    printf 'root:x:0:0:root:/root:/bin/sh\n' > "$R/etc/passwd"; printf 'root:x:0:\ngatbox-manuals:x:983:\n' > "$R/etc/group"
+    grep -E "^(d|z) /srv/gatbox/library" "$TMPF" > "$R/etc/tmpfiles.d/t.conf"
+    for f in library.sqlite library.sqlite-wal library.sqlite-shm other.txt; do : > "$R/srv/gatbox/library/$f"; chmod 644 "$R/srv/gatbox/library/$f"; done
+    chown 1000:0 "$R/srv/gatbox/library/library.sqlite"
+    systemd-tmpfiles --root="$R" --create t.conf >/dev/null 2>&1
+    check "tmpfiles line, run for real: the three files become 0664 group 983, the owner is kept, other.txt is untouched" \
+        '[ "$(stat -c "%a %g" "$R/srv/gatbox/library/library.sqlite")" = "664 983" ] && [ "$(stat -c "%a %g" "$R/srv/gatbox/library/library.sqlite-wal")" = "664 983" ] \
+         && [ "$(stat -c "%a %g" "$R/srv/gatbox/library/library.sqlite-shm")" = "664 983" ] && [ "$(stat -c %u "$R/srv/gatbox/library/library.sqlite")" = 1000 ] \
+         && [ "$(stat -c %a "$R/srv/gatbox/library/other.txt")" = 644 ]'
+else
+    echo "  skip  the tmpfiles line run against a scratch root (needs root and systemd-tmpfiles)"
+fi
 check "gatbox-web may write there (and is in the group)" 'grep -qx "ReadWritePaths=-/srv/gatbox/library" "$WEBU" && grep -qx "SupplementaryGroups=gatbox-manuals" "$WEBU"'
 
 # Disk imaging's read-only tools (hdparm -I/-N, smartctl -i/-H). Installing the two packages has side effects that are

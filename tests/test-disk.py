@@ -473,6 +473,68 @@ def main():
     check("a read's realm is kept in its sidecar",
           json.load(open(info["stored"]["path"][:-4] + ".json"))["realm"] == "widget-hub")
 
+    print("progress while a long step runs (a stand-in ddrescue that takes its time and is noisy):")
+    import threading
+    blob = os.urandom(3 * MiB)
+    usb_disk("sda", len(blob), "WIDGET", "WIDGETDRIVE 1000", port=1, devnum="8:0", data=blob)
+    ticks, real_tick = [], g.Work.tick
+    g.Work.tick = lambda self, detail, progress: (ticks.append((self.current, detail, progress)), real_tick(self, detail, progress))[1]
+    g.POLL_S, g.TICK_S = 0.2, 0                     # the tool's own 2 s and 5 s, so that a 2 s stand-in shows several ticks
+    os.environ.update(FAKE_DDRESCUE_SLOW="2", FAKE_DDRESCUE_NOISE="1")
+    status, seen, ran = f"{T}/prog-status.json", [], {}
+
+    def long_read():
+        try:
+            ran["info"] = g.Read("sda", "widget-wars", "WW-PROG", "hdd", status=status, say=quiet).go()
+        except Exception as e:                      # reported by the check below
+            ran["error"] = e
+    th = threading.Thread(target=long_read, daemon=True)
+    th.start()
+    deadline = time.time() + 60                     # a read that never ends fails the check below instead of hanging the run
+    while th.is_alive() and time.time() < deadline:
+        try:
+            s = json.load(open(status))
+            seen.append((s["step"], s["progress"], s.get("detail", "")))
+        except (OSError, ValueError, KeyError):
+            pass
+        time.sleep(0.05)
+    th.join(1)
+    for k in ("FAKE_DDRESCUE_SLOW", "FAKE_DDRESCUE_NOISE"):
+        del os.environ[k]
+    reads = [t for t in ticks if t[0] == "read"]
+    check("a ddrescue that prints more than a pipe holds still finishes: its output goes to files, not to a pipe nobody reads",
+          not th.is_alive() and "info" in ran and "error" not in ran)
+    check("while ddrescue runs the bar moves: how much it has read, between the 5% it starts at and the 80% hashing starts at",
+          len(reads) >= 2 and all(0.05 < p < 0.78 for _, _, p in reads) and any("of 3 MB read from the drive" in d for _, d, _ in reads))
+    check("... and the status file the dashboard reads says so while it runs, not only at the end",
+          any(st == "read" and 0.05 < p < 0.78 and "read from the drive" in d for st, p, d in seen))
+    hashes = [t for t in ticks if t[0] == "hash"]
+    check("hashing ticks too, ending at 97% of the bar on a hard disk, and the bar never goes backwards",
+          hashes and hashes[-1][2] == 0.97 and hashes[-1][1] == "SHA-1 and SHA-256: 3 MB of 3 MB"
+          and [t[2] for t in ticks] == sorted(t[2] for t in ticks))
+    check("a tick is not a step: the job's list of steps stays short",
+          len(ran["info"]["steps"]) <= 6 and [s["step"] for s in ran["info"]["steps"]][:3] == ["identified", "read", "hash"])
+    usb_disk("sdb", 9 * MiB, "Generic", "Card Reader SD", port=4, devnum="8:16", data=os.urandom(9 * MiB))
+    del ticks[:]
+    g.Read("sdb", "widget-wars", "WW-FLASH", "sd", say=quiet).go()
+    check("a card is read twice, so its first hash ends at 85% and the second read goes on to 97%, the bar never going back",
+          [t for t in ticks if t[0] == "hash"][-1][2] == 0.85 and [t for t in ticks if t[0] == "second read"][-1][2] == 0.97
+          and len([t for t in ticks if t[0] == "second read"]) == 3 and [t[2] for t in ticks] == sorted(t[2] for t in ticks))
+    g.Work.tick = real_tick
+    g.POLL_S, g.TICK_S = 2.0, 5.0
+    w = g.Work(status=f"{T}/tick-status.json", say=quiet)
+    w.step("read", "x", progress=0.05)
+    w.tick("early", 0.3)
+    early = json.load(open(f"{T}/tick-status.json"))["progress"]
+    w._ticked -= 6
+    w.tick("later", 0.4)
+    later = json.load(open(f"{T}/tick-status.json"))
+    check("the status file is on the SD card: a tick right after another writes nothing, and one 5 s later does",
+          early == 0.05 and later["progress"] == 0.4 and later["detail"] == "later" and len(w.info["steps"]) == 1)
+    code, out = disk("read", "-d", "sda", "-m", "widget-wars", "-l", "WW-NOPE", "--media", "hdd", FAKE_DDRESCUE_EXIT="1")
+    check("a ddrescue that fails still reports why, from its own stderr", code == 2 and "ddrescue exited 1" in out
+          and "Can't open input file" in out)
+
     print("WRITE, what the audit of this path found (in-process):")
     import fcntl
 

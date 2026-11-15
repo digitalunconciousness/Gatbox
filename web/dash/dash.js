@@ -2989,6 +2989,9 @@
     fill.style.width = Math.round((s.progress || 0.02) * 100) + "%";
     bar.appendChild(fill); c.appendChild(bar);
     for (const x of (s.steps || []).slice(-4)) c.appendChild(el("div", "mut", `${x.step}${x.detail ? ": " + x.detail : ""}`));
+    // where a long step has got to (the job rewrites it every few seconds: how much is read, how much hashed)
+    const last = (s.steps || []).slice(-1)[0];
+    if (s.detail && !(last && last.detail === s.detail)) c.appendChild(el("div", "cy dk-live", s.detail));
     c.appendChild(el("div", "mut", st.queued ? "queued: starting…"
                                   : r.op === "write" ? "Leave both drives where they are until it's done."
                                   : "Leave the drive where it is until it's done."));

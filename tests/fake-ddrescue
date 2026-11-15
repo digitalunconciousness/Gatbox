@@ -7,12 +7,16 @@ standing in for the device. Driven by the environment:
     FAKE_DDRESCUE_MUTATE  1 = after copying, one byte of SRC changes (a card that reads differently twice)
     FAKE_DDRESCUE_LOG     a file each call's arguments are appended to, one line per call
     FAKE_DDRESCUE_EXIT    an exit code to fail with, before doing anything
+    FAKE_DDRESCUE_SLOW    seconds to take on a first pass: half the source is read, then it waits (a drive that takes its time,
+                          for the progress the job reports meanwhile: the real one's reads show in /proc/PID/io, and so do these)
+    FAKE_DDRESCUE_NOISE   1 = print 200 KB to stdout and to stderr first (a pipe nobody reads would stop it)
 
 It resumes like the real one: blocks the map already marks + are not read again. The map is written in GNU
 ddrescue's mapfile format (the manual's "Mapfile structure": comments, the status line, then "pos size status" in hex).
 """
 import os
 import sys
+import time
 
 args = sys.argv[1:]
 paths = [a for a in args if not a.startswith("-")]
@@ -26,6 +30,19 @@ if os.environ.get("FAKE_DDRESCUE_EXIT"):
 src, out, mapf = paths
 size = os.path.getsize(src)
 retry = any(o.startswith("-r") for o in opts)
+if os.environ.get("FAKE_DDRESCUE_NOISE") == "1":
+    for stream in (sys.stdout, sys.stderr):
+        stream.write(("ipos: 0 B, rescued: 0 B, current rate: 0 B/s\r" * 4000) + "\n")
+        stream.flush()
+if os.environ.get("FAKE_DDRESCUE_SLOW") and not retry:
+    with open(src, "rb", buffering=0) as s:
+        got = 0
+        while got < size // 2:
+            chunk = s.read(min(1 << 20, size // 2 - got))
+            if not chunk:
+                break
+            got += len(chunk)
+    time.sleep(float(os.environ["FAKE_DDRESCUE_SLOW"]))
 
 
 def bad_areas():

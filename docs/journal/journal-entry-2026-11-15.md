@@ -28,6 +28,15 @@
 - The first real READ, from the terminal: the 80 GB WD800JD, one pass, 100% rescued, no bad areas, 77 minutes (45 to read at
   about 30 MB/s, 32 to hash it back off the store), no kernel messages, no throttling. The drive is a Linux system disk: a
   bootable ext4 partition and a swap, behind a DOS partition table.
+- A second READ of the same drive, started from the 7″ for the machine "simpsons", showed what the first one hid: the bar sat at
+  5% through the whole ddrescue pass and at 80% through the whole hash, 45 and 32 minutes of a 7″ that looked hung. `gatbox-disk`
+  set a percentage when a step began and said nothing more until the next one. It now reports where it is: during the first
+  ddrescue pass, the bytes ddrescue has read (`rchar` in `/proc/PID/io`, because ddrescue saves its map only every five minutes), and
+  during a hash, the bytes hashed, each at most every five seconds and as a line under the bar ("55.4 GB of 80.0 GB read from the
+  drive"). A retry only says it is still going. ddrescue's own output now goes to unlinked files beside the image, not a pipe
+  nobody reads. Not changed: the same gap exists in WRITE (the pre-hash, the write loop, the two read-backs), which is the
+  audited path and was not part of what was reported. Also not changed, and the owner's call: the duplicate check looks only in
+  the image's own machine folder, so that second read stores a second 75 GB copy beside the one under `unassigned`.
 - What to do with the images: the owner wants to browse them, see photos and documents, and search, for her non-arcade drives
   too. `docs/plans/2026-11-15-drive-browser.md` is the design, OK'd with all seven decisions as recommended: read-only through
   sleuthkit with nothing mounted, in a sandboxed service with no network, on the Pi's own screen only, an index on the store that

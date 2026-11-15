@@ -31,6 +31,7 @@ BROWSE_DIR = os.environ.get("GATBOX_BROWSE_DIR", os.path.join(dl.DISKS, "_browse
 DISK_SPOOL = os.environ.get("GATBOX_DISK_SPOOL", "/var/spool/gatbox-disk")
 TSK = ("mmls", "fsstat", "fls", "icat")                 # the only programs that ever open an image
 PDF_TOOLS = ("pdfinfo", "pdftoppm")                     # they read a copy in the cache, never the image
+TEXT_TOOLS = ("pdftotext", "catdoc", "xls2csv", "catppt")   # the text readers (browsetext.py), on a copy of a file as well
 MiB = 1 << 20
 PREVIEW_CAP = 64 * MiB                                  # the most read out of an image for one preview
 TEXT_CAP = 64 * 1024
@@ -72,7 +73,7 @@ def run(argv, timeout, cap=None, stdout=None):
     """One sleuthkit or poppler tool. Returns (exit code, stdout bytes, stderr text). Killed at `timeout` (Err 504). With
     cap, output past that many bytes is cut and the process is stopped (the tool itself is not at fault). With stdout=a
     file object, the output goes there instead of into memory and the byte count is returned in place of the bytes."""
-    if argv[0] not in TSK + PDF_TOOLS:
+    if argv[0] not in TSK + PDF_TOOLS + TEXT_TOOLS:
         raise Err(500, f"refusing to start {argv[0]}")
     with _sem:
         p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env(), start_new_session=True)

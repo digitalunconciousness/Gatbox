@@ -56,6 +56,17 @@
   pass had not written any yet, which a mutation check caught; and asking for the index's state created the index file and started
   a worker, which now does neither unless there is work. And on the screen, SEARCH showed the results from before an image was
   removed from the index until a new search was typed.
+- F3a of the browser, the text readers and the measurement, built and not installed. The readers pull text out of plain files,
+  HTML, PDFs, the zipped Office, OpenDocument and ePub formats and, through catdoc (a new package in the bootstrap), the old
+  Word, Excel and PowerPoint ones. They are written to refuse: no XML parser, a limit on parts and on how far a zip may expand,
+  a password-protected part refused, every program through the one runner with a time limit and the whole process group killed. A
+  file that cannot be read says why in one of seven words, so a search that finds nothing can say how much was not read. The
+  measurement script is the F3 step the note asked for before promising an indexing time: it reads 200 random documents out of an
+  image three times, in random, inode and random order again, and projects the time for the whole volume. The same lesson as in F1
+  came back in it: a timed-out `icat` held the pipe through a grandchild, so the script kills the whole group, and a test with a
+  stand-in that sleeps found it by hanging. Two of my first tests were also wrong: a zip's "password" bit is reset by Python's own
+  writer, so the test sets it in the bytes, and a check for "too many parts" passed on a zip that was refused for having no
+  document part. F3b, the index and the screen, waits for her numbers.
 - Not done: a first READ from the 7″ and any WRITE on real media; the hidden-area question; the cab-side checks in
   the procedure's 5.4 are the owner's. Task 3 (the MAME check on an image) still waits on a `chdman` output. The deck
   does not record the device letter, the two hash passes with their times, or a write's time and speed, so those lines of

@@ -129,6 +129,8 @@ PATH="$FB:$PATH" bash "$BOOT" --check > "$T/check-none" 2>&1
 check "--check tells a Pi without them to install both"   'grep -q "install    package hdparm" "$T/check-none" && grep -q "install    package smartmontools" "$T/check-none"'
 check "--check tells a Pi without sleuthkit and python3-pil to install both" \
     'grep -q "install    package sleuthkit" "$T/check-none" && grep -q "install    package python3-pil" "$T/check-none"'
+check "the package list names catdoc (the drive browser's text search reads old Office files with it)" 'grep -qw catdoc <<<"$PKGLINES"'
+check "--check tells a Pi without catdoc to install it" 'grep -q "install    package catdoc" "$T/check-none"'
 check "--check tells a Pi with smartd enabled to disable it" 'grep -q "disable    smartd (smartmontools.service)" "$T/check-none"'
 printf '#!/bin/sh\nprintf "install ok installed"\n' > "$FB/dpkg-query" # every package is installed
 printf '#!/bin/sh\ncase "$*" in *smartmontools*) exit 1;; esac\nexit 0\n' > "$FB/systemctl"   # smartd is off

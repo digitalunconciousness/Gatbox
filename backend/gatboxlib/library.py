@@ -332,6 +332,24 @@ class Library:
                     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 """)
                 c.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        self._share()
+
+    def _share(self):
+        """Make the database group-writable, whatever umask made it.
+
+        Two accounts write this file: the owner's `gatbox-library` and gatbox-web (a different account, in the folder's
+        group). A file made under the usual umask 022 is 0644, and the second account then fails every write with "attempt to
+        write a readonly database". SQLite gives the -wal and -shm it makes beside the file the file's own mode, so this is
+        enough for all three. Only an owner can change a mode, so this mends what this account made and leaves the rest to
+        the tmpfiles line for /srv/gatbox/library/library.sqlite*.
+        """
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                mode = os.stat(self.path + suffix).st_mode & 0o7777
+                if mode & 0o060 != 0o060:
+                    os.chmod(self.path + suffix, mode | 0o060)
+            except OSError:
+                pass
 
     def _conn(self):
         c = sqlite3.connect(self.path, timeout=15, isolation_level=None)

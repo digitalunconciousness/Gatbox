@@ -780,6 +780,15 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         5. The MANIFEST lines already in the bootstrap: `library.py`, `libview.py`, `seed.py`, `libsource.py`,
            `games.py`, `rom_check.py`, `titles.py`, `manual_request.py`, `gatbox-library`, and the title list build
            (`/usr/local/share/gatbox/mame-titles.json`, from `mame -listxml` once per MAME version)
+  - [x] The library file's mode, 2026-11-15, from the Pi's journal: gatbox-sync's `PUT /api/library/sync/records` returned HTTP 500
+        `attempt to write a readonly database`, and the 7" could not have saved an added game either. `ls -ln` showed
+        `library.sqlite` owned by the owner's account, mode **0644**, group 983 (the folder's setgid group), so gatbox-web
+        (a different account, in that group) could read it and not write it; the `-wal` and `-shm` gatbox-web made beside it
+        copied the 0644. Nothing ever set a mode: the unit gave gatbox-web the group and the folder, the file kept whatever
+        umask made it. Two fixes, tests for each (`test-library.sh` 66, `test-bootstrap.sh` 111): `Library` makes its file
+        group-writable whatever the umask (`_share`, and a 0644 file its owner opens again is mended), and tmpfiles gets
+        `z /srv/gatbox/library/library.sqlite* 0664 - gatbox-manuals -`, which mends the files that exist now when the bootstrap
+        next runs (and at each boot). **System config: the owner reads that one line before running the bootstrap (hard rule 5).**
   - [ ] ⏸ Owner: review the seed plan after B2; see the install diff before anything is installed
 - **Phase D, the archive (branch `phase-d-archive`, stacked on `phase-b-library`, from 2026-11-04):** spec
   `docs/plans/2026-11-04-phase-d-archive.md`, approved by the owner ("OK as written"; it covers the code and the push,

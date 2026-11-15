@@ -17,7 +17,8 @@ The spec is docs/plans/2026-11-02-disk-imaging.md. What the 2026-11-02 swap done
     call: an old drive's spin-ups) runs ddrescue -r3 on the same map. Flash media (CF, SD, SSD) is read a second
     time with O_DIRECT and must hash the same. The image is <label>_<YYYYmmdd>_<sha1:8>.img beside its map and its
     .json sidecar, and the same bytes are never stored twice. Each new image is queued for the archive.
-  * TARGET CHECK: big enough, 512-byte sectors, not the image's own source drive, and what's on it now (read-only):
+  * TARGET CHECK: big enough, 512-byte sectors, not the image's own source drive (by the drive's own serial when both
+    have one, else by make, size and what is on it: a new card of the same size is a different card), and what's on it now (read-only):
     a partition table or filesystem, or anything but zeros (or 0xFF) in the first 64 MiB. Arcade cards are raw, with no
     table and no filesystem, and sector 0 can be empty while the game starts further in. The first 64 MiB are also
     fingerprinted (non-zero bytes and a hash) and read again at write time: a different card swapped in is refused.
@@ -294,6 +295,12 @@ class Read(Work):
         self.step("hash", "SHA-1 and SHA-256", progress=0.8)
         sha1, sha256 = hashed_read(part, size, sha256=True)
         self.info.update(sha1=sha1, sha256=sha256, bytes=size, reads=1)
+        fd = os.open(part, os.O_RDONLY)          # the image's own first 64 MiB: no second look at a fragile source drive
+        try:
+            scan = scan_head(fd)
+        finally:
+            os.close(fd)
+        self.info["fingerprint"] = {"bytes": scan["bytes"], "nonzero": scan["nonzero"], "sha1": scan["sha1"]}
         if self.media in FLASH:
             self.step("second read", "flash: the whole card again, past the cache", progress=0.85)
             again = hashed_read(d["node"], size)
@@ -376,6 +383,7 @@ class Read(Work):
         i = self.info
         return {"label": i["label"], "machine": i["machine"], "realm": i.get("realm"), "media": i["media"],
                 "source": i["source"], "bytes": i["bytes"], "sha1": i["sha1"], "sha256": i["sha256"],
+                "fingerprint": i.get("fingerprint"),
                 "ddrescue": i["ddrescue"], "passes": i.get("passes", []), "reads": i["reads"],
                 "identical": i.get("identical"),
                 "mame": {"state": "not run", "why": "the MAME CHD check comes with Task 3"},
@@ -531,16 +539,20 @@ def check(image, device, say=print, expect=None):
     if ident["logical"] != SECTOR:
         raise Stop(f"{d['name']} has {ident['logical']}-byte sectors", "the IDE2SAT2 needs 512-byte sectors")
     src = side.get("source") or {}
-    if src.get("model") == ident["model"] and src.get("vendor") == ident["vendor"] and (
-            (src.get("serial") and src.get("serial") == ident.get("serial"))
-            or (not (src.get("serial") and ident.get("serial")) and src.get("bytes") == ident["bytes"])):
-        raise Stop("this is the drive the image came from", "same model and " + (
-            "serial" if src.get("serial") else "size") + ": put the new drive on the dock")
+    head = min(size, HEAD_SCAN)
+    same_head = hashed_read(d["node"], head) == hashed_read(img, head)       # the target starts with the image's own bytes
+    # "This is the drive the image came from." The drive's own serial decides when both sides have one. Without, the make
+    # and size cannot (a new card of the same make and size looks the same on the dock, and the dock names itself), so
+    # what is on it does: the original reads like the image, a new card does not.
+    if src.get("model") == ident["model"] and src.get("vendor") == ident["vendor"]:
+        both = src.get("serial") and ident.get("serial")
+        if (src["serial"] == ident["serial"]) if both else (src.get("bytes") == ident["bytes"] and same_head):
+            raise Stop("this is the drive the image came from",
+                       "same model and serial: put the new drive on the dock" if both else
+                       "same make and size, and it starts with the image's own bytes (the original, or a copy that already "
+                       "holds it): put the new drive on the dock")
     c = contents(d["node"], ident["logical"])
-    head = min(size, 1 << 20)
-    already = False
-    if hashed_read(d["node"], head) == hashed_read(img, head):
-        already = hashed_read(d["node"], size) == side.get("sha1")
+    already = same_head and hashed_read(d["node"], size) == side.get("sha1")
     result = {"op": "check", "target_ok": True, "image": img, "sha1": side.get("sha1"), "bytes": size,
               "device": d["name"], "identity": ident, "contents": c, "needs_ack": not c["blank"],
               "already_written": already, "at": round(time.time(), 3)}

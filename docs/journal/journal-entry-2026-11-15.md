@@ -25,7 +25,16 @@
   ticking themselves from the live drive list), RECORDS (her Appendix B, filled in from the sidecar, `writes.jsonl` and the
   cab checklist) and the CF adapter's +5 V only warning. The first version of SWAP took any drive already on the dock for
   the new one; the browser test caught it, and it now remembers what was on the list when the swap began.
-- Not done: a first READ and a first WRITE from the 7″ on real media; the hidden-area question; the cab-side checks in
+- The first real READ, from the terminal: the 80 GB WD800JD, one pass, 100% rescued, no bad areas, 77 minutes (45 to read at
+  about 30 MB/s, 32 to hash it back off the store), no kernel messages, no throttling. The drive is a Linux system disk: a
+  bootable ext4 partition and a swap, behind a DOS partition table.
+- What to do with the images: the owner wants to browse them, see photos and documents, and search, for her non-arcade drives
+  too. `docs/plans/2026-11-15-drive-browser.md` is the design, OK'd with all seven decisions as recommended: read-only through
+  sleuthkit with nothing mounted, in a sandboxed service with no network, on the Pi's own screen only, an index on the store that
+  can be deleted without loss. Checking it showed that nothing reads `archive-queue.jsonl`, so no disk image has been sent
+  anywhere. A real filesystem UUID from one of her drives had also ended up in two tests; it is replaced by an invented one.
+  F0, the facts script and the packages, is built and waits for the owner to run the bootstrap and the script.
+- Not done: a first READ from the 7″ and any WRITE on real media; the hidden-area question; the cab-side checks in
   the procedure's 5.4 are the owner's. Task 3 (the MAME check on an image) still waits on a `chdman` output. The deck
   does not record the device letter, the two hash passes with their times, or a write's time and speed, so those lines of
   Appendix B stay blank on the record.

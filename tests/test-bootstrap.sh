@@ -113,6 +113,8 @@ check "gatbox-web may write there (and is in the group)" 'grep -qx "ReadWritePat
 # platform-xhci-hcd, so it would not skip the dock).
 PKGLINES=$(sed -n '/^PKGS=(/,/^      mame)/p' "$BOOT")
 check "the package list names hdparm and smartmontools"   'grep -qw hdparm <<<"$PKGLINES" && grep -qw smartmontools <<<"$PKGLINES"'
+# The drive browser (docs/plans/2026-11-15-drive-browser.md) lists the files in a stored image with sleuthkit and makes thumbnails with Pillow.
+check "the package list names sleuthkit and python3-pil (the drive browser)" 'grep -qw sleuthkit <<<"$PKGLINES" && grep -qw python3-pil <<<"$PKGLINES"'
 check "the hdparm udev rule is masked by a same-named /etc file" \
     'grep -qE "^bootstrap/files/85-hdparm-off\.rules +/etc/udev/rules\.d/85-hdparm\.rules +644" "$BOOT"'
 check "and that file exists and holds no rule, only comments" \
@@ -125,6 +127,8 @@ printf '#!/bin/sh\nexit 0\n' > "$FB/systemctl"                        # every un
 chmod +x "$FB/dpkg-query" "$FB/systemctl"
 PATH="$FB:$PATH" bash "$BOOT" --check > "$T/check-none" 2>&1
 check "--check tells a Pi without them to install both"   'grep -q "install    package hdparm" "$T/check-none" && grep -q "install    package smartmontools" "$T/check-none"'
+check "--check tells a Pi without sleuthkit and python3-pil to install both" \
+    'grep -q "install    package sleuthkit" "$T/check-none" && grep -q "install    package python3-pil" "$T/check-none"'
 check "--check tells a Pi with smartd enabled to disable it" 'grep -q "disable    smartd (smartmontools.service)" "$T/check-none"'
 printf '#!/bin/sh\nprintf "install ok installed"\n' > "$FB/dpkg-query" # every package is installed
 printf '#!/bin/sh\ncase "$*" in *smartmontools*) exit 1;; esac\nexit 0\n' > "$FB/systemctl"   # smartd is off

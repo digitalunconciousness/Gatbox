@@ -22,7 +22,8 @@
 # What it does:
 #   1  packages: sigrok-cli, python3-matplotlib, python3-qrcode (scanner labels), rsync, git, curl, util-linux-extra (hwclock), the minipro build
 #      deps, mame (for `mame -romident` only), hdparm + smartmontools (disk imaging: read-only queries for a drive's own
-#      model, serial, geometry and size through the dock; smartd is switched off and hdparm's udev rule masked, see step 1).
+#      model, serial, geometry and size through the dock; smartd is switched off and hdparm's udev rule masked, see step 1),
+#      sleuthkit + python3-pil (the drive browser: reading the files inside a stored image, never mounting it).
 #      apt is skipped entirely when they're all present.
 #   2  removes ModemManager (hijacks ttyUSB0) and brltty (grabs USB-serial adapters)
 #   3  groups (dialout, plugdev, gpio, i2c, spi, video) for your user; I2C + SPI on; hostname catbox/raspberrypi -> gatbox
@@ -154,6 +155,7 @@ PKGS=(sigrok-cli python3-matplotlib python3-qrcode rsync git curl util-linux-ext
       poppler-utils                                                 # pdftoppm / pdftotext / pdfinfo: the manuals viewer
       hdparm smartmontools                                          # disk imaging: hdparm -I/-N and smartctl -i/-H, run on demand
       gddrescue                                                     # ddrescue: the disk job's READ (mame-tools comes with Task 3)
+      sleuthkit python3-pil                                         # the drive browser (docs/plans/2026-11-15-drive-browser.md): fls, fsstat, mmls, icat read a stored image, nothing is mounted; Pillow makes thumbnails
       mame)                                                        # mame -romident only, no gameplay
 # minipro: pinned upstream release. Bump deliberately: check its T48 support and changelog, and refresh
 # bootstrap/files/minipro-<tag>/ (its udev rules, which its `make install` skips on Pi OS) at the same time.

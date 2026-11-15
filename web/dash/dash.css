@@ -193,6 +193,46 @@ div.dk-tick{border:1px solid var(--line);border-radius:8px;background:var(--pane
   align-items:center;justify-content:center;color:var(--ok);font:600 20px/1 var(--disp)}
 .dk-tick.done{border-color:rgba(94,242,176,.55)}
 .dk-tick.done .dk-box{border-color:var(--ok)}
+/* DRIVE INFO, the CF adapter's warning, the swap's steps, the job record */
+.dk-infobox{margin:8px 0 4px}
+.dk-infocard{border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:8px 12px;margin:8px 0}
+.dk-infocard>b{font:600 17px/1.2 var(--disp);letter-spacing:.04em;margin-right:8px}
+dl.dk-info{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 16px;margin:6px 0 2px}
+dl.dk-info dt{color:var(--mut)}
+dl.dk-info dd{margin:0}
+.dk-note{color:var(--mut);margin:6px 0 0}
+.dk-cf{border:1px solid var(--warn);border-radius:8px;padding:8px 12px;margin:8px 0}
+.dk-cf h3{color:var(--warn);margin:0 0 4px}
+.dk-step{display:flex;align-items:center;gap:12px;width:100%;text-align:left;margin:4px 0;padding:8px 12px;border:1px solid var(--line);
+  border-radius:8px;background:var(--panel);font:15px/1.35 var(--mono)}
+button.dk-step{min-height:var(--tap)}
+.dk-step .dk-t{flex:1;min-width:0}
+.dk-step.now{border-color:var(--cyan)}
+.dk-step.done{border-color:rgba(94,242,176,.55)}
+.dk-step.done .dk-box{border-color:var(--ok)}
+.dk-step.bad{border-color:var(--bad)}
+.dk-step.bad .dk-box{border-color:var(--bad);color:var(--bad)}
+.dk-step.warn{border-color:var(--warn)}
+.dk-step.todo{border-style:dashed}
+table.dk-rt{width:100%;border-collapse:collapse;margin:0 0 6px}
+.dk-rt th,.dk-rt td{text-align:left;vertical-align:top;padding:5px 8px;border-top:1px solid var(--line);font-weight:400}
+.dk-rt th{width:38%;color:var(--mut)}
+.dk-blank{color:var(--mut);font-style:italic}
+button.dk-recrow{display:block;width:100%;text-align:left;margin:6px 0;min-height:64px}
+button.dk-recrow b{font:600 17px/1.2 var(--disp)}
+/* PRINT OR SAVE AS PDF on a phone: only the record, black on white, a blank rule where the deck has no value */
+@media print{
+  body.dk-printing{display:block;height:auto;overflow:visible;background:#fff;color:#000;font-size:12pt}
+  body.dk-printing::before,body.dk-printing header,body.dk-printing nav,body.dk-printing .view:not(#v-disk),
+  body.dk-printing #dk-body>*:not(.dk-rec),body.dk-printing .dk-noprint{display:none!important}
+  body.dk-printing #v-disk{display:block!important;position:static;height:auto;overflow:visible;padding:0}
+  body.dk-printing .dk-rec{border:0;background:none;box-shadow:none;padding:0}
+  body.dk-printing .dk-rec h2,body.dk-printing .dk-rec h3{color:#000}
+  body.dk-printing .dk-rt th,body.dk-printing .dk-rt td{border-top:1px solid #999;color:#000}
+  body.dk-printing .dk-rt .mut,body.dk-printing .dk-rt th{color:#444}
+  body.dk-printing .dk-rt .ok,body.dk-printing .dk-rt .bad{color:#000}
+  body.dk-printing .dk-blank{color:transparent;display:inline-block;min-width:60%;border-bottom:1px solid #000}
+}
 /* CHECK: each comparison as a word and a level, then the marks */
 .ck-row{margin:8px 0}
 .ck-row .badge{margin-right:6px}

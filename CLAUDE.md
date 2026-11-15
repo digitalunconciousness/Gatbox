@@ -157,13 +157,16 @@ Bring-up done 2026-09-23 (BRINGUP.md "Bring-up 1/2"). Phase 0 and Phase 1 (rail 
 first cabinet log 2026-09-25 (Gauntlet Legends). **Phase 2 started 2026-09-28**: progress checklist in BRINGUP.md.
 M0–M7 done 2026-09-29 (the first real burn from the 7″ that evening); M8 on hold.
 
-**Disk imaging (phase D2), branch `disk-imaging`, built 2026-11-03, not installed.** Hard disks, CF and SD cards on the
+**Disk imaging (phase D2), built 2026-11-03, installed on the Pi 2026-11-14.** Hard disks, CF and SD cards on the
 USB dock or a reader: READ into the image store, TARGET CHECK, WRITE from the 7″ (a hold arms it, two read-backs verify
 it), the swap checklist. Spec: `docs/plans/2026-11-02-disk-imaging.md`; progress: BRINGUP.md. `gatbox-disk` (a CLI
-and the job), `gatboxlib/disks.py` and gatbox-web's `/api/disk` + the DISK tab are in the repo; the units, the udev rule,
-the sysusers and tmpfiles entries and the store's mount unit are in the MANIFEST as of Task 4 (2026-11-14) and install with
-the bootstrap once the owner has read that diff (hard rule 5). Until then the DISK tab lists the USB drives and says the
-image store isn't connected and the disk service isn't installed. The store's UUID is site config in
+and the job), `gatboxlib/disks.py` and gatbox-web's `/api/disk` + the DISK tab; the units, the udev rule, the sysusers and
+tmpfiles entries and the store's mount unit install with the bootstrap. The 4 TB drive is the image store and is mounted;
+as of 2026-11-15 no READ or WRITE has been run from the 7″ on real media. The DISK tab also has DRIVE INFO (what udev kept
+from the drive's own IDENTIFY, plus sysfs), SWAP (the procedure's steps, ticking themselves from the live drive list), RECORDS
+(the bench procedure's job record) and the CF adapter's +5 V warning. None of them sends anything to a drive. **This dock's
+bridge hangs on SMART and native-max commands and resets the USB device** (`hdparm -N`, smartd's SMART ENABLE: the Pi,
+2026-11-14), so nothing here asks a drive behind it for them; `hdparm -I` works. The store's UUID is site config in
 `/etc/gatbox/disks.conf` (git-ignored territory, like `hub.conf`). Facts about the dock and the store (USB IDs, serials, what
 the bridge passes through) come from Task 0's output, never from a guess.
 `hdparm` and `smartmontools` are installed by the bootstrap, with smartd disabled and hdparm's own udev rule masked

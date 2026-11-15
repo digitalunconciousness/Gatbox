@@ -28,7 +28,7 @@ class FakeDisks:
         open(f"{self.store}/.gatbox-image-store", "w").write("GATBOX image store\n")
 
     def usb_disk(self, name, nbytes, vendor, model, port, vid="1234", pid="5678", logical=512, devnum="8:0", parts=(),
-                 data=None, driver="uas", ata=None, udev=None):
+                 data=None, driver="uas", ata=None, udev=None, physical=None, rotational=True):
         """A whole disk behind a USB bridge, as the kernel lays it out, and a plain file of NBYTES standing in for it.
         VENDOR and MODEL are the INQUIRY (the bridge's). `ata=(model, serial)` is a drive that passed its own IDENTIFY
         through (udev says ID_BUS=ata); `udev={...}` writes any other properties (a reader's own serial on a USB bus)."""
@@ -63,7 +63,8 @@ class FakeDisks:
         open(f"{blk}/dev", "w").write(devnum + "\n")
         open(f"{blk}/removable", "w").write("0\n")
         open(f"{blk}/queue/logical_block_size", "w").write(f"{logical}\n")
-        open(f"{blk}/queue/rotational", "w").write("1\n")
+        open(f"{blk}/queue/physical_block_size", "w").write(f"{physical or logical}\n")
+        open(f"{blk}/queue/rotational", "w").write("1\n" if rotational else "0\n")
         major, minor = devnum.split(":")
         for i, _ in enumerate(parts, 1):
             os.makedirs(f"{blk}/{name}{i}")

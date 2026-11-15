@@ -302,6 +302,100 @@ def tick(body):
     return checklist(write_id)
 
 
+# --- the job record -----------------------------------------------------------------------------------------------------
+# The bench procedure's Appendix B ("Job record"), filled in from what the deck wrote down: the image's sidecar, the store's
+# writes.jsonl and the swap checklist. A line the deck does not know stays blank (value None) to be written in by hand.
+# Times go out as epochs, for the browser to show in its own zone.
+def _row(label, value=None, at=None, ok=None):
+    return {"label": label, "value": value, "at": at, "ok": ok}
+
+
+def _took(start, end):
+    if not (isinstance(start, (int, float)) and isinstance(end, (int, float))) or end < start:
+        return None
+    s = int(round(end - start))
+    return f"{s // 60} min {s % 60:02d} s" if s >= 60 else f"{s} s"
+
+
+def _drive_text(i):
+    i = i or {}
+    name = f"{i.get('vendor') or ''} {i.get('model') or ''}".strip()
+    if not name:
+        return None
+    return " · ".join(x for x in (name, f"serial {i['serial']}" if i.get("serial") else None,
+                                  f"{i['bytes']:,} bytes" if isinstance(i.get("bytes"), int) else None,
+                                  f"{i['logical']}-byte sectors" if i.get("logical") else None) if x)
+
+
+def _contents_text(c):
+    if not isinstance(c, dict):
+        return None
+    if c.get("blank"):
+        return "blank"
+    if c.get("table"):
+        n = len(c.get("partitions") or [])
+        return f"a {c['table']} partition table with {n} partition{'' if n == 1 else 's'}"
+    if c.get("fs"):
+        return f"a {c['fs']} filesystem on the whole drive"
+    return "no signatures, but not empty"
+
+
+def record(rel):
+    """GET /api/disk/record?image=REL: the job record of one stored image, as sections of rows."""
+    _store()
+    side = dl.sidecar(rel)
+    if side is None:
+        raise Bad(404, f"not an image in the store: {rel!r}")
+    dd, fp = side.get("ddrescue") or {}, side.get("fingerprint") or {}
+    reads = side.get("reads")
+    started, finished = side.get("started"), side.get("finished")
+    passes = side.get("passes") or []
+    arch = (side.get("archive") or {}).get("state")
+    read = [_row("Date and machine", side.get("machine") or "unassigned", started),
+            _row("Source media", _drive_text(side.get("source")) or None),
+            _row("What it is", {"hdd": "hard disk", "cf": "CF card", "sd": "SD card", "ssd": "SSD"}.get(side.get("media"), side.get("media"))),
+            _row("Fingerprint, first 64 MiB (non-zero bytes)", f"{fp['nonzero']:,}" if isinstance(fp.get("nonzero"), int) else None),
+            _row("ddrescue", (f"{dd['rescued_pct']}% rescued · {dd['bad_areas']} bad area{'' if dd['bad_areas'] == 1 else 's'}"
+                              f" · {dd['bad_bytes']:,} bytes not read") if dd else None, ok=bool(dd.get("complete")) if dd else None),
+            _row("Passes", (f"{len(passes)} ddrescue pass{'' if len(passes) == 1 else 'es'}"
+                            + (", read twice and both match" if reads == 2 else ", read once")) if passes else None),
+            _row("Read took", _took(started, finished)),
+            _row("Image file", rel),
+            _row("Image bytes", f"{side['bytes']:,}" if isinstance(side.get("bytes"), int) else None),
+            _row("Image SHA-256", side.get("sha256")), _row("Image SHA-1", side.get("sha1")),
+            _row("Copied to the archive", {"pending": "queued, not sent yet", "uploaded": "in the archive"}.get(arch, arch)),
+            _row("Notes", side.get("note") or None)]
+    sections = [{"title": "THE READ", "rows": read}]
+
+    mine = [w for w in dl.writes() if w.get("sha1") and w.get("sha1") == side.get("sha1")][::-1][:6]
+    wrows = []
+    for w in mine:
+        ok = w.get("state") == "verified"
+        wrows.append(_row("Write" + (" (verify only)" if w.get("verify_only") else ""),
+                          "verified: read back twice, both equal the image" if ok
+                          else "stopped" + (f": {w['error']}" if w.get("error") else "") + (", part of the image was written" if w.get("written") else ", nothing was written"),
+                          w.get("epoch"), ok))
+        wrows.append(_row("Target media", _drive_text(w.get("target"))))
+        if w.get("contents") is not None:
+            wrows.append(_row("On the target before", _contents_text(w.get("contents")) + (", overwrite acknowledged" if w.get("ack") else "")))
+        if isinstance(w.get("untouched_bytes"), int) and ok:
+            wrows.append(_row("Beyond the image, left as it was", f"{w['untouched_bytes']:,} bytes"))
+    sections.append({"title": "WRITTEN TO A DRIVE", "rows": wrows or [_row("Written to a drive", None)]})
+
+    b = _book()
+    lists = sorted(((k, v) for k, v in b.items() if (v or {}).get("image") == rel), key=lambda kv: kv[1].get("at") or 0, reverse=True)
+    write_id = lists[0][0] if lists else None
+    ticks = (lists[0][1].get("items") or {}) if lists else {}
+    cab = []
+    for when, key, text in CHECKLIST:
+        t = ticks.get(key) or {}
+        cab.append(_row(("Before: " if when == "before" else "After: ") + text, "done" if t.get("done") else None, t.get("at") if t.get("done") else None,
+                        True if t.get("done") else None))
+    sections.append({"title": "IN THE CAB", "rows": cab})
+    return {"image": rel, "label": side.get("label"), "machine": side.get("machine"), "writes": len(mine),
+            "checklist": write_id, "sections": sections}
+
+
 def watch():
     """Relay the job's progress: an SSE 'disk' event whenever the spool changes."""
     def loop():

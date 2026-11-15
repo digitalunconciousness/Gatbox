@@ -75,6 +75,44 @@ def own_identity(props):
     return (model, props.get("ID_SERIAL_SHORT") or None) if model else None
 
 
+# What udev's ata_id kept from the drive's own IDENTIFY (it asked once, when the drive appeared), as DRIVE INFO shows it:
+# udev key -> label. A key that isn't there is not shown: nothing is guessed, and nothing more is sent to the drive. The
+# dock hangs on SMART and native-max commands (the Pi, 2026-11-14), so those are never asked for.
+FEATURES = (("ID_ATA_FEATURE_SET_HPA", "Host Protected Area"), ("ID_ATA_FEATURE_SET_SMART", "SMART"),
+            ("ID_ATA_FEATURE_SET_PM", "Power management"), ("ID_ATA_FEATURE_SET_APM", "Advanced power management"),
+            ("ID_ATA_FEATURE_SET_AAM", "Acoustic management"), ("ID_ATA_FEATURE_SET_SECURITY", "ATA security"))
+
+
+def _num(text):
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def drive_info(props, real, ident):
+    """DRIVE INFO for one disk: what its IDENTIFY said through udev (only when ident['by'] is 'ata') and what the kernel
+    knows (sectors, physical sector size, whether it spins). Plain reads of /run/udev/data and sysfs: no device is opened
+    and no command is sent to the drive."""
+    own = ident.get("by") == "ata"
+    info = {"identify": own, "sectors": ident["bytes"] // 512 if ident["bytes"] else 0, "logical": ident["logical"],
+            "physical": _num(read_file(os.path.join(real, "queue", "physical_block_size"))),
+            "rotational": read_file(os.path.join(real, "queue", "rotational")) == "1",
+            "firmware": None, "rpm": None, "sata_gen": None, "write_cache": None, "features": []}
+    if own:
+        info["firmware"] = props.get("ID_REVISION") or None
+        info["rpm"] = _num(props.get("ID_ATA_ROTATION_RATE_RPM"))          # 0 = not a spinning disk (a CF card, an SSD)
+        gens = [g for g in (3, 2, 1) if props.get(f"ID_ATA_SATA_SIGNAL_RATE_GEN{g}") == "1"]
+        info["sata_gen"] = gens[0] if gens else None
+        if "ID_ATA_WRITE_CACHE" in props:
+            info["write_cache"] = props.get("ID_ATA_WRITE_CACHE_ENABLED") == "1"
+        for key, label in FEATURES:
+            if props.get(key) == "1":
+                info["features"].append({"name": label, "enabled": props.get(key + "_ENABLED") == "1"
+                                         if key + "_ENABLED" in props else None})
+    return info
+
+
 def _usb_parent(real):
     """The USB device (the dock's or reader's bridge) above a disk in sysfs: (vid:pid, its driver), or None."""
     d = real
@@ -109,11 +147,12 @@ def disks():
         where = [mp for num, mp in mtab if num in devnums]
         ident = {"vendor": read_file(os.path.join(real, "device", "vendor")),
                  "model": read_file(os.path.join(real, "device", "model")),
-                 "serial": None, "chs": None,          # CHS comes with hdparm -I (Task 0)
+                 "serial": None, "chs": None,          # CHS is in IDENTIFY but udev does not keep it; hdparm -I would show it
                  "bytes": int(read_file(os.path.join(real, "size"), "0") or 0) * 512,
                  "logical": int(read_file(os.path.join(real, "queue", "logical_block_size"), "512") or 512),
                  "usb": parent[0], "driver": parent[1], "by_id": sorted(by_id.get(name, [])), "by": "inquiry"}
-        own = own_identity(udev_props(read_file(os.path.join(real, "dev"))))
+        props = udev_props(read_file(os.path.join(real, "dev")))
+        own = own_identity(props)
         if own:
             # The INQUIRY is the dock's. Keep its name as the bridge, and name the drive by what it says itself (its model
             # carries the make, so there is no separate vendor).
@@ -130,7 +169,7 @@ def disks():
             role = "ok"
         out.append({"name": name, "node": os.path.join(DEV, name), "role": role, "mounted": where,
                     "partitions": parts, "rotational": read_file(os.path.join(real, "queue", "rotational")) == "1",
-                    "identity": ident})
+                    "identity": ident, "info": drive_info(props, real, ident)})
     return out
 
 
@@ -150,6 +189,37 @@ def describe(ident):
     serial = f" · serial {ident['serial']}" if ident.get("serial") else ""
     return (f"{ident.get('vendor', '')} {ident.get('model', '')}".strip()
             + f" · {ident.get('bytes', 0):,} bytes · {ident.get('logical')}-byte sectors{serial}")
+
+
+def sidecar(rel):
+    """One image's whole sidecar, by the store-relative name images() lists, or None. A name that is not one of those (a
+    path out of the store, an image with no sidecar) is never opened."""
+    store = os.path.realpath(DISKS)
+    if not isinstance(rel, str) or not rel.endswith(".img") or os.path.isabs(rel):
+        return None
+    side = os.path.realpath(os.path.join(store, rel[:-4] + ".json"))
+    if not side.startswith(store + os.sep) or not os.path.isfile(os.path.realpath(os.path.join(store, rel))):
+        return None
+    try:
+        with open(side) as f:
+            j = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return j if isinstance(j, dict) else None
+
+
+def writes():
+    """Every line of the store's writes.jsonl, oldest first (a line that is not JSON is skipped). One line per write the
+    job finished or stopped: gatbox-disk is the only thing that writes it."""
+    out = []
+    for line in read_file(os.path.join(os.path.realpath(DISKS), "writes.jsonl")).splitlines():
+        try:
+            w = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(w, dict):
+            out.append(w)
+    return out
 
 
 def images():

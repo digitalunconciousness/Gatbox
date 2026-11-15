@@ -95,8 +95,34 @@ mounted, no loop device, nothing sent to the dock):**
 6. This drive says little about photos and documents: its "photos" are icons. The browser's by-kind stats and previews need a
    real archive drive to test against, and the owner's other drives will be it.
 
-**Still unmeasured:** NTFS, FAT, exFAT, HFS+ and ISO on a real image; the spread of per-file read times (F3's first step); whether
-a drive that has been idle for a while adds a spin-up to the first read.
+**F3's report, read on the Pi 2026-11-15, against the same WD800JD image (`docs/plans/2026-11-15-drive-browser-f3.py`):**
+
+| What | Measured |
+|---|---|
+| Documents a reader could read | 744 (21.5 MB): 362 `.txt`, 354 `.html`, 14 `.pdf`, 6 `.md`, 4 `.odt`, 3 `.csv`, 1 `.doc`. Median 4 KB, 90th percentile 46 KB, largest 4.8 MB. |
+| Listing it again | 200,331 entries in 8.7 s (F0: 33.5 s, so the first pass was partly cold) |
+| 200 random documents out of the image, random order | 4.6 s: **median 15 ms, mean 23 ms, 90th percentile 40 ms, slowest 0.26 s, none over 1 s** |
+| ... in inode order | 4.0 s: mean 20 ms, **15% faster** |
+| ... in random order again | 4.9 s: **two identical runs differ by 6%** |
+| First file of the first run | 0.26 s (a drive that was idle; no large spin-up) |
+| Extracting the text | **3 ms a file on average**: `.txt`, `.html`, `.csv`, `.odt` and the one real `.doc` (7,068 characters, the first real catdoc output) all read |
+
+**What this changes in the design:**
+1. **For small documents, reading is cheap: about 25 ms a document in all (20 to read, 3 to extract)**, so 10,000 documents is
+   about four minutes, not hours. F0's one 3-second read (an 85 KB file) did not come back in 600 reads here: none took even
+   a second. It stays unexplained; a per-file time limit contains it.
+2. **Inode order is worth sorting by and not worth more than that:** 15% faster against 6% noise. It is free, so the text pass
+   reads in inode order, and nothing is built around it.
+3. **For large documents, time is bytes, not files:** F0 measured 6 MB/s on a 36 MB file, so 100 GB of PDFs is about
+   four and a half hours. This image has nothing over 4.8 MB, so it could not say; the script now reads its largest documents
+   and reports the rate, and prints the projection from files and bytes together. Its first version printed "0.0 h" for 744
+   documents, which was right and useless, and chose no PDF to try by chance: both fixed.
+4. **So text is read automatically after the names when the estimate is short, and waits for a tap when it is long.** The estimate
+   is files × 25 ms plus bytes at 5 MB/s (a little under F0's rate), shown with its basis on the screen; once the pass is running
+   the screen shows the running average of the files already read instead.
+
+**Still unmeasured:** NTFS, FAT, exFAT, HFS+ and ISO on a real image; the rate for big documents (the script now measures it);
+PDFs and Office files from a real archive (this drive's 14 PDFs and its one `.doc` are the only real ones read so far).
 
 ## 4. The flow (the 7")
 

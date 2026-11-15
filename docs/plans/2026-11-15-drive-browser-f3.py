@@ -15,7 +15,8 @@ is hours at three seconds each and minutes at a fifth of a second. This script f
      are dropped before each run (posix_fadvise DONTNEED, a hint to the kernel and nothing more).
   3. It runs the text reader (backend/gatboxlib/browsetext.py, the one the browser will use) on up to 8 of the files of each
      kind and times it, so that the cost of reading and the cost of extracting can be told apart.
-  4. It projects the time for every document in the volume from the sample, both ways.
+  4. It reads the largest documents once each, for the rate of big files, and projects the time for every document in the
+     volume from the sample and that rate.
 
 READ-ONLY, and private. The image is opened only by icat, mmls, fsstat and fls, which read it and never change it: no mount,
 no loop device, no drive, no dock. Copies of a few files are made in --bench-dir (default: the temporary folder) for the text
@@ -56,6 +57,11 @@ def say(*a):
 
 def head(title):
     say(f"\n== {title}")
+
+
+def dur(seconds):
+    """A time in the unit a person reads: seconds, minutes or hours."""
+    return f"{seconds:,.0f} s" if seconds < 90 else f"{seconds / 60:,.1f} min" if seconds < 5400 else f"{seconds / 3600:,.1f} h"
 
 
 def stop(p):
@@ -294,6 +300,7 @@ def main():
     runs = [("run 1, random order", sample, True),
             ("run 2, inode order", sorted(sample, key=lambda f: int(f[0].split("-")[0])), False),
             ("run 3, random order again", random.Random(SEED + 1).sample(sample, n), False)]
+    say("sample by kind: " + ", ".join(f".{e} {k}" for e, k in Counter(x[2] for x in sample).most_common()))
     results, kept = [], {}
     for label, files, keep in runs:
         drop_cache(image)
@@ -306,6 +313,24 @@ def main():
                 say(f"first file read of the first run: {secs_[0]:.2f} s")
         results.append(summary(label, secs_, got, failed, timed, wall))
     r1, r2, r3 = results
+
+    head("The largest documents, read once each (the rate for big files)")
+    big = sorted((f for f in found if f[1] >= 256 * 1024), key=lambda f: -f[1])[:8]
+    rate = None
+    if len(big) >= 3:
+        drop_cache(image)
+        t0 = time.time()
+        secs_b, got_b, failed_b, timed_b, _ = one_pass(image, start, sorted(big, key=lambda f: int(f[0].split("-")[0])), None, a.timeout)
+        wall_b = time.time() - t0
+        if secs_b and got_b >= MiB:
+            rate = got_b / wall_b
+            say(f"{len(secs_b)} of the {len(big)} largest documents: {got_b / MiB:,.1f} MB in {wall_b:,.1f} s = {rate / MiB:,.1f} MB/s"
+                + (f"; {failed_b} failed, {timed_b} timed out" if failed_b or timed_b else ""))
+        else:
+            say("the largest documents could not be read well enough to give a rate")
+    else:
+        say("fewer than 3 documents over 256 KB here: no rate for big files; the projection uses the per-file time only")
+
     head("Projection for every document in the volume")
     if r1 and r2 and r3:
         noise = abs(r1["wall"] - r3["wall"]) / max(r1["wall"], r3["wall"]) * 100
@@ -313,13 +338,30 @@ def main():
         better = (gain - r2["wall"]) / gain * 100
         say(f"two runs in the same order differ by {noise:.0f}%; inode order is {abs(better):.0f}% {'faster' if better > 0 else 'slower'} than random order "
             f"(a difference smaller than the first number is noise)")
-        sample_bytes = r1["got"] / r1["n"]
         for label, r in (("random order", r1), ("inode order", r2)):
-            per_file = r["wall"] / r["n"]
-            by_files = per_file * len(found)
-            by_bytes = r["wall"] / r["got"] * total if r["got"] else 0
-            say(f"reading all {len(found):,} documents in {label}: about {by_files / 3600:,.1f} h by the number of files, {by_bytes / 3600:,.1f} h by their bytes "
-                f"({sample_bytes / 1024:,.0f} KB on average in the sample, {total / len(found) / 1024:,.0f} KB in the volume)")
+            if rate:
+                t0 = max(0.0, (r["wall"] - r["got"] / rate) / r["n"])      # what is left of the sample's time once its bytes are paid for
+                est = len(found) * t0 + total / rate
+                how = f"{len(found):,} files at {t0 * 1000:,.0f} ms each, plus {total / MiB:,.0f} MB at {rate / MiB:,.1f} MB/s"
+            else:
+                est = r["wall"] / r["n"] * len(found)
+                how = f"{len(found):,} files at {r['wall'] / r['n'] * 1000:,.0f} ms each"
+            say(f"reading all {len(found):,} documents in {label}: about {dur(est)} ({how}); per 10,000 documents of this mix: about {dur(est / len(found) * 10000)}")
+
+    # The readers are tried on up to 8 files of every kind, so a rare kind (a PDF among thousands of text files) is not missed by chance:
+    # kinds the random sample holds fewer than 8 of are topped up here, read separately and not timed above.
+    taken = {f[0] for f in sample}
+    have = Counter({e: len(v) for e, v in kept.items()})
+    more = []
+    for f in sorted(found, key=lambda f: int(f[0].split("-")[0])):
+        if f[0] not in taken and f[1] <= KEEP_BYTES and have[f[2]] < KEEP_PER_KIND:
+            more.append(f)
+            have[f[2]] += 1
+    if more:
+        drop_cache(image)
+        _, _, _, _, k2 = one_pass(image, start, more, {}, a.timeout)
+        for e, v in k2.items():
+            kept.setdefault(e, []).extend(v)
     x = readers(kept, a.bench_dir)
     if x is not None and r2:
         say(f"\nextracting the text takes {x:.3f} s on average per file here, against {r2['wall'] / r2['n']:.3f} s to read it out of the image in inode order")

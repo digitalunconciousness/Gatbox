@@ -697,7 +697,7 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
     - [x] F3a built, 2026-11-15, **not installed** (stacked on F2): the text readers (`gatboxlib/browsetext.py`: text, HTML, PDF, Word,
           Excel, PowerPoint, OpenDocument, ePub, and the old Office formats through catdoc) and the measurement script
           `docs/plans/2026-11-15-drive-browser-f3.py`. **The bootstrap gains `catdoc`** (apt): `--check` lists it, and the owner reads
-          that diff and runs the bootstrap. `test-browse-text.sh`: 33, `test-drive-f3.sh`: 18, `test-bootstrap.sh`: 146; each of 13
+          that diff and runs the bootstrap. `test-browse-text.sh`: 33, `test-drive-f3.sh`: 21, `test-bootstrap.sh`: 146; each of 13
           breakages of them fails a test. Not tested here: a real `.doc`, `.xls` or `.ppt` (no tool to make one; catdoc is
           stood in for), so the Pi's report is also the first sight of them.
     - [ ] F3's report from the Pi, into the note's §3, then F3b. Run, with the dock idle (it reads the store's drive for ten minutes or

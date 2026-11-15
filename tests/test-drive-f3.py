@@ -57,7 +57,7 @@ def main():
     tree = f"{T}/tree"
     for d in ("Zebra-Manuals", "Quarterly Taxes/2019", "pics", "empty"):
         os.makedirs(f"{tree}/{d}")
-    NAMES = ["Zebra", "Quarterly", "Taxes", "manual-alpha", "invoice", "holiday", "secret-plans", "budget", "IMG_0042", "pics", "slides-final"]
+    NAMES = ["Zebra", "zebra-report", "holiday-large", "Quarterly", "Taxes", "manual-alpha", "invoice", "holiday", "secret-plans", "budget", "IMG_0042", "pics", "slides-final"]
     for i in range(40):
         open(f"{tree}/Zebra-Manuals/manual-alpha-{i}.txt", "w").write(f"service manual {i} " + "word " * (200 + i * 50))
     for i in range(6):
@@ -71,7 +71,19 @@ def main():
     open(f"{tree}/pics/notes.bin", "wb").write(os.urandom(5000))
     os.symlink("secret-plans.xlsx", f"{tree}/link.txt")                            # a link is not a file
     open(f"{tree}/zero.txt", "w").close()                                          # an empty file is not counted
-    readable_files = 40 + 6 + 1 + 1 + 1
+    for i in range(4):                                                              # big enough to give a rate for big files
+        open(f"{tree}/Zebra-Manuals/holiday-large-{i}.txt", "w").write("large " * (110_000 + i))
+    pdf = "BT /F1 24 Tf 72 700 Td (Widget Wars report) Tj ET"
+    objs = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+            f"<< /Length {len(pdf)} >>\nstream\n{pdf}\nendstream", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    body, offs = "%PDF-1.4\n", []
+    for i, o in enumerate(objs, 1):
+        offs.append(len(body))
+        body += f"{i} 0 obj\n{o}\nendobj\n"
+    body += f"xref\n0 6\n0000000000 65545 f \n" + "".join(f"{o:010d} 00000 n \n" for o in offs) + f"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{len(body)}\n%%EOF\n"
+    open(f"{tree}/zebra-report.pdf", "wb").write(body.encode("latin-1"))
+    readable_files = 40 + 6 + 1 + 1 + 1 + 4 + 1
     ext = f"{T}/e.img"
     F.ext4_image(ext, tree)
     swapless = f"{T}/s.img"
@@ -92,15 +104,24 @@ def main():
     out = r.stdout
     check("it finishes (exit 0) and says it changed nothing", r.returncode == 0 and "Nothing was changed" in out)
     check(f"the documents are counted: {readable_files} with a reader, by extension; the picture, the link and the empty file are not",
-          f"files with a text reader: {readable_files}," in out and re.search(r"\.txt\s+40 files", out) and re.search(r"\.html\s+6 files", out)
-          and re.search(r"\.docx\s+1 files", out) and ".jpg" not in out and ".bin" not in out)
+          f"files with a text reader: {readable_files}," in out and re.search(r"\.txt\s+44 files", out) and re.search(r"\.html\s+6 files", out)
+          and re.search(r"\.docx\s+1 files", out) and re.search(r"\.pdf\s+1 files", out) and ".jpg" not in out and ".bin" not in out)
     check("the sample is the 30 asked for, read three times: random, inode, random again, each with its per-file spread and MB/s",
           "Reading 30 random documents" in out and all(re.search(rf"{x}: 30 files", out) for x in ("run 1, random order", "run 2, inode order", "run 3, random order again"))
           and out.count("per file: median") == 3 and "MB/s overall" in out and "first file read of the first run" in out)
-    check("the noise between two runs in the same order is reported next to inode order's difference, with the projection for every document",
-          re.search(r"two runs in the same order differ by \d+%", out) and re.search(r"reading all 49 documents in random order: about", out)
-          and re.search(r"reading all 49 documents in inode order: about", out))
+    check("the noise between two runs in the same order is reported next to inode order's difference",
+          re.search(r"two runs in the same order differ by \d+%", out) and re.search(r"reading all 54 documents in random order: about", out)
+          and re.search(r"reading all 54 documents in inode order: about", out))
     check("the readers are named, installed or not", all(f"{t}:" in out for t in ("pdftotext", "catdoc", "xls2csv", "catppt")))
+    check("the sample's makeup is shown by kind, and the largest documents are read once each for a rate in MB/s",
+          re.search(r"sample by kind: \.txt \d+", out) and re.search(r"4 of the 4 largest documents: [\d.]+ MB in [\d.]+ s = [\d.]+ MB/s", out))
+    check("the projection is in a unit a person reads, built from files and bytes, with the time per 10,000 documents of this mix",
+          re.search(r"reading all 54 documents in inode order: about [\d.,]+ (s|min|h) \(54 files at \d+ ms each, plus [\d,]+ MB at [\d.]+ MB/s\); per 10,000 documents of this mix: about", out)
+          and " 0.0 h" not in out)
+    small = run(ext, "--files", "5", "--bench-dir", bench).stdout
+    rows5 = set(re.findall(r"^\.(\w+)\s+\d+\s+\d+\s", small, re.M))
+    check("with a sample of 5, every kind is still tried by the readers (a rare kind is not missed by chance): txt, html, docx, xlsx, ppt and the PDF",
+          {"txt", "html", "docx", "xlsx", "ppt", "pdf"} <= rows5)
     check("... and extraction is compared with reading: 'extracting the text takes ... on average per file here'", "extracting the text takes" in out)
     leaked = [n for n in NAMES if n in out]
     check("NO file name, folder name or path is in the report (the image's own folder and name are not either)", not leaked and T not in out and "e.img" not in out)
@@ -111,8 +132,8 @@ def main():
 
     print("fewer documents than asked for:")
     r = run(ext, "--files", "500", "--bench-dir", bench)
-    check("all of them are the sample, and it says so", r.returncode == 0 and "only 49 documents here: all of them are the sample" in r.stdout
-          and "Reading 49 random documents" in r.stdout)
+    check("all of them are the sample, and it says so", r.returncode == 0 and "only 54 documents here: all of them are the sample" in r.stdout
+          and "Reading 54 random documents" in r.stdout)
     rows = {m.group(1): (int(m.group(2)), int(m.group(3)), m.group(4)) for m in re.finditer(r"^\.(\w+)\s+(\d+)\s+(\d+)\s+[\d.]+\s+[\d.]+\s+[\d,]+\s+(.*)$", r.stdout, re.M)}
     check("the text readers are timed per kind: txt, html, docx and xlsx are read; the fake .ppt is tried, not read, and says why",
           rows.get("txt", (0, 0))[:2] == (8, 8) and rows.get("html", (0, 0))[:2] == (6, 6) and rows.get("docx", (0, 0))[:2] == (1, 1)

@@ -220,6 +220,24 @@ table.dk-rt{width:100%;border-collapse:collapse;margin:0 0 6px}
 .dk-blank{color:var(--mut);font-style:italic}
 button.dk-recrow{display:block;width:100%;text-align:left;margin:6px 0;min-height:64px}
 button.dk-recrow b{font:600 17px/1.2 var(--disp)}
+/* FILES: inside a stored image (7"): volumes, folders as big rows, a text preview */
+.dk-vol{border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:8px 12px;margin:8px 0}
+.dk-vol.dk-no{border-style:dashed}
+.dk-vol>b{font:600 17px/1.2 var(--disp);letter-spacing:.04em}
+.dk-vol>button{margin-top:8px}
+.dk-hex{font-size:14px;word-break:break-all}
+.dk-crumbs{margin:0 0 8px}
+.dk-crumbs button{min-height:48px;padding:4px 12px}
+.dk-files .seg{margin:6px 0}
+.dk-sortkind{display:flex;gap:12px}
+.dk-sortkind .seg{flex:1;min-width:0}
+button.dk-frow{display:block;width:100%;text-align:left;margin:4px 0;min-height:64px}
+.dk-fn{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dk-fn b{font:600 17px/1.2 var(--disp);overflow-wrap:anywhere}
+.dk-busy{margin:0 0 8px;font-size:16px}
+.dk-err{margin:0 0 8px}
+pre.dk-text{margin:8px 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);
+  font:15px/1.4 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;user-select:text}
 /* PRINT OR SAVE AS PDF on a phone: only the record, black on white, a blank rule where the deck has no value */
 @media print{
   body.dk-printing{display:block;height:auto;overflow:visible;background:#fff;color:#000;font-size:12pt}

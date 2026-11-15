@@ -187,6 +187,16 @@ def main():
           and side["also_read"][0]["date"] == day)
     check("... and no second queue line", len(open(f"{STORE}/archive-queue.jsonl").read().splitlines()) == 1)
 
+    print("a drive that is not a machine's (the drive browser's note, 2026-11-15: a personal drive's image goes nowhere without a yes):")
+    fam = os.urandom(2 * MiB)
+    usb_disk("sdq", len(fam), "WIDGET", "FAMILYDRIVE 500", port=17, devnum="8:256", data=fam)
+    code, out = disk("read", "-d", "sdq", "-m", "unassigned", "-l", "FAMILY-DISK", "--media", "hdd")
+    side_u = json.load(open(f"{STORE}/unassigned/FAMILY-DISK_{day}_{hashlib.sha1(fam).hexdigest()[:8]}.json")) if code == 0 else {}
+    check("a READ for no machine: stored, its sidecar says archive 'none', not for a machine, and nothing is added to the queue",
+          code == 0 and side_u.get("archive") == {"state": "none", "why": "not for a machine"}
+          and len(open(f"{STORE}/archive-queue.jsonl").read().splitlines()) == 1)
+    F.unplug("sdq")
+
     print("the drive's own identity (Task 0, 2026-11-06: the dock's INQUIRY names the dock):")
     usb_disk("sdk", 3 * MiB, "XinTop", "XT-U33502", port=11, devnum="8:160", data=os.urandom(3 * MiB),
              ata=("WDC WD800JD-75MSA1", "WD-WIDGET0001"))

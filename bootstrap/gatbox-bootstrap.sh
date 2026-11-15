@@ -23,7 +23,8 @@
 #   1  packages: sigrok-cli, python3-matplotlib, python3-qrcode (scanner labels), rsync, git, curl, util-linux-extra (hwclock), the minipro build
 #      deps, mame (for `mame -romident` only), hdparm + smartmontools (disk imaging: read-only queries for a drive's own
 #      model, serial, geometry and size through the dock; smartd is switched off and hdparm's udev rule masked, see step 1),
-#      sleuthkit + python3-pil (the drive browser: reading the files inside a stored image, never mounting it).
+#      sleuthkit + python3-pil (the drive browser: reading the files inside a stored image, never mounting it). Step 6 adds its
+#      user gatbox-browse and its socket-activated service (gatbox-browse.socket), which sees the image store read-only.
 #      apt is skipped entirely when they're all present.
 #   2  removes ModemManager (hijacks ttyUSB0) and brltty (grabs USB-serial adapters)
 #   3  groups (dialout, plugdev, gpio, i2c, spi, video) for your user; I2C + SPI on; hostname catbox/raspberrypi -> gatbox
@@ -56,6 +57,8 @@ backend/gatbox-scand.service                    /etc/systemd/system/gatbox-scand
 backend/gatbox-dump.service                     /etc/systemd/system/gatbox-dump.service               644
 backend/gatbox-dump.path                        /etc/systemd/system/gatbox-dump.path                  644
 backend/gatbox-disk.service                     /etc/systemd/system/gatbox-disk.service               644
+backend/gatbox-browse.socket                    /etc/systemd/system/gatbox-browse.socket              644
+backend/gatbox-browse.service                   /etc/systemd/system/gatbox-browse.service             644
 backend/gatbox-disk.path                        /etc/systemd/system/gatbox-disk.path                  644
 bootstrap/files/sysusers-gatbox.conf            /etc/sysusers.d/gatbox.conf                           644
 bootstrap/files/tmpfiles-gatbox.conf            /etc/tmpfiles.d/gatbox.conf                           644
@@ -80,6 +83,7 @@ tools/gatbox-replay                             /usr/local/bin/gatbox-replay    
 tools/gatbox-labels                             /usr/local/bin/gatbox-labels                          755
 tools/gatbox-dump                               /usr/local/bin/gatbox-dump                            755
 tools/gatbox-disk                               /usr/local/bin/gatbox-disk                            755
+backend/gatbox-browse                           /usr/local/bin/gatbox-browse                          755
 tools/gatbox-mame-roms                          /usr/local/bin/gatbox-mame-roms                       755
 tools/gatbox-library                            /usr/local/bin/gatbox-library                         755
 tools/gatbox-manuals                            /usr/local/bin/gatbox-manuals                         755
@@ -93,6 +97,7 @@ backend/gatboxlib/filestore.py                  /usr/local/lib/gatbox/gatboxlib/
 backend/gatboxlib/libsync.py                    /usr/local/lib/gatbox/gatboxlib/libsync.py            644
 backend/gatboxlib/csvlog.py                     /usr/local/lib/gatbox/gatboxlib/csvlog.py             644
 backend/gatboxlib/disks.py                      /usr/local/lib/gatbox/gatboxlib/disks.py              644
+backend/gatboxlib/browse.py                     /usr/local/lib/gatbox/gatboxlib/browse.py             644
 backend/gatboxweb/__init__.py                   /usr/local/lib/gatbox/gatboxweb/__init__.py           644
 backend/gatboxweb/config.py                     /usr/local/lib/gatbox/gatboxweb/config.py             644
 backend/gatboxweb/server.py                     /usr/local/lib/gatbox/gatboxweb/server.py             644
@@ -108,6 +113,7 @@ backend/gatboxweb/system.py                     /usr/local/lib/gatbox/gatboxweb/
 backend/gatboxweb/devices.py                    /usr/local/lib/gatbox/gatboxweb/devices.py            644
 backend/gatboxweb/dump.py                       /usr/local/lib/gatbox/gatboxweb/dump.py               644
 backend/gatboxweb/disk.py                       /usr/local/lib/gatbox/gatboxweb/disk.py               644
+backend/gatboxweb/browse.py                     /usr/local/lib/gatbox/gatboxweb/browse.py             644
 backend/gatboxweb/mame.py                       /usr/local/lib/gatbox/gatboxweb/mame.py               644
 backend/gatboxweb/libsource.py                  /usr/local/lib/gatbox/gatboxweb/libsource.py          644
 backend/gatboxweb/libsync_api.py                /usr/local/lib/gatbox/gatboxweb/libsync_api.py        644
@@ -340,12 +346,13 @@ if [ "${1:-}" = "--check" ]; then
     for l in usb_max_current_enable=1; do grep -qxF "$l" /boot/firmware/config.txt || DIFFS+=("config.txt += $l"); done
     grep -qE '^[^#]*rtc_bbat_vchg' /boot/firmware/config.txt && [ -z "$RTC_CHARGE" ] && DIFFS+=("config.txt: comment out rtc_bbat_vchg (RTC CHARGING IS ON)")
     for u in gatbox-raillog.service gatbox-web.service gatbox-scand.service gatbox-dump.path gatbox-rtc-sync.timer \
-             gatbox-sync.timer gatbox-disk.path; do
+             gatbox-sync.timer gatbox-disk.path gatbox-browse.socket; do
         systemctl -q is-enabled "$u" 2>/dev/null || DIFFS+=("enable     $u"); done
     systemctl -q is-enabled smartmontools.service 2>/dev/null \
         && DIFFS+=("disable    smartd (smartmontools.service): the disk jobs call smartctl on demand, nothing polls the drives")
     getent passwd gatbox-dump >/dev/null || DIFFS+=("create     user gatbox-dump (sysusers.d)")
     getent passwd gatbox-disk >/dev/null || DIFFS+=("create     user gatbox-disk (sysusers.d)")
+    getent passwd gatbox-browse >/dev/null || DIFFS+=("create     user gatbox-browse (sysusers.d)")
     getent group gatbox-disk-queue >/dev/null || DIFFS+=("create     group gatbox-disk-queue (sysusers.d)")
     [ -d /var/spool/gatbox-disk ] || DIFFS+=("create     /var/spool/gatbox-disk (tmpfiles.d)")
     [ -d /srv/gatbox/disks ] || DIFFS+=("create     /srv/gatbox/disks, the image store's bare mountpoint (tmpfiles.d)")
@@ -580,8 +587,8 @@ svc() {   # <unit> <installed path glob>...: enable it; restart only if its file
 # the dump job's user, the archive and the spool (before gatbox-web, which joins the gatbox-dump group)
 if changed /etc/sysusers.d/gatbox.conf || ! getent passwd gatbox-dump >/dev/null || ! getent group gatbox-manuals >/dev/null \
    || ! getent passwd gatbox-sync >/dev/null || ! getent group gatbox-wifi >/dev/null \
-   || ! getent passwd gatbox-disk >/dev/null || ! getent group gatbox-disk-queue >/dev/null; then
-    systemd-sysusers /etc/sysusers.d/gatbox.conf && SYSUSERS_RAN=1 && log "users gatbox-dump (T48 dumps, group plugdev), gatbox-sync (hub push) and gatbox-disk (disk jobs, its own devices' group), groups gatbox-manuals and gatbox-disk-queue"
+   || ! getent passwd gatbox-disk >/dev/null || ! getent group gatbox-disk-queue >/dev/null || ! getent passwd gatbox-browse >/dev/null; then
+    systemd-sysusers /etc/sysusers.d/gatbox.conf && SYSUSERS_RAN=1 && log "users gatbox-dump (T48 dumps, group plugdev), gatbox-sync (hub push), gatbox-disk (disk jobs, its own devices' group) and gatbox-browse (the drive browser), groups gatbox-manuals and gatbox-disk-queue"
 fi
 # udev works out GROUP= when it LOADS a rule. Step 5 loaded 98-gatbox-disk.rules before this step could make the gatbox-disk
 # group, so on a first install udev ignored GROUP="gatbox-disk" ("Unknown group": udevadm verify on the Pi said so) and left the
@@ -616,6 +623,9 @@ svc gatbox-scand.service /usr/local/bin/gatbox-scand /etc/systemd/system/gatbox-
 svc gatbox-dump.path /etc/systemd/system/gatbox-dump.path /etc/systemd/system/gatbox-dump.service   # dashboard dumps
 # Dashboard disk jobs (READ, TARGET CHECK, WRITE). After gatbox-web, which queues them.
 svc gatbox-disk.path /usr/local/bin/gatbox-disk '/etc/systemd/system/gatbox-disk.*' '/usr/local/lib/gatbox/gatboxlib/*'
+# The drive browser (FILES on the 7"): the socket is enabled and listening, and systemd starts the service when gatbox-web asks.
+# Restarting the socket on a change stops the service too (it Requires= it), so the next ask runs the new code.
+svc gatbox-browse.socket /usr/local/bin/gatbox-browse '/etc/systemd/system/gatbox-browse.*' '/usr/local/lib/gatbox/gatboxlib/*'
 # The image store's mount unit, from /etc/gatbox/disks.conf. Written only when that file holds a UUID: before the drive is
 # formatted there is nothing to mount, and the DISK tab says IMAGE STORE NOT CONNECTED. An unplugged drive is not an error.
 store_uuid_now=$(store_uuid)

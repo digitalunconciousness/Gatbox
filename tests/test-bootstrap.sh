@@ -163,7 +163,7 @@ check "the job runs as gatbox-disk with the queue group" \
     'grep -qx "User=gatbox-disk" "$DISKU" && grep -qx "SupplementaryGroups=gatbox-disk-queue" "$DISKU"'
 check "the job is ordered after the store's mount and never requires it (an unplugged drive must not jam the spool)" \
     'grep -qx "After=srv-gatbox-disks.mount" "$DISKU" && ! grep -qE "^(Requires|RequiresMountsFor|BindsTo)=" "$DISKU"'
-check "gatbox-disk.path is enabled and --check lists it" 'grep -q "svc gatbox-disk.path" "$BOOT" && grep -q "gatbox-disk.path; do" "$BOOT"'
+check "gatbox-disk.path is enabled and --check lists it" 'grep -q "svc gatbox-disk.path" "$BOOT" && grep -q "gatbox-disk.path gatbox-browse.socket; do" "$BOOT"'
 all_in() { local f=$1 w; shift; for w in "$@"; do grep -qF -- "$w" "$f" || return 1; done; }     # every string is in the file
 check "--check reports the user, group, spool, mountpoint and the owner's group" \
     'all_in "$BOOT" "user gatbox-disk" "group gatbox-disk-queue (sysusers" "/var/spool/gatbox-disk" "/srv/gatbox/disks" "+= gatbox-disk-queue"'
@@ -227,6 +227,37 @@ else
     GATBOX_ETC="$E" bash "$BOOT" --check > "$T/etc-closed" 2>&1; chmod 755 "$E"
     check "--check: a /etc/gatbox this user cannot open: no false 'create' lines, and a note says what was not looked at" \
         '! grep -qE "create     /etc/gatbox/(hubs.d|hub.conf|archive.conf)" "$T/etc-closed" && grep -q "^note: /etc/gatbox is readable by root only" "$T/etc-closed"'
+fi
+# The drive browser (docs/plans/2026-11-15-drive-browser.md): its user, its socket-activated service, and what the service cannot do.
+BRS="$REPO/backend/gatbox-browse.service"; BRK="$REPO/backend/gatbox-browse.socket"
+for f in "backend/gatbox-browse +/usr/local/bin/gatbox-browse +755" "backend/gatbox-browse.socket +/etc/systemd/system/gatbox-browse.socket +644" \
+         "backend/gatbox-browse.service +/etc/systemd/system/gatbox-browse.service +644"; do
+    check "MANIFEST installs ${f%% *}" 'grep -qE "^$f" "$BOOT"'
+done
+check "sysusers: the drive browser's user" 'grep -qE "^u gatbox-browse - " "$SYSU"'
+check "gatbox-web joins the browser's group, to reach its socket" \
+    'grep -qx "SupplementaryGroups=gatbox-browse" "$WEBU"'
+check "the socket: listens under /run/gatbox-browse, mode 660, for the group gatbox-browse only" \
+    'grep -qx "ListenStream=/run/gatbox-browse/browse.sock" "$BRK" && grep -qx "SocketMode=0660" "$BRK" && grep -qx "SocketGroup=gatbox-browse" "$BRK" && grep -qx "WantedBy=sockets.target" "$BRK"'
+check "the service has no network, no devices, no capabilities, and only the unix socket" \
+    'all_in "$BRS" "PrivateNetwork=yes" "PrivateDevices=yes" "RestrictAddressFamilies=AF_UNIX" "NoNewPrivileges=yes" && grep -qx "CapabilityBoundingSet=" "$BRS" && grep -qx "AmbientCapabilities=" "$BRS"'
+check "... it sees the image store read-only, with its own folder the only writable place there" \
+    'grep -qx "ProtectSystem=strict" "$BRS" && grep -qx "ReadOnlyPaths=/srv/gatbox/disks" "$BRS" && grep -qx "ReadWritePaths=-/srv/gatbox/disks/_browse" "$BRS" && ! grep -qE "^ReadWritePaths=.*(/srv/gatbox/disks( |$)|/var/spool)" "$BRS"'
+check "... it runs as its own user, joins the disk queue group to read images and never the devices' group" \
+    'grep -qx "User=gatbox-browse" "$BRS" && grep -qx "SupplementaryGroups=gatbox-disk-queue" "$BRS" && ! grep -qE "^(Supplementary)?Groups?=.*gatbox-disk( |$)" "$BRS"'
+check "... a syscall filter, a memory ceiling and a task ceiling" 'grep -qx "SystemCallFilter=@system-service" "$BRS" && grep -qE "^MemoryMax=" "$BRS" && grep -qE "^TasksMax=" "$BRS"'
+check "... ordered after the store's mount and never requiring it (an unplugged drive must not stop it saying so)" \
+    'grep -qx "After=srv-gatbox-disks.mount" "$BRS" && ! grep -qE "^(Requires|RequiresMountsFor|BindsTo)=.*(srv-gatbox-disks|/srv/gatbox/disks)" "$BRS"'
+check "... its folder on the store is made only when the store is mounted and marked, and by the one line that runs outside the sandbox" \
+    'grep -qE "^ExecStartPre=\+/bin/sh -c .mountpoint -q /srv/gatbox/disks && \[ -f /srv/gatbox/disks/.gatbox-image-store \] && install -d -o gatbox-browse" "$BRS"'
+check "the bootstrap enables and starts the socket, and --check lists it and the user" \
+    'grep -q "^svc gatbox-browse.socket" "$BOOT" && grep -q "gatbox-browse.socket; do" "$BOOT" && grep -q "create     user gatbox-browse" "$BOOT"'
+if command -v systemd-analyze >/dev/null 2>&1; then
+    # the unit files read cleanly: no unknown directive and no syntax error (an unknown user or a missing program is fine here)
+    out=$(systemd-analyze verify "$BRK" "$BRS" 2>&1 | grep -iE "unknown (key|section|lvalue)|failed to parse|bad (unit|setting)|invalid" | head -3)
+    check "systemd-analyze reads both units with no unknown directive or syntax error" '[ -z "$out" ]'
+else
+    echo "  skip  systemd-analyze verify of the drive browser's units (systemd-analyze not installed)"
 fi
 # The store's mount unit
 UUID=3F2A7C19-8D4E-4B60-9A15-6E0C2B7D4F83; uuid=${UUID,,}

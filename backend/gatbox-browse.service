@@ -1,0 +1,61 @@
+# Installed by gatbox-bootstrap.sh (F1 of docs/plans/2026-11-15-drive-browser.md); started by gatbox-browse.socket.
+# Lists and shows what is inside a stored disk image (sleuthkit, Pillow, pdftoppm). Filesystem parsers and file decoders are
+# attack surface, and the images come from drives other people used, so everything below is about what this service cannot do:
+# it has no network, no devices, no capabilities, and sees the image store read-only. It never mounts anything.
+[Unit]
+Description=GATBOX drive browser (what is inside a stored image; started by gatbox-browse.socket)
+Requires=gatbox-browse.socket
+# Ordered after the image store's mount, never Requires= it: with the drive unplugged the service must still start and say
+# IMAGE STORE NOT CONNECTED (the same rule as gatbox-disk.service).
+After=srv-gatbox-disks.mount
+
+[Service]
+Type=simple
+# Make the service's own folder on the store (cache, counts), once the store is mounted and carries its marker. "+" runs this
+# one line outside the sandbox below; it changes nothing on the drive but this folder, and does nothing if the store is away.
+ExecStartPre=+/bin/sh -c 'mountpoint -q /srv/gatbox/disks && [ -f /srv/gatbox/disks/.gatbox-image-store ] && install -d -o gatbox-browse -g gatbox-browse -m 0700 /srv/gatbox/disks/_browse || true'
+ExecStart=/usr/local/bin/gatbox-browse --idle 300 --exit-when-store-missing
+User=gatbox-browse
+Group=gatbox-browse
+# The images are group gatbox-disk-queue (the disk job's). This service joins it to read them, and the read-only mount below
+# is what keeps that group's write bit from meaning anything here. It never holds gatbox-disk, the devices' group.
+SupplementaryGroups=gatbox-disk-queue
+UMask=0077
+Environment=PYTHONDONTWRITEBYTECODE=1
+# No network and no devices at all: the socket systemd hands in is its one way in.
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+PrivateDevices=yes
+PrivateTmp=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+# The image store is read-only to this service, except its own folder; the disk spool is read-only too (it only looks for a
+# queued or running job, so that counting waits for imaging).
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/srv/gatbox/disks
+ReadWritePaths=-/srv/gatbox/disks/_browse
+ReadOnlyPaths=-/var/spool/gatbox-disk
+InaccessiblePaths=-/etc/gatbox -/var/lib/gatbox-web -/var/lib/gatbox-sync -/srv/gatbox/library -/srv/gatbox/manuals -/srv/gatbox/roms
+ProtectProc=invisible
+ProcSubset=pid
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# A bad file cannot take the Pi with it.
+MemoryMax=512M
+TasksMax=64
+CPUWeight=20
+IOWeight=20
+Nice=10

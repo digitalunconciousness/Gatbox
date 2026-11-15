@@ -47,6 +47,14 @@
   million files. Reading files out of the image is the slow part (about 6 MB/s on a large file), so previews load one at a time,
   thumbnails are background work, and text search starts with a measurement. The drive's "photos" are system icons: a real archive
   drive is still needed to try the browser on.
+- F1 of the browser, built the same evening and not installed: FILES on the DISK tab, with `gatbox-browse`, a socket-activated
+  service in its own sandbox (no network, no devices, the store read-only, 512 MB, 64 tasks), and six loopback routes behind it.
+  A folder is named by its inode and every row carries its own, so nothing builds a path. What came out of building it:
+  killing a hung `fls` did not free the pipe, because a grandchild (`sleep` in the test) held it, so every tool runs in its own
+  session and the whole group is killed; trimming the extraction cache under a small cap deleted the file just extracted; an
+  empty inode passed validation and read the root; and I had written "streamed, never held whole" about a folder in the
+  note, when sorting needs the whole folder in memory (it is cut at 100,000 entries and says so). The unit's sandbox has not run
+  on the Pi: the install step has read-only checks for that.
 - Not done: a first READ from the 7″ and any WRITE on real media; the hidden-area question; the cab-side checks in
   the procedure's 5.4 are the owner's. Task 3 (the MAME check on an image) still waits on a `chdman` output. The deck
   does not record the device letter, the two hash passes with their times, or a write's time and speed, so those lines of

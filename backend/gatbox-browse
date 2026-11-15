@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+"""gatbox-browse: the drive browser's service (docs/plans/2026-11-15-drive-browser.md).
+
+Answers gatbox-web, over a unix socket, with what is inside a stored image: its volumes, a folder's entries, what a volume
+holds, a file's kind, and a file drawn as a JPEG or read as text. The work is gatboxlib/browse.py's (sleuthkit, Pillow,
+pdftoppm). This file is only the plumbing, and it runs in a sandbox: its own user, the store read-only, no network
+(gatbox-browse.service).
+
+It is started by systemd when something connects to gatbox-browse.socket (the socket arrives as file descriptor 3) and
+exits after --idle seconds with nothing to do, so it is not running while nobody is looking, and a fresh start sees the
+store's current mounts. Run by hand (tests), it makes its own socket at --socket.
+
+    gatbox-browse [--socket PATH] [--idle SECONDS] [--exit-when-store-missing]
+
+Routes (GET, JSON unless noted): /volumes /ls /stats /info /text, /preview (image/jpeg), /ping. An error is
+{"error": "a sentence for the screen"} with an HTTP code.
+"""
+import argparse
+import json
+import os
+import socket
+import socketserver
+import sys
+import threading
+import time
+import traceback
+from http.server import BaseHTTPRequestHandler
+from urllib.parse import parse_qs, urlsplit
+
+
+def lib_path():
+    env = os.environ.get("GATBOX_LIB")
+    if env:
+        return env
+    here = os.path.dirname(os.path.realpath(__file__))
+    return here if os.path.isdir(os.path.join(here, "gatboxlib")) else "/usr/local/lib/gatbox"
+
+
+sys.path.insert(0, lib_path())
+from gatboxlib import browse as B  # noqa: E402
+
+STATE = {"last": time.time(), "active": 0, "stale": False}
+LOCK = threading.Lock()
+
+
+def q1(q, key):
+    return (q.get(key) or [None])[0]
+
+
+def route_volumes(q):
+    return B.volumes(q1(q, "image"))
+
+
+def route_ls(q):
+    return B.ls(q1(q, "image"), q1(q, "vol"), q1(q, "dir"), q1(q, "sort") or "name", q1(q, "order") or "asc",
+                q1(q, "kind") or "all", q1(q, "page") or 0)
+
+
+def route_stats(q):
+    return B.stats(q1(q, "image"), q1(q, "vol"), begin=q1(q, "begin") != "0")
+
+
+def route_info(q):
+    return B.info(q1(q, "image"), q1(q, "vol"), q1(q, "inode"), q1(q, "size"))
+
+
+def route_text(q):
+    return B.text(q1(q, "image"), q1(q, "vol"), q1(q, "inode"))
+
+
+def route_preview(q):
+    data, ctype = B.preview(q1(q, "image"), q1(q, "vol"), q1(q, "inode"), q1(q, "page") or 1, q1(q, "w") or 1200, q1(q, "size"))
+    return data, ctype
+
+
+ROUTES = {"/volumes": route_volumes, "/ls": route_ls, "/stats": route_stats, "/info": route_info, "/text": route_text,
+          "/preview": route_preview, "/ping": lambda q: {"ok": True}}
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "gatbox-browse"
+    timeout = 300                                           # a slow read out of the image is allowed; a dead client is not
+
+    def log_message(self, fmt, *args):                     # to the journal, without a client address (a unix socket has none)
+        sys.stderr.write("gatbox-browse: " + (fmt % args) + "\n")
+
+    def reply(self, code, body, ctype="application/json; charset=utf-8"):
+        data = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        with LOCK:
+            STATE["active"] += 1
+        try:
+            url = urlsplit(self.path)
+            fn = ROUTES.get(url.path)
+            if fn is None:
+                return self.reply(404, {"error": "not found"})
+            try:
+                res = fn(parse_qs(url.query, keep_blank_values=False))
+            except B.Err as e:
+                if e.code == 409 and "NOT CONNECTED" in e.msg:
+                    STATE["stale"] = True                   # this process may hold an old view of the mounts: start fresh next time
+                return self.reply(e.code, {"error": e.msg})
+            except Exception:
+                traceback.print_exc()
+                return self.reply(500, {"error": "the drive browser hit an error"})
+            if isinstance(res, tuple):
+                return self.reply(200, res[0], res[1])
+            self.reply(200, res)
+        finally:
+            with LOCK:
+                STATE["active"] -= 1
+                STATE["last"] = time.time()
+
+    def do_POST(self):
+        self.reply(405, {"error": "read-only: nothing here changes anything"})
+    do_PUT = do_DELETE = do_PATCH = do_POST
+
+
+class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
+
+
+def listening_socket(path):
+    """The socket systemd passed in (descriptor 3), or a new one at `path` when run by hand."""
+    if os.environ.get("LISTEN_PID") == str(os.getpid()) and os.environ.get("LISTEN_FDS") == "1":
+        for k in ("LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES"):
+            os.environ.pop(k, None)                         # the tools it starts are not socket-activated
+        return socket.socket(fileno=3)
+    if os.path.exists(path):
+        os.remove(path)
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.bind(path)
+    os.chmod(path, 0o660)
+    s.listen(16)
+    return s
+
+
+def watchdog(srv, idle, exit_when_stale):
+    while True:
+        time.sleep(0.5)
+        working = any(st.get("state") in ("computing", "waiting") for st in list(B._stats.values()))
+        with LOCK:
+            quiet = STATE["active"] == 0 and not working
+            done = quiet and (time.time() - STATE["last"] > idle or (exit_when_stale and STATE["stale"]))
+        if done:
+            srv.shutdown()
+            return
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--socket", default=os.environ.get("GATBOX_BROWSE_SOCK", "/run/gatbox-browse/browse.sock"))
+    ap.add_argument("--idle", type=float, default=300, help="exit after this many seconds with nothing to do (default 300)")
+    ap.add_argument("--exit-when-store-missing", action="store_true",
+                    help="exit once a request found the store not connected, so the next start sees the current mounts")
+    a = ap.parse_args()
+    sock = listening_socket(a.socket)
+    srv = Server(a.socket, Handler, bind_and_activate=False)
+    srv.socket = sock
+    threading.Thread(target=watchdog, args=(srv, a.idle, a.exit_when_store_missing), daemon=True).start()
+    try:
+        srv.serve_forever(poll_interval=0.25)
+    finally:
+        srv.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

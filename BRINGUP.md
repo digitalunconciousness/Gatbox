@@ -665,8 +665,26 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
     - [x] F0's report from the Pi, 2026-11-15, in the note's §3: `fls -r` 200,331 entries in 33.5 s using 19 MB; FTS5 41,000
           rows a second and 76 MB per million files; reading a file out of the image is the slow part (about 6 MB/s on a large file,
           0.2 to 3 s on a small one, three samples), so thumbnails and text extraction are background work and F3 measures first
-    - [ ] F1 browse and preview (also stops a READ that is not for a machine from queueing for the archive), F2 index and name
-          search, F3 text search. Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
+    - [x] F1 built, 2026-11-15, **not installed**: FILES on the DISK tab (after RECORDS), 7" only. Images, then a volume's type,
+          size, used and free, COUNT WHAT'S ON IT (files, folders, photos, documents, other, oldest and newest, commonest
+          extensions, counted in the background and cached), folders by inode with NAME, DATE, SIZE and ALL, PHOTOS, DOCUMENTS,
+          200 rows a page, a photo or a PDF in the pinch-and-pan viewer, text as text, and an answer in words for a file that
+          is too large, too many pixels, damaged, or of a kind with no preview. Nothing is mounted. The service is
+          `backend/gatbox-browse` (sleuthkit, Pillow, `pdftoppm`; socket-activated, idle exit, no network) behind six loopback
+          GETs `/api/browse/{volumes,ls,stats,info,text,preview}`, refused to a phone. Phone: one line saying FILES is on the Pi's
+          screen. A READ for no machine no longer queues for the archive (sidecar `archive: none`).
+          `test-browse.sh`: 63 (invented ext4, FAT32 and swap behind DOS tables; every limit; hung tools killed; paths out of the
+          store; the daemon over a real socket), `test-bootstrap.sh`: 142 (the units pass `systemd-analyze verify`), `test-disk.sh`: 142,
+          `test-dash.sh`: 255, with the whole FILES flow in headless Chromium at 1024x600. Screenshots 25a to 25g (in a test run's folder).
+    - [ ] F1 install ⏸ (the owner reads this diff first, hard rule 5, then runs the bootstrap): sysusers `u gatbox-browse`;
+          `gatbox-browse.socket` and `gatbox-browse.service` (units, in the MANIFEST and `svc`); `gatbox-web.service` gains
+          `SupplementaryGroups=gatbox-browse`; `/usr/local/bin/gatbox-browse` and `gatboxlib/browse.py`; `--check` names the new
+          socket. Nothing in udev, `/boot` or `/etc/gatbox`. **The unit's sandbox has not run on a real Pi**, only
+          `systemd-analyze verify` and the daemon outside systemd. After the install, read-only checks at the Pi:
+          `systemd-analyze security gatbox-browse.service`, `systemctl status gatbox-browse.socket`, `ls -ld /run/gatbox-browse`,
+          then FILES on the 7": open the 80 GB image, COUNT WHAT'S ON IT, open a folder, a text file and a photo if there is one;
+          `journalctl -u gatbox-browse` clean; `/srv/gatbox/disks/_browse` exists (0700, the service's); no USB reset in `dmesg`.
+    - [ ] F2 index and name search, F3 text search. Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4

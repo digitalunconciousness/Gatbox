@@ -449,11 +449,16 @@ class Read(Work):
         os.remove(part)
         os.replace(mapf, base + ".map")
         self.info["stored"] = {"path": base + ".img", "new": True}
-        self.info["archive"] = {"state": "pending"}
+        # A drive that is not a machine's (an archive drive, a donor, someone's old disk) is never queued for the archive: the queue
+        # is how a machine's image would reach its hub, and a personal drive's image must never go anywhere without a yes. Nothing
+        # reads the queue today (checked 2026-11-15), and this keeps it that way for these.
+        for_machine = self.machine != "unassigned"
+        self.info["archive"] = {"state": "pending"} if for_machine else {"state": "none", "why": "not for a machine"}
         with open(os.open(base + ".json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644), "w") as f:
             json.dump(self.sidecar(), f, indent=1)
         os.remove(state)
-        queue(sha1, self.info["sha256"], base + ".img", self.machine)
+        if for_machine:
+            queue(sha1, self.info["sha256"], base + ".img", self.machine)
         self.step("store", base + ".img", progress=1.0)
 
     def sidecar(self):

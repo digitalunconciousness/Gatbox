@@ -363,7 +363,7 @@ def record(rel):
             _row("Image file", rel),
             _row("Image bytes", f"{side['bytes']:,}" if isinstance(side.get("bytes"), int) else None),
             _row("Image SHA-256", side.get("sha256")), _row("Image SHA-1", side.get("sha1")),
-            _row("Copied to the archive", {"pending": "queued, not sent yet", "uploaded": "in the archive"}.get(arch, arch)),
+            _row("Copied to the archive", {"pending": "queued, not sent yet", "uploaded": "in the archive", "none": "no: not for a machine, so it is not queued"}.get(arch, arch)),
             _row("Notes", side.get("note") or None)]
     sections = [{"title": "THE READ", "rows": read}]
 

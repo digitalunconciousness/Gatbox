@@ -2240,15 +2240,27 @@
   // the viewer: one page as an image drawn by the Pi (no PDF plugin on the kiosk), fit to width; drag pans, pinch or
   // +/− zoom (the kiosk runs --disable-pinch, so the page does its own), a sideways swipe at fit turns the page,
   // double tap zooms in / back to fit. The next page is fetched ahead; a sharper image comes when zoomed in.
-  const V = {slug: null, doc: null, page: 1, z: 1, tx: 0, ty: 0, ptrs: new Map(), pinch: null, drag: null, w: 0, lastTap: 0};
+  const V = {slug: null, doc: null, page: 1, z: 1, tx: 0, ty: 0, ptrs: new Map(), pinch: null, drag: null, w: 0, lastTap: 0, url: null};
   const snapW = px => [800, 1200, 1600, 2400].find(w => w >= px) || 2400;
   function openViewer(slug, doc, page) {
     if (!doc) return toast("That document isn't on the Pi yet", "warn");
-    Object.assign(V, {slug, doc, page: Math.max(1, Math.min(page || 1, doc.pages || 1)), z: 1, tx: 0, ty: 0, w: 0});
+    Object.assign(V, {slug, doc, page: Math.max(1, Math.min(page || 1, doc.pages || 1)), z: 1, tx: 0, ty: 0, w: 0, url: null});
+    $("#vw-search").classList.remove("hide");
     $("#vw-title").textContent = doc.title;
     const a = $("#vw-pdf");
     a.href = `/manual/${encodeURIComponent(slug)}/${encodeURIComponent(doc.file)}`;
     a.classList.toggle("hide", S.local || BOX);
+    $("#vw-img").removeAttribute("src"); $("#vw-img").dataset.url = "";
+    $("#viewer").classList.remove("hide");
+    vwLoad();
+  }
+  // A photo or a PDF from inside a stored image (FILES): the same viewer, with its pages drawn by gatbox-browse. urlFn(page, width)
+  // is the preview address; there is no search and no PDF link for these.
+  function openFileViewer(title, pages, urlFn) {
+    Object.assign(V, {slug: null, doc: {title, pages}, page: 1, z: 1, tx: 0, ty: 0, w: 0, url: urlFn});
+    $("#vw-title").textContent = title;
+    $("#vw-pdf").classList.add("hide");
+    $("#vw-search").classList.add("hide");
     $("#vw-img").removeAttribute("src"); $("#vw-img").dataset.url = "";
     $("#viewer").classList.remove("hide");
     vwLoad();
@@ -2260,13 +2272,14 @@
     $("#vw-prev").disabled = V.page <= 1; $("#vw-next").disabled = V.page >= V.doc.pages;
     if (w > V.w || img.dataset.page !== String(V.page)) {
       V.w = Math.max(w, img.dataset.page === String(V.page) ? V.w : 0);
-      const url = pageUrl(V.slug, V.doc.file, V.page, V.w);
+      const addr = p => V.url ? V.url(p, V.w) : pageUrl(V.slug, V.doc.file, p, V.w);
+      const url = addr(V.page);
       $("#vw-wait").textContent = "drawing the page…";
       $("#vw-wait").classList.remove("hide");
       img.onload = () => { $("#vw-wait").classList.add("hide"); vwClamp(); vwApply(); };
       img.onerror = () => { $("#vw-wait").textContent = "couldn't draw this page"; };
       img.dataset.url = url; img.dataset.page = String(V.page); img.src = url;
-      if (V.page < V.doc.pages) new Image().src = pageUrl(V.slug, V.doc.file, V.page + 1, V.w);
+      if (V.page < V.doc.pages) new Image().src = addr(V.page + 1);
     }
     vwApply();
   }
@@ -2847,7 +2860,9 @@
   // 7" (note §10, and the owner's 2026-11-03 answer on ticking).
   const K = {st: null, sig: null, images: null, imgSig: null, list: null, cap: null, listFor: undefined, mode: "read",
              src: null, media: null, machine: null, machineName: null, label: null, image: null, target: null,
-             ackFor: null, holding: false, pending: false, expT: null, info: false, swap: null, rec: null};
+             ackFor: null, holding: false, pending: false, expT: null, info: false, swap: null, rec: null,
+             fb: {view: "images", img: null, label: "", vols: null, vol: null, volName: "", path: [], sort: "name", order: "asc", kind: "all",
+                  page: 0, ls: null, file: null, info: null, text: null, err: null, busy: null, stats: {}, poll: null}};
   const GB = n => n >= 1e12 ? (n / 1e12).toFixed(2) + " TB" : n >= 1e9 ? (n / 1e9).toFixed(1) + " GB"
                 : n >= 1e6 ? Math.round(n / 1e6) + " MB" : (n || 0).toLocaleString("en-US") + " bytes";
   const exact = n => (n || 0).toLocaleString("en-US") + " bytes";
@@ -2865,6 +2880,7 @@
   const DISK_LABEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
   const DISK_DOING = {read: "READING", retry: "RETRYING", check: "CHECKING", write: "WRITING"};
 
+  const loadImages = () => api("GET", "/api/disk/images").then(r => { K.images = r.images; renderDisk(); }).catch(() => {});
   async function loadDisk() {
     let st;
     try { st = await api("GET", "/api/disk"); } catch (e) { return; }
@@ -2878,7 +2894,7 @@
     const isig = [st.store.mounted, s.job, s.state].join("|");       // a job ended, or the store came or went
     if (K.images === null || isig !== K.imgSig) {
       K.imgSig = isig;
-      api("GET", "/api/disk/images").then(r => { K.images = r.images; renderDisk(); }).catch(() => {});
+      loadImages();
     }
     if (s.op === "write" && s.verified && K.listFor !== s.job) loadChecklist(s.job);
     else if (K.listFor === undefined) loadChecklist(null);
@@ -2928,24 +2944,25 @@
     const s = st.status, ctl = S.local;
     B.appendChild(storeLine(st));
     if (st.busy || (s && s.state === "running")) B.appendChild(diskProgress(st));
-    else if (s && s.state) B.appendChild(diskResult(s, ctl));
+    else if (s && s.state && !(ctl && K.mode === "files")) B.appendChild(diskResult(s, ctl));   // FILES needs the room: the last job's verdict is on RECORDS
     if (!ctl) {                                      // a phone: what's going on, no controls
       const c = el("div", "card");
       add(c, el("h2", null, "Drives on USB"), driveTiles(st, null, null, 0), driveInfoBlock(st),
           el("div", "mut", "READ and WRITE are on the Pi's own screen."));
-      add(B, c, checklistCard(), recordCard(), diskImagesCard(st));
+      add(B, c, checklistCard(), recordCard(), el("div", "card mut", "FILES, for looking inside an image, is on the Pi's own screen."), diskImagesCard(st));
       return;
     }
     const seg = el("div", "seg");
-    for (const [k, t] of [["read", "READ"], ["write", "WRITE"], ["swap", "SWAP"], ["records", "RECORDS"], ["checklist", "CHECKLIST"]]) {
+    for (const [k, t] of [["read", "READ"], ["write", "WRITE"], ["swap", "SWAP"], ["records", "RECORDS"], ["files", "FILES"], ["checklist", "CHECKLIST"]]) {
       const b = el("button", K.mode === k ? "on" : null, t);
-      b.addEventListener("click", () => { K.mode = k; renderDisk(); });
+      b.addEventListener("click", () => { K.mode = k; if (k === "files" || k === "records") loadImages(); renderDisk(); });
       seg.appendChild(b);
     }
     B.appendChild(seg);
     if (K.mode === "write") diskWritePanel(B, st);
     else if (K.mode === "swap") B.appendChild(swapCard(st));
     else if (K.mode === "records") B.appendChild(recordCard());
+    else if (K.mode === "files") B.appendChild(filesCard(st));
     else if (K.mode === "checklist") B.appendChild(checklistCard());
     else diskReadPanel(B, st);
     if (K.mode === "read" || K.mode === "write") B.appendChild(diskImagesCard(st));
@@ -3190,7 +3207,7 @@
     if (!imgs) { c.appendChild(el("div", "mut", "Reading the store's list…")); return c; }
     if (!imgs.length) { c.appendChild(el("div", "mut", "None yet: READ a drive and its image lands here.")); return c; }
     for (const x of imgs.slice(0, 20)) {
-      const r = el("div", "dk-img"), arch = {pending: ["ARCHIVE PENDING", "mut"], uploaded: ["ARCHIVED", "ok"]}[x.archive];
+      const r = el("div", "dk-img"), arch = {pending: ["ARCHIVE PENDING", "mut"], uploaded: ["ARCHIVED", "ok"], none: ["NOT FOR THE ARCHIVE", "mut"]}[x.archive];
       add(r, el("b", null, (x.label || base(x.image)) + " "),
           x.media ? el("span", "tag cy", x.media.toUpperCase()) : null,
           el("span", "tag " + (x.reads === 2 ? "ok" : "mut"), x.reads === 2 ? "READ TWICE, MATCH" : "READ ONCE"),
@@ -3388,6 +3405,215 @@
       c.appendChild(row);
     }
     return c;
+  }
+
+  // --- FILES: look inside a stored image (docs/plans/2026-11-15-drive-browser.md) --------------------------------------------
+  // Read-only, and for this screen only: gatbox-web refuses it to a phone. gatbox-browse reads the image with sleuthkit; nothing
+  // is mounted. A folder is named by its inode and every row carries its own, so this walks down by inode and never builds a path.
+  // What comes out of an image is slow (a spinning drive): every step says what it is waiting for, and BACK always works.
+  const FB = K.fb;
+  const fbQ = o => Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== "")
+                         .map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+  const fbDir = () => FB.path.length ? FB.path[FB.path.length - 1].inode : null;
+  const FB_TAG = {folder: ["FOLDER", "cy"], photo: ["PHOTO", "ok"], document: ["DOCUMENT", "warn"], link: ["LINK", "mut"]};
+  const num = n => (n || 0).toLocaleString("en-US");
+  async function fbGo(promise, what) {
+    FB.busy = what; FB.err = null; renderDisk();
+    try { return await promise; }
+    catch (e) { FB.err = String(e.message || e); return null; }
+    finally { FB.busy = null; renderDisk(); }
+  }
+  function fbImages() { clearTimeout(FB.poll); Object.assign(FB, {view: "images", err: null}); renderDisk(); }
+  async function fbOpenImage(x) {
+    Object.assign(FB, {view: "volumes", img: x.image, label: x.label || base(x.image), vols: null, vol: null, path: [], ls: null,
+                       file: null, info: null, text: null, stats: {}});
+    const r = await fbGo(api("GET", "/api/browse/volumes?" + fbQ({image: x.image})), "reading the partitions…");
+    if (r) FB.vols = r;
+    renderDisk();
+  }
+  async function fbOpenVolume(v) {
+    clearTimeout(FB.poll);
+    Object.assign(FB, {view: "folder", vol: v.start, path: [], sort: "name", order: "asc", kind: "all", page: 0, ls: null, file: null,
+                       volName: v.fs ? v.fs.type + (v.fs.label ? ` '${v.fs.label}'` : "") : v.desc});
+    await fbLoad();
+  }
+  async function fbLoad() {
+    const r = await fbGo(api("GET", "/api/browse/ls?" + fbQ({image: FB.img, vol: FB.vol, dir: fbDir(), sort: FB.sort, order: FB.order,
+                                                            kind: FB.kind, page: FB.page})), "reading the folder…");
+    if (r) { FB.ls = r; FB.page = r.page; }
+    renderDisk();
+  }
+  async function fbStats(vol, begin) {
+    try { FB.stats[vol] = await api("GET", "/api/browse/stats?" + fbQ({image: FB.img, vol, begin: begin ? 1 : 0})); }
+    catch (e) { FB.stats[vol] = {state: "error", error: String(e.message || e)}; }
+    renderDisk();
+    clearTimeout(FB.poll);
+    const s = FB.stats[vol];
+    if (FB.view === "volumes" && S.view === "disk" && K.mode === "files" && s && (s.state === "computing" || s.state === "waiting"))
+      FB.poll = setTimeout(() => fbStats(vol, false), 2000);
+  }
+  async function fbOpenFile(e) {
+    const q = {image: FB.img, vol: FB.vol, inode: e.inode, size: e.size};
+    Object.assign(FB, {view: "file", file: e, info: null, text: null, err: null});
+    const info = await fbGo(api("GET", "/api/browse/info?" + fbQ(q)), "reading the file out of the image…");
+    if (!info) return;                                               // the error is on screen, with BACK
+    FB.info = info;
+    if (info.kind === "text") {
+      const t = await fbGo(api("GET", "/api/browse/text?" + fbQ(q)), "reading the text…");
+      if (t) FB.text = t;
+    } else if (info.kind === "photo" || info.kind === "pdf") {
+      FB.view = "folder"; FB.file = null;                            // closing the viewer lands on the folder
+      openFileViewer(e.name, info.pages || 1, (page, w) => "/api/browse/preview?" + fbQ(Object.assign({page, w}, q)));
+    }
+    renderDisk();
+  }
+  const fbBack = (label, fn) => { const b = el("button", null, label); b.addEventListener("click", fn); return b; };
+  function filesCard(st) {
+    const c = el("div", "card dk-files");
+    if (!st.store.mounted) {
+      add(c, el("h2", null, "Inside an image"), el("div", "mut", "The images are on the image store: plug it in."));
+      return c;
+    }
+    if (FB.busy) c.appendChild(el("div", "dk-busy cy", FB.busy));
+    if (FB.err) {
+      if (FB.view === "file" && FB.file) c.appendChild(el("h2", null, FB.file.name));           // which file the refusal is about
+      c.appendChild(el("div", "bad dk-err", FB.err));
+      const row = el("div", "btnrow");
+      row.appendChild(fbBack(FB.view === "file" ? "BACK TO THE FOLDER" : "ALL IMAGES", () => { FB.err = null; FB.view = FB.view === "file" ? "folder" : "images"; renderDisk(); }));
+      c.appendChild(row);
+      return c;
+    }
+    if (FB.view === "volumes") fbVolumes(c);
+    else if (FB.view === "folder") fbFolder(c);
+    else if (FB.view === "file") fbFileView(c);
+    else fbImageList(c);
+    return c;
+  }
+  function fbImageList(c) {
+    const imgs = K.images;
+    c.appendChild(el("h2", null, "Inside an image"));
+    if (!imgs) { c.appendChild(el("div", "mut", "Reading the store's list…")); return; }
+    if (!imgs.length) { c.appendChild(el("div", "mut", "No images yet: READ a drive and it appears here.")); return; }
+    c.appendChild(el("div", "mut", "Nothing is mounted and nothing is changed: the image is read, and what is in it is drawn here. Tap one."));
+    for (const x of imgs.slice(0, 40)) {
+      const r = el("button", "row dk-recrow");
+      add(r, el("b", null, x.label || base(x.image)),
+          el("div", "mut", `${x.machine} · ${GB(x.bytes)} · ${stamp(x.started)}${x.source ? " · from " + x.source : ""}`));
+      r.addEventListener("click", () => fbOpenImage(x));
+      c.appendChild(r);
+    }
+  }
+  function fbVolumes(c) {
+    c.appendChild(add(el("div", "btnrow"), fbBack("ALL IMAGES", fbImages)));
+    c.appendChild(el("h2", null, FB.label));
+    const v0 = FB.vols;
+    if (!v0) return;
+    c.appendChild(el("div", "mut", `${exact(v0.bytes)} · ${v0.table || "no partition table"}`));
+    for (const v of v0.volumes) {
+      const d = el("div", "dk-vol" + (v.fs ? "" : " dk-no")), fs = v.fs;
+      add(d, el("b", null, `${v.slot} · ${v.desc}`), v.length ? el("span", "mut", ` ${GB(v.length * 512)}`) : null);
+      if (fs) {
+        const pct = fs.size_bytes && fs.used_bytes != null ? Math.round(100 * fs.used_bytes / fs.size_bytes) : null;
+        add(d, el("div", null, `${fs.type}${fs.label ? " · '" + fs.label + "'" : ""} · ${fs.size_bytes ? GB(fs.size_bytes) : "size not reported"}`
+                              + (pct != null ? ` · ${GB(fs.used_bytes)} used, ${GB(fs.free_bytes)} free (${pct}%)` : "")));
+        const s = FB.stats[v.start];
+        if (!s || s.state === "none") {
+          const b = el("button", null, "COUNT WHAT'S ON IT");
+          b.addEventListener("click", () => fbStats(v.start, true));
+          d.appendChild(b);
+          d.appendChild(el("div", "mut", "Reads the whole listing once, in the background. Takes a minute or more on a big drive."));
+        } else if (s.state === "computing" || s.state === "waiting") {
+          d.appendChild(el("div", "cy", s.state === "waiting" ? "waiting for the disk job to finish…" : `counting… ${num(s.entries)} entries so far`));
+        } else if (s.state === "error") {
+          d.appendChild(el("div", "bad", s.error));
+          const b = el("button", null, "TRY AGAIN");
+          b.addEventListener("click", () => fbStats(v.start, true));
+          d.appendChild(b);
+        } else {
+          const kinds = [["photos", "photos"], ["documents", "documents"], ["other", "other"]];
+          d.appendChild(el("div", null, `${num(s.files)} files · ${num(s.folders)} folders · ${num(s.links)} links`
+                                         + (s.deleted ? ` · ${num(s.deleted)} deleted entries not counted` : "")));
+          for (const [k, t] of kinds) d.appendChild(el("div", "mut", `${t}: ${num(s[k].files)} files, ${GB(s[k].bytes)}`));
+          if (s.oldest) d.appendChild(el("div", "mut", `files modified ${stamp(s.oldest).slice(0, 10)} to ${stamp(s.newest).slice(0, 10)}`));
+          if ((s.extensions || []).length) d.appendChild(el("div", "mut", "commonest: " + s.extensions.map(([e, n]) => `.${e} ${num(n)}`).join(", ")));
+        }
+        const open = el("button", "primary", "OPEN");
+        open.addEventListener("click", () => fbOpenVolume(v));
+        d.appendChild(open);
+      } else {
+        d.appendChild(el("div", v.encrypted ? "warn" : "mut", v.note || "no filesystem recognized"));
+        if (v.peek) d.appendChild(el("div", "mut dk-hex", "first bytes: " + v.peek));
+      }
+      c.appendChild(d);
+    }
+  }
+  function fbCrumbs() {
+    const row = el("div", "btnrow dk-crumbs");
+    const mk = (t, fn) => row.appendChild(fbBack(t, fn));
+    mk("ALL IMAGES", fbImages);
+    mk(FB.label, () => { FB.view = "volumes"; renderDisk(); });
+    mk(FB.volName, () => { FB.path = []; FB.page = 0; fbLoad(); });
+    FB.path.forEach((p, i) => mk(p.name, () => { FB.path = FB.path.slice(0, i + 1); FB.page = 0; fbLoad(); }));
+    return row;
+  }
+  function fbFolder(c) {
+    c.appendChild(fbCrumbs());
+    const s1 = el("div", "seg"), s2 = el("div", "seg");
+    for (const [k, t] of [["name", "NAME"], ["date", "DATE"], ["size", "SIZE"]]) {
+      const on = FB.sort === k, b = el("button", on ? "on" : null, t + (on ? (FB.order === "asc" ? " ↑" : " ↓") : ""));
+      b.addEventListener("click", () => {
+        if (FB.sort === k) FB.order = FB.order === "asc" ? "desc" : "asc"; else { FB.sort = k; FB.order = k === "name" ? "asc" : "desc"; }
+        FB.page = 0; fbLoad();
+      });
+      s1.appendChild(b);
+    }
+    for (const [k, t] of [["all", "ALL"], ["photos", "PHOTOS"], ["documents", "DOCS"]]) {
+      const b = el("button", FB.kind === k ? "on" : null, t);
+      b.addEventListener("click", () => { FB.kind = k; FB.page = 0; fbLoad(); });
+      s2.appendChild(b);
+    }
+    c.appendChild(add(el("div", "dk-sortkind"), s1, s2));                  // sort and kind side by side: a row of the 600 px is worth keeping
+    const L = FB.ls;
+    if (!L) return;
+    c.appendChild(el("div", "mut", `${num(L.total)} item${L.total === 1 ? "" : "s"}` + (L.pages > 1 ? ` · page ${L.page + 1} of ${L.pages}` : "")
+                                    + (L.deleted_hidden ? ` · ${num(L.deleted_hidden)} deleted not shown` : "")));
+    if (L.capped) c.appendChild(el("div", "warn", "Only the first 100,000 entries of this folder are listed."));
+    if (!L.entries.length) c.appendChild(el("div", "mut dk-none", "Nothing here."));
+    for (const e of L.entries) {
+      const r = el("button", "row dk-frow"), tag = FB_TAG[e.kind];
+      const meta = e.kind === "folder" ? (e.mtime ? stamp(e.mtime) : "folder") : e.kind === "link" ? `points to ${e.target || "?"}`
+                 : `${GB(e.size)}${e.mtime ? " · " + stamp(e.mtime) : ""}`;
+      add(r, add(el("div", "dk-fn"), el("b", null, e.name), tag ? el("span", "tag " + tag[1], tag[0]) : null), el("div", "mut", meta));
+      r.addEventListener("click", () => {
+        if (e.kind === "folder") { FB.path.push({name: e.name, inode: e.inode}); FB.page = 0; fbLoad(); }
+        else if (e.kind === "link") toast(`A link: it points to ${e.target || "somewhere else"}`, "warn", 5000);
+        else fbOpenFile(e);
+      });
+      c.appendChild(r);
+    }
+    if (L.pages > 1) {
+      const row = el("div", "btnrow"), prev = el("button", null, "◀ PREV"), next = el("button", null, "NEXT ▶");
+      prev.disabled = L.page <= 0; next.disabled = L.page >= L.pages - 1;
+      prev.addEventListener("click", () => { FB.page = L.page - 1; fbLoad(); });
+      next.addEventListener("click", () => { FB.page = L.page + 1; fbLoad(); });
+      add(row, prev, next);
+      c.appendChild(row);
+    }
+  }
+  function fbFileView(c) {
+    const e = FB.file || {};
+    c.appendChild(add(el("div", "btnrow"), fbBack("BACK TO THE FOLDER", () => { FB.view = "folder"; FB.file = null; renderDisk(); })));
+    add(c, el("h2", null, e.name || "file"), el("div", "mut", `${GB(e.size)}${e.mtime ? " · modified " + stamp(e.mtime) : ""}`));
+    const i = FB.info;
+    if (!i) return;
+    if (i.kind === "text" && FB.text) {
+      c.appendChild(el("pre", "dk-text", FB.text.text));
+      c.appendChild(el("div", "mut", `${FB.text.encoding}${FB.text.cut ? " · only the start is shown (the first 64 KB)" : ""}`));
+    } else if (i.kind === "text") {
+      c.appendChild(el("div", "mut", "Reading the text…"));
+    } else {
+      c.appendChild(el("div", "mut", i.message || "no preview for this kind of file"));
+    }
   }
 
   // The swap checklist (note §4.4): it blocks nothing, and each tick keeps its time. One per write; one can be

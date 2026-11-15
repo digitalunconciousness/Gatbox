@@ -1,0 +1,16 @@
+# Installed by gatbox-bootstrap.sh (F1 of docs/plans/2026-11-15-drive-browser.md).
+# The door gatbox-web knocks on for FILES on the 7". Connecting starts gatbox-browse.service, which exits again when nothing
+# has asked for a while, so the browser is not running while nobody is looking and a fresh start sees the store's current
+# mounts. Only the group gatbox-browse may connect: gatbox-web is the one member.
+[Unit]
+Description=GATBOX drive browser: the socket gatbox-web asks (FILES on the 7")
+
+[Socket]
+ListenStream=/run/gatbox-browse/browse.sock
+DirectoryMode=0755
+SocketMode=0660
+SocketUser=gatbox-browse
+SocketGroup=gatbox-browse
+
+[Install]
+WantedBy=sockets.target

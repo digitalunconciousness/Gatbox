@@ -638,6 +638,17 @@ def _browse(route):
     return handler
 
 
+def _browse_post(route):
+    """The drive browser's one write: start, stop or remove an image's name index (derived data in the browser's own folder).
+    The Pi's own screen only, like every other FILES route."""
+    def handler(h, m, q):
+        if not h.is_local():
+            raise Bad(403, "FILES is on the Pi's own screen: what is inside a drive is not shown anywhere else")
+        status, ctype, body = browse.post(route, h.body())
+        h.send(status, body, ctype, cache="no-store")
+    return handler
+
+
 def api_disk_checklist_get(h, m, q):
     h.json(200, disk.checklist(q1(q, "write")))
 
@@ -1070,6 +1081,10 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("GET", r"/api/browse/info", _browse("/info")),
     ("GET", r"/api/browse/text", _browse("/text")),
     ("GET", r"/api/browse/preview", _browse("/preview")),
+    ("GET", r"/api/browse/search", _browse("/search")),
+    ("GET", r"/api/browse/locate", _browse("/locate")),
+    ("GET", r"/api/browse/index", _browse("/index")),
+    ("POST", r"/api/browse/index", _browse_post("/index")),
     ("POST", r"/api/disk/read", api_disk_read),
     ("POST", r"/api/disk/retry", api_disk_retry),
     ("POST", r"/api/disk/check", api_disk_check),

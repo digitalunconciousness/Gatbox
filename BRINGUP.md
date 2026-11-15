@@ -684,7 +684,17 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           `systemd-analyze security gatbox-browse.service`, `systemctl status gatbox-browse.socket`, `ls -ld /run/gatbox-browse`,
           then FILES on the 7": open the 80 GB image, COUNT WHAT'S ON IT, open a folder, a text file and a photo if there is one;
           `journalctl -u gatbox-browse` clean; `/srv/gatbox/disks/_browse` exists (0700, the service's); no USB reset in `dmesg`.
-    - [ ] F2 index and name search, F3 text search. Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
+    - [x] F2 built, 2026-11-15, **not installed** (stacked on F1): a name index and search. On FILES → ALL IMAGES each image shows
+          NOT INDEXED, QUEUED, INDEXING n, WAITING (for a disk job) or INDEXED n files, and a tap starts, stops or removes it; INDEX ALL
+          and STOP INDEXING; SEARCH opens the keypad. Results: path, size, date, image, with kind chips (ALL, PHOTOS, DOCS, OTHER) and year
+          chips, and a line saying how many of the store's images were searched. A result opens as from a folder, and SHOW IN FOLDER opens
+          its folder on the right page with the row marked. The index is `/srv/gatbox/disks/_browse/browse.sqlite`, disposable. No new
+          unit, user or system config; one more library file in the MANIFEST (`gatboxlib/browseindex.py`). `test-browse-index.sh`: 68
+          (indexing, search, locate, a stop or a crash leaves nothing, the disk-job pause, a restart, the index deleted, the image moved,
+          limits, the service staying up while it works, a phone's 403), `test-dash.sh`: 271. Mutation checks, each fails a test.
+          **Not on a real drive yet:** the 80 GB image's 200,331 entries should take about half a minute and about 15 MB of index.
+          Read-only check at the Pi after the install: index it from the 7", then `ls -l /srv/gatbox/disks/_browse/`.
+    - [ ] F3 text search. Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4

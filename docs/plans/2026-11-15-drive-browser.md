@@ -182,8 +182,8 @@ which are short, are never blocked.
   at service start by `ExecStartPre=+`, only when the store is mounted and carries its marker.
 - **Keyed by the image's SHA-1.** An image is immutable, so everything derived from it can be rebuilt. **Deleting `_browse`
   loses nothing of record**; the image and its sidecar are the record.
-- **Tables:** `volumes` (image, offset, filesystem, label, sizes), `files` (volume, inode, path, name, extension, kind, size,
-  dates), an FTS5 table over paths, and a second FTS5 table over extracted text (capped per file). Thumbnails are
+- **Tables (F2 built the first three, see §10):** `volumes` (image, offset, filesystem, label, sizes), `files` (volume, inode, path,
+  name, extension, kind, size, dates), an FTS5 table over paths, and (F3) a second FTS5 table over extracted text (capped per file). Thumbnails are
   `thumbs/<image sha1>/<inode>.jpg` with a size cap that drops the oldest.
 - The store drive carries the data; if it is unplugged, FILES says IMAGE STORE NOT CONNECTED like the rest of the tab.
 
@@ -259,7 +259,28 @@ documents and search. Then, to the seven below: **"recommended"**, all of them.
     work, which F2 brings with the index.
   - No file is ever opened by the web process. `ReadOnlyPaths` on the store, no network, no devices, `MemoryMax=512M`.
   - The same change stops a READ for no machine from queueing for the archive: the sidecar says `archive: none, not for a machine`.
-- **F2: the index and name search.** The indexer with pause and resume, `browse.sqlite`, search routes and the results list.
+- **F2: the index and name search (built 2026-11-15, stacked on F1, not installed).** `gatboxlib/browseindex.py`, three more routes
+  (`/search`, `/locate`, `/index`) and the one POST, and the FILES search view. As built, and where it differs from the sketch above:
+  - One SQLite file, `<store>/_browse/browse.sqlite` (WAL), schema version 1 (a different version is deleted and rebuilt from the
+    images). `volumes` (state `pending`, `indexing`, `done`, `error`), `files` (inode, name, kind, size, mtime, and the parent
+    folder's row, so SHOW IN FOLDER can open the folder), an FTS5 table over the path (`unicode61`, prefix indexes), and `wanted`,
+    the queue. Keyed by the image's SHA-1: the same bytes under two machines are indexed once.
+  - **A volume is indexed in one pass over `fls -r` and is searchable only when the pass is complete.** A stop or a crash leaves
+    nothing a search can see, and the next start deletes the rows of a pass that never finished. The note said "progress is per
+    file"; the unit is a volume instead, because killing and redoing a pass costs minutes (F0: about 6,000 entries a second)
+    where a per-folder walk would start a process per folder.
+  - It stands still while a disk job is queued or running (it stops reading `fls`, which stalls on its full pipe) and says so
+    on the screen. It runs only while the browser runs; the browser does not leave while it is indexing. After a reboot nothing
+    runs until FILES is opened, which asks for the state and goes on with the queue.
+  - Words, not substrings: every word is a prefix of a word in the path, all are required, case does not matter, and what is typed
+    is cut to words before it reaches FTS, so a query cannot be syntax. Filters: kind (photos, documents, other, folders), year (chips
+    built from the matches), size (in the API). **A date range is not in the screen**, only the year chips.
+  - The answer always says how many of the store's images it searched ("1 result · searched 1 of 3 images. One that is not
+    indexed is not searched"), so an empty result is never read as "not there". An image with no filesystem says so.
+  - SHOW IN FOLDER is a button on each result, not inside the viewer: it opens the folder on the page that holds the file
+    (`ls` takes `at=<inode>`) with the row marked. A result's own tap opens the file as from a folder.
+  - Not indexed: deleted entries and links (hidden in v1, as in the folder view). Limits: 10,000,000 entries a volume, 500,000
+    folders remembered (a file below the rest opens from the top of its volume), results counted up to 10,000.
 - **F3: text search.** PDF, text and Office extraction, snippets, per-image coverage, the optional `catdoc`.
 - **F4 (not covered by this OK):** a phone with a pairing PIN, copying files out, deleted files, OCR, HEIC, duplicate
   detection across drives.

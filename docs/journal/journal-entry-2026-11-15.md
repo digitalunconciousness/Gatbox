@@ -46,6 +46,16 @@
   empty inode passed validation and read the root; and I had written "streamed, never held whole" about a folder in the
   note, when sorting needs the whole folder in memory (it is cut at 100,000 entries and says so). The unit's sandbox has not run
   on the Pi: the install step has read-only checks for that.
+- F2 of the browser, the name index and search, built on top of F1 and not installed. One SQLite file with an FTS5 table in
+  `_browse/` on the store, keyed by the image's SHA-1 and safe to delete. A volume is indexed in one `fls -r` pass and becomes
+  searchable only when the pass is whole; a stop, a crash or a restart leaves nothing a search can see, and the pass stands still
+  while a disk job runs. The search says how many of the store's images it looked at, so an empty answer is not read as "not
+  there". Three things the tests showed me: the browser starts its tools with a scrubbed environment, so a stand-in `fls` has to
+  be steered by files beside it, not by environment variables (the first "slow" test was only slow by accident); my
+  "a stopped pass leaves no rows" test passed for the wrong reason, because the rows it counted belonged to another image and the
+  pass had not written any yet, which a mutation check caught; and asking for the index's state created the index file and started
+  a worker, which now does neither unless there is work. And on the screen, SEARCH showed the results from before an image was
+  removed from the index until a new search was typed.
 - Not done: a first READ from the 7″ and any WRITE on real media; the hidden-area question; the cab-side checks in
   the procedure's 5.4 are the owner's. Task 3 (the MAME check on an image) still waits on a `chdman` output. The deck
   does not record the device letter, the two hash passes with their times, or a write's time and speed, so those lines of

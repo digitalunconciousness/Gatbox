@@ -39,6 +39,8 @@ PER_PAGE = 200
 FOLDER_CAP = 100_000                                    # entries held for one folder (sorting needs them in memory)
 MAX_PIXELS = 50_000_000
 CACHE_CAP = 256 * MiB                                   # extracted files kept for the next page or the next look
+THUMB_EDGE = 192                                        # the longest side of a thumbnail, in pixels
+THUMB_CAP = 2048 * MiB                                  # thumbnails kept on the store; the oldest go first
 PHOTO = {"jpg", "jpeg", "png", "gif", "tif", "tiff", "bmp", "webp", "heic", "heif", "cr2", "nef", "arw", "dng", "raw"}
 DOC = {"pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "txt", "rtf", "md", "csv", "html", "htm", "epub"}
 INODE = re.compile(r"^[0-9]+(-[0-9]+){0,2}$")           # ext 12, NTFS 5-144-1
@@ -681,6 +683,126 @@ def preview(rel, start, inode, page=1, width=1200, size=None):
             return fh.read(30 * MiB), "image/jpeg"
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+# --- thumbnails ------------------------------------------------------------------------------------------------------------------
+
+_thumb_lock = threading.Lock()                           # one at a time: each is a slow read out of the image
+_thumb_made = [0]
+
+
+def _thumb_paths(side, start, ino):
+    """Where a photo's thumbnail lives: named by a hash of the image's SHA-1, the volume and the inode, never by anything the
+    client typed, so there is no path to walk out of the folder with."""
+    key = hashlib.sha1(f"{side.get('sha1')}:{start}:{ino}".encode()).hexdigest()
+    d = os.path.join(BROWSE_DIR, "thumbs", key[:2])
+    return d, os.path.join(d, key[2:] + ".jpg"), os.path.join(d, key[2:] + ".bad")
+
+
+def _trim_thumbs():
+    """Keep the thumbnails under THUMB_CAP, the oldest looked-at going first. The folder is derived data: a thumbnail that goes
+    is made again the next time it is asked for."""
+    root = os.path.join(BROWSE_DIR, "thumbs")
+    files = []
+    for d, _, names in os.walk(root):
+        for n in names:
+            if n.endswith(".jpg"):
+                p = os.path.join(d, n)
+                try:
+                    st = os.stat(p)
+                    files.append((st.st_mtime, st.st_size, p))
+                except OSError:
+                    pass
+    total = sum(s for _, s, _ in files)
+    if total <= THUMB_CAP:
+        return
+    for _, size, p in sorted(files):
+        if total <= THUMB_CAP * 0.9:
+            break
+        try:
+            os.remove(p)
+            total -= size
+        except OSError:
+            pass
+
+
+def thumb(rel, start, inode, size=None):
+    """(JPEG bytes, "image/jpeg") of a small thumbnail of a photo. Made once, kept in the store's _browse folder, and a photo
+    that cannot be drawn is remembered as such, so a grid does not try it again on every look. Waits for no disk job: while one
+    runs it is refused (409) and the screen shows its placeholder."""
+    path, side = image(rel)
+    v = _volume(rel, start)
+    ino = _file_inode(inode)
+    d, jpg, bad = _thumb_paths(side, v["start"], ino)
+    for name in (jpg,):
+        try:
+            with open(name, "rb") as fh:
+                data = fh.read(4 * MiB)
+            os.utime(name)
+            return data, "image/jpeg"
+        except OSError:
+            pass
+    try:
+        with open(bad) as fh:
+            code, _, msg = fh.read(240).partition("\n")
+        raise Err(_num(code, 415), msg or "no thumbnail for this file")          # said once: the same answer, with nothing read
+    except OSError:
+        pass
+    if disk_busy():
+        raise Err(409, "a disk job is running: thumbnails wait for it")
+    with _thumb_lock:
+        try:
+            with open(jpg, "rb") as fh:                              # made by a request that was ahead of this one
+                return fh.read(4 * MiB), "image/jpeg"
+        except OSError:
+            pass
+        try:
+            kind, _ = _sniff_file(rel, v["start"], ino)
+            if kind != "photo":
+                raise Err(415, "this is not a photo")
+            from PIL import Image, ImageOps
+            f = extract(rel, v["start"], ino, size)
+            im = _open_photo(f)
+            try:
+                im.draft("RGB", (THUMB_EDGE * 2, THUMB_EDGE * 2))    # a JPEG is decoded at a fraction of its size
+                im.load()
+                im = ImageOps.exif_transpose(im)
+                if im.mode not in ("RGB", "L"):
+                    im = im.convert("RGBA")
+                    bg = Image.new("RGB", im.size, (255, 255, 255))
+                    bg.paste(im, mask=im.split()[-1])
+                    im = bg
+                elif im.mode == "L":
+                    im = im.convert("RGB")
+                im.thumbnail((THUMB_EDGE, THUMB_EDGE), Image.LANCZOS)
+                buf = io.BytesIO()
+                im.save(buf, "JPEG", quality=75)
+            except Err:
+                raise
+            except Exception:
+                raise Err(415, "this photo could not be drawn") from None
+            data = buf.getvalue()
+        except Err as e:
+            if e.code in (413, 415):                                  # said once; a 409 or a 5xx is tried again
+                try:
+                    os.makedirs(d, exist_ok=True)
+                    with open(bad, "w") as fh:
+                        fh.write(f"{e.code}\n{e.msg[:200]}")
+                except OSError:
+                    pass
+            raise
+        try:
+            os.makedirs(d, exist_ok=True)
+            tmp = jpg + ".part"
+            with open(tmp, "wb") as fh:
+                fh.write(data)
+            os.replace(tmp, jpg)
+            _thumb_made[0] += 1
+            if _thumb_made[0] % 50 == 0:
+                _trim_thumbs()
+        except OSError:
+            pass                                                      # no folder to keep it in: it is still returned
+    return data, "image/jpeg"
 
 
 def text(rel, start, inode):

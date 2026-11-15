@@ -312,9 +312,10 @@ def _entries(path, start, inode):
     return entries, hidden, capped
 
 
-def ls(rel, start, dir_inode=None, sort="name", order="asc", kind="all", page=0, per_page=PER_PAGE):
+def ls(rel, start, dir_inode=None, sort="name", order="asc", kind="all", page=0, per_page=PER_PAGE, at=None):
     """One page of a folder. The folder is named by its inode (None is the root), and every entry carries its own, so a
-    client walks down by inode and never builds a path."""
+    client walks down by inode and never builds a path. `at` is an entry's inode: the page that holds it is returned
+    (SHOW IN FOLDER from a search result), whatever `page` said."""
     path, side = image(rel)
     v = _volume(rel, start)
     ino = _inode(dir_inode)
@@ -339,10 +340,18 @@ def ls(rel, start, dir_inode=None, sort="name", order="asc", kind="all", page=0,
     files = sorted((e for e in shown if e["kind"] != "folder"), key=keyf, reverse=rev)
     ordered = folders + files                                       # folders first, whatever the sort
     page = max(0, _num(page, 0))
+    found = None
+    if at:
+        found = _inode(at)
+        where = next((i for i, e in enumerate(ordered) if e["inode"] == found), None)
+        if where is None:
+            found = None
+        else:
+            page = where // per_page
     pages = max(1, -(-len(ordered) // per_page))
     page = min(page, pages - 1)
     return {"image": rel, "start": v["start"], "dir": ino, "total": len(ordered), "page": page, "pages": pages,
-            "entries": ordered[page * per_page:(page + 1) * per_page], "capped": capped, "deleted_hidden": hidden}
+            "entries": ordered[page * per_page:(page + 1) * per_page], "capped": capped, "deleted_hidden": hidden, "at": found}
 
 
 # --- what is on a volume (counted by a background pass) ---------------------------------------------------------------------

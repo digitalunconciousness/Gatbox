@@ -98,6 +98,7 @@ backend/gatboxlib/libsync.py                    /usr/local/lib/gatbox/gatboxlib/
 backend/gatboxlib/csvlog.py                     /usr/local/lib/gatbox/gatboxlib/csvlog.py             644
 backend/gatboxlib/disks.py                      /usr/local/lib/gatbox/gatboxlib/disks.py              644
 backend/gatboxlib/browse.py                     /usr/local/lib/gatbox/gatboxlib/browse.py             644
+backend/gatboxlib/browseindex.py                /usr/local/lib/gatbox/gatboxlib/browseindex.py        644
 backend/gatboxweb/__init__.py                   /usr/local/lib/gatbox/gatboxweb/__init__.py           644
 backend/gatboxweb/config.py                     /usr/local/lib/gatbox/gatboxweb/config.py             644
 backend/gatboxweb/server.py                     /usr/local/lib/gatbox/gatboxweb/server.py             644

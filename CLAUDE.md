@@ -160,9 +160,11 @@ M0–M7 done 2026-09-29 (the first real burn from the 7″ that evening); M8 on 
 **Drive browser (FILES on the DISK tab), F1 built 2026-11-15, not installed.** Look inside a stored disk image on the 7" only:
 volumes, folders by inode, counts by kind, photos, PDF pages and text, with nothing mounted. `backend/gatbox-browse` is a
 socket-activated stdlib service (its own user, no network, no devices, the store read-only, idle exit) that runs sleuthkit
-(`mmls`, `fsstat`, `fls`, `icat`), Pillow and `pdftoppm`; gatbox-web forwards six loopback GETs `/api/browse/*` and refuses a
+(`mmls`, `fsstat`, `fls`, `icat`), Pillow and `pdftoppm`; gatbox-web forwards the loopback routes `/api/browse/*` (GETs, and one POST that starts or stops an image's index) and refuses a
 phone. `gatboxlib/browse.py` is the logic. It is read-only and sends nothing to a drive, so hard rule 6 is unchanged. F2 (an
-index and name search) and F3 (text search) are next; spec `docs/plans/2026-11-15-drive-browser.md`, progress in BRINGUP.md.
+index and name search) is built on top (`gatboxlib/browseindex.py`: a disposable SQLite and FTS5 index in `_browse/` on the store, one volume
+per pass, searchable only when whole, standing still for a disk job). F3 (text search) is next; spec `docs/plans/2026-11-15-drive-browser.md`,
+progress in BRINGUP.md.
 A READ for no machine no longer queues for the archive (nothing drains that queue yet).
 
 **Disk imaging (phase D2), built 2026-11-03, installed on the Pi 2026-11-14.** Hard disks, CF and SD cards on the

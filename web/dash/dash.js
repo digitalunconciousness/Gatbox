@@ -2862,7 +2862,8 @@
              src: null, media: null, machine: null, machineName: null, label: null, image: null, target: null,
              ackFor: null, holding: false, pending: false, expT: null, info: false, swap: null, rec: null,
              fb: {view: "images", img: null, label: "", vols: null, vol: null, volName: "", path: [], sort: "name", order: "asc", kind: "all",
-                  page: 0, ls: null, file: null, info: null, text: null, err: null, busy: null, stats: {}, poll: null}};
+                  page: 0, ls: null, file: null, info: null, text: null, err: null, busy: null, stats: {}, poll: null,
+                  index: null, ixPoll: null, q: "", skind: "all", syear: null, spage: 0, sres: null, from: null, at: null, hit: null, hitRow: null}};
   const GB = n => n >= 1e12 ? (n / 1e12).toFixed(2) + " TB" : n >= 1e9 ? (n / 1e9).toFixed(1) + " GB"
                 : n >= 1e6 ? Math.round(n / 1e6) + " MB" : (n || 0).toLocaleString("en-US") + " bytes";
   const exact = n => (n || 0).toLocaleString("en-US") + " bytes";
@@ -2955,7 +2956,7 @@
     const seg = el("div", "seg");
     for (const [k, t] of [["read", "READ"], ["write", "WRITE"], ["swap", "SWAP"], ["records", "RECORDS"], ["files", "FILES"], ["checklist", "CHECKLIST"]]) {
       const b = el("button", K.mode === k ? "on" : null, t);
-      b.addEventListener("click", () => { K.mode = k; if (k === "files" || k === "records") loadImages(); renderDisk(); });
+      b.addEventListener("click", () => { K.mode = k; if (k === "files" || k === "records") loadImages(); if (k === "files") fbIndexLoad(); renderDisk(); });
       seg.appendChild(b);
     }
     B.appendChild(seg);
@@ -3420,10 +3421,10 @@
     catch (e) { FB.err = String(e.message || e); return null; }
     finally { FB.busy = null; renderDisk(); }
   }
-  function fbImages() { clearTimeout(FB.poll); Object.assign(FB, {view: "images", err: null}); renderDisk(); }
+  function fbImages() { clearTimeout(FB.poll); Object.assign(FB, {view: "images", err: null, from: null, hit: null}); fbIndexLoad(); renderDisk(); }
   async function fbOpenImage(x) {
     Object.assign(FB, {view: "volumes", img: x.image, label: x.label || base(x.image), vols: null, vol: null, path: [], ls: null,
-                       file: null, info: null, text: null, stats: {}});
+                       file: null, info: null, text: null, stats: {}, from: null, hit: null});
     const r = await fbGo(api("GET", "/api/browse/volumes?" + fbQ({image: x.image})), "reading the partitions…");
     if (r) FB.vols = r;
     renderDisk();
@@ -3431,14 +3432,63 @@
   async function fbOpenVolume(v) {
     clearTimeout(FB.poll);
     Object.assign(FB, {view: "folder", vol: v.start, path: [], sort: "name", order: "asc", kind: "all", page: 0, ls: null, file: null,
-                       volName: v.fs ? v.fs.type + (v.fs.label ? ` '${v.fs.label}'` : "") : v.desc});
+                       from: null, hit: null, volName: v.fs ? v.fs.type + (v.fs.label ? ` '${v.fs.label}'` : "") : v.desc});
     await fbLoad();
   }
   async function fbLoad() {
+    const at = FB.at;                                                // SHOW IN FOLDER: the page that holds this entry
+    FB.at = null;
     const r = await fbGo(api("GET", "/api/browse/ls?" + fbQ({image: FB.img, vol: FB.vol, dir: fbDir(), sort: FB.sort, order: FB.order,
-                                                            kind: FB.kind, page: FB.page})), "reading the folder…");
+                                                            kind: FB.kind, page: FB.page, at})), "reading the folder…");
     if (r) { FB.ls = r; FB.page = r.page; }
+    FB.hit = at && r && r.at ? r.at : null;
     renderDisk();
+  }
+  // --- the name index and search (F2) ---------------------------------------------------------------------------------------
+  async function fbIndexLoad() {
+    clearTimeout(FB.ixPoll);
+    try { FB.index = await api("GET", "/api/browse/index"); } catch (e) { FB.index = {images: {}, error: String(e.message || e)}; }
+    renderDisk();
+    const busy = Object.values(FB.index.images || {}).some(i => ["queued", "indexing", "waiting"].includes(i.state));
+    if (busy && S.view === "disk" && K.mode === "files" && (FB.view === "images" || FB.view === "search")) FB.ixPoll = setTimeout(fbIndexLoad, 3000);
+  }
+  async function fbIndexDo(action, image) {
+    try { FB.index = await api("POST", "/api/browse/index", {action, image}); } catch (e) { return fail(e); }
+    fbIndexLoad();
+  }
+  function fbSearchOpen() {
+    Object.assign(FB, {view: "search", err: null, from: null});
+    fbIndexLoad();
+    if (!FB.q) fbSearchType(); else fbSearch();                       // the index may have changed since the last look: ask again
+  }
+  async function fbSearchType() {
+    renderDisk();
+    const v = await keypad({title: "Words from the file's path (e.g. beach 2019, manual pdf)", max: 80, value: FB.q});
+    if (v == null) return;
+    Object.assign(FB, {q: v.trim(), spage: 0, syear: null});
+    fbSearch();
+  }
+  async function fbSearch() {
+    if (!FB.q) { FB.sres = null; renderDisk(); return; }
+    const r = await fbGo(api("GET", "/api/browse/search?" + fbQ({q: FB.q, kind: FB.skind, year: FB.syear, page: FB.spage})), "searching…");
+    if (r) { FB.sres = r; FB.spage = r.page; }
+    renderDisk();
+  }
+  // a result: its file opens as it does from a folder; a folder result opens that folder
+  function fbOpenHit(h) {
+    if (h.kind === "folder") return fbShow(h, true);
+    Object.assign(FB, {img: h.image, vol: h.vol, label: h.label, volName: h.volume, from: "search", hitRow: h});
+    fbOpenFile({name: h.name, inode: h.inode, size: h.size, mtime: h.mtime});
+  }
+  // SHOW IN FOLDER: the folder the result is in, on the page that holds it, with the row marked (into: the folder itself)
+  async function fbShow(h, into) {
+    const L = await fbGo(api("GET", "/api/browse/locate?" + fbQ({id: h.id})), "finding it…");
+    if (!L) return renderDisk();
+    const path = L.dirs.slice();
+    if (into) path.push({name: L.name, inode: L.inode});
+    Object.assign(FB, {view: "folder", img: L.image, label: L.label, vol: L.vol, volName: L.volume, path, sort: "name", order: "asc",
+                       kind: "all", page: 0, ls: null, file: null, from: null, at: into ? null : L.inode});
+    await fbLoad();
   }
   async function fbStats(vol, begin) {
     try { FB.stats[vol] = await api("GET", "/api/browse/stats?" + fbQ({image: FB.img, vol, begin: begin ? 1 : 0})); }
@@ -3452,6 +3502,7 @@
   async function fbOpenFile(e) {
     const q = {image: FB.img, vol: FB.vol, inode: e.inode, size: e.size};
     Object.assign(FB, {view: "file", file: e, info: null, text: null, err: null});
+    const back = FB.from === "search" ? "search" : "folder";
     const info = await fbGo(api("GET", "/api/browse/info?" + fbQ(q)), "reading the file out of the image…");
     if (!info) return;                                               // the error is on screen, with BACK
     FB.info = info;
@@ -3459,7 +3510,7 @@
       const t = await fbGo(api("GET", "/api/browse/text?" + fbQ(q)), "reading the text…");
       if (t) FB.text = t;
     } else if (info.kind === "photo" || info.kind === "pdf") {
-      FB.view = "folder"; FB.file = null;                            // closing the viewer lands on the folder
+      FB.view = back; FB.file = null;                                // closing the viewer lands on the folder (or the results)
       openFileViewer(e.name, info.pages || 1, (page, w) => "/api/browse/preview?" + fbQ(Object.assign({page, w}, q)));
     }
     renderDisk();
@@ -3476,28 +3527,111 @@
       if (FB.view === "file" && FB.file) c.appendChild(el("h2", null, FB.file.name));           // which file the refusal is about
       c.appendChild(el("div", "bad dk-err", FB.err));
       const row = el("div", "btnrow");
-      row.appendChild(fbBack(FB.view === "file" ? "BACK TO THE FOLDER" : "ALL IMAGES", () => { FB.err = null; FB.view = FB.view === "file" ? "folder" : "images"; renderDisk(); }));
+      const inFile = FB.view === "file", fromSearch = FB.from === "search";
+      row.appendChild(fbBack(inFile ? (fromSearch ? "BACK TO THE RESULTS" : "BACK TO THE FOLDER") : "ALL IMAGES",
+                             () => { FB.err = null; FB.view = inFile ? (fromSearch ? "search" : "folder") : "images"; renderDisk(); }));
       c.appendChild(row);
       return c;
     }
     if (FB.view === "volumes") fbVolumes(c);
     else if (FB.view === "folder") fbFolder(c);
     else if (FB.view === "file") fbFileView(c);
+    else if (FB.view === "search") fbSearchView(c);
     else fbImageList(c);
     return c;
+  }
+  // one image's index state as a button: what it is, and what a tap does
+  function fbIdxCell(x) {
+    const ix = FB.index && FB.index.images && FB.index.images[x.sha1], st = ix ? ix.state : "none";
+    const [head, hint, act] = {none: ["NOT INDEXED", "tap to index", "start"], queued: ["QUEUED", "tap to cancel", "stop"],
+      indexing: [`INDEXING ${num(ix && ix.entries)}`, "tap to stop", "stop"], waiting: ["WAITING", "for the disk job · tap to stop", "stop"],
+      done: [`INDEXED ${num(ix && ix.files)} files`, "tap to remove", "remove"], error: ["NOT INDEXED", (ix && ix.error) || "failed · tap to try again", "start"],
+      partial: ["PARTLY INDEXED", "a volume failed · tap to try again", "start"]}[st];
+    const b = el("button", "dk-idx");
+    add(b, el("b", st === "done" ? "ok" : st === "error" || st === "partial" ? "bad" : st === "none" ? null : "cy", head), el("div", "mut", hint));
+    b.addEventListener("click", () => fbIndexDo(act, x.image));
+    return b;
   }
   function fbImageList(c) {
     const imgs = K.images;
     c.appendChild(el("h2", null, "Inside an image"));
     if (!imgs) { c.appendChild(el("div", "mut", "Reading the store's list…")); return; }
     if (!imgs.length) { c.appendChild(el("div", "mut", "No images yet: READ a drive and it appears here.")); return; }
-    c.appendChild(el("div", "mut", "Nothing is mounted and nothing is changed: the image is read, and what is in it is drawn here. Tap one."));
+    const ix = (FB.index && FB.index.images) || {}, states = imgs.map(x => (ix[x.sha1] || {}).state || "none");
+    const bar = el("div", "btnrow"), sb = el("button", "primary", "SEARCH");
+    sb.addEventListener("click", fbSearchOpen);
+    bar.appendChild(sb);
+    if (states.some(s => s === "none" || s === "error" || s === "partial")) {
+      const b = el("button", null, "INDEX ALL");
+      b.addEventListener("click", () => fbIndexDo("all"));
+      bar.appendChild(b);
+    }
+    if (states.some(s => s === "queued" || s === "indexing" || s === "waiting")) {
+      const b = el("button", null, "STOP INDEXING");
+      b.addEventListener("click", () => fbIndexDo("stop_all"));
+      bar.appendChild(b);
+    }
+    c.appendChild(bar);
+    if (FB.index && FB.index.reason) c.appendChild(el("div", "warn", `Indexing is standing still: ${FB.index.reason}.`));
+    c.appendChild(el("div", "mut", "Nothing is mounted and nothing is changed. Tap an image to look inside it, or index it so SEARCH can find its files "
+                                   + "(its list of files is read once, in the background, and waits for a disk job)."));
     for (const x of imgs.slice(0, 40)) {
-      const r = el("button", "row dk-recrow");
+      const row = el("div", "dk-imgrow"), r = el("button", "row dk-recrow");
       add(r, el("b", null, x.label || base(x.image)),
           el("div", "mut", `${x.machine} · ${GB(x.bytes)} · ${stamp(x.started)}${x.source ? " · from " + x.source : ""}`));
       r.addEventListener("click", () => fbOpenImage(x));
-      c.appendChild(r);
+      add(row, r, fbIdxCell(x));
+      c.appendChild(row);
+    }
+  }
+  function fbSearchView(c) {
+    const qb = el("button", "dk-q", FB.q ? "FIND: " + FB.q : "TYPE WHAT TO FIND");
+    qb.addEventListener("click", fbSearchType);
+    c.appendChild(add(el("div", "btnrow dk-find"), fbBack("ALL IMAGES", fbImages), qb));
+    const kinds = el("div", "seg");
+    for (const [k, t] of [["all", "ALL"], ["photos", "PHOTOS"], ["documents", "DOCS"], ["other", "OTHER"]]) {
+      const b = el("button", FB.skind === k ? "on" : null, t);
+      b.addEventListener("click", () => { FB.skind = k; FB.spage = 0; FB.syear = null; fbSearch(); });
+      kinds.appendChild(b);
+    }
+    c.appendChild(kinds);
+    const R = FB.sres;
+    if (!R) {
+      c.appendChild(el("div", "mut", "SEARCH looks at the names of the files and folders, in every image that has been indexed. Each word can be the start of a word in the path."));
+      return;
+    }
+    if (R.years && R.years.length) {
+      const yr = el("div", "btnrow dk-years");
+      for (const [y, n] of R.years.slice(0, 6)) {
+        const b = el("button", FB.syear === y ? "on" : null, `${y} · ${num(n)}`);
+        b.addEventListener("click", () => { FB.syear = FB.syear === y ? null : y; FB.spage = 0; fbSearch(); });
+        yr.appendChild(b);
+      }
+      c.appendChild(yr);
+    }
+    const cv = R.coverage, count = `${R.total ? num(R.total) + (R.capped ? "+" : "") : "No"} result${R.total === 1 ? "" : "s"}`
+                                    + (R.pages > 1 ? ` · page ${R.page + 1} of ${R.pages}` : "");
+    c.appendChild(el("div", cv.indexed < cv.images ? "warn" : "mut",
+      `${count} · searched ${cv.indexed} of ${cv.images} image${cv.images === 1 ? "" : "s"}` + (cv.indexing ? `, ${cv.indexing} being indexed now` : "")
+      + (cv.indexed < cv.images ? ". One that is not indexed is not searched: INDEX it on ALL IMAGES." : ".")));
+    for (const h of R.results) {
+      const row = el("div", "dk-hit"), main = el("button", "row dk-frow"), tag = FB_TAG[h.kind];
+      add(main, add(el("div", "dk-fn"), el("b", null, h.name), tag ? el("span", "tag " + tag[1], tag[0]) : null),
+          el("div", "mut dk-path", h.folder ? h.folder + "/" : "top of the volume"),
+          el("div", "mut", `${h.kind === "folder" ? "folder" : GB(h.size)}${h.mtime ? " · " + stamp(h.mtime) : ""} · ${h.label} · ${h.volume}`));
+      const where = el("button", "dk-where", "SHOW IN FOLDER");
+      if (h.image) { main.addEventListener("click", () => fbOpenHit(h)); where.addEventListener("click", () => fbShow(h)); }
+      else { main.disabled = where.disabled = true; main.appendChild(el("div", "warn", "this image is not in the store any more")); }
+      add(row, main, where);
+      c.appendChild(row);
+    }
+    if (R.pages > 1) {
+      const row = el("div", "btnrow"), prev = el("button", null, "◀ PREV"), next = el("button", null, "NEXT ▶");
+      prev.disabled = R.page <= 0; next.disabled = R.page >= R.pages - 1;
+      prev.addEventListener("click", () => { FB.spage = R.page - 1; fbSearch(); });
+      next.addEventListener("click", () => { FB.spage = R.page + 1; fbSearch(); });
+      add(row, prev, next);
+      c.appendChild(row);
     }
   }
   function fbVolumes(c) {
@@ -3548,7 +3682,7 @@
     const row = el("div", "btnrow dk-crumbs");
     const mk = (t, fn) => row.appendChild(fbBack(t, fn));
     mk("ALL IMAGES", fbImages);
-    mk(FB.label, () => { FB.view = "volumes"; renderDisk(); });
+    mk(FB.label, () => { if (FB.vols && FB.vols.image === FB.img) { FB.view = "volumes"; renderDisk(); } else fbOpenImage({image: FB.img, label: FB.label}); });
     mk(FB.volName, () => { FB.path = []; FB.page = 0; fbLoad(); });
     FB.path.forEach((p, i) => mk(p.name, () => { FB.path = FB.path.slice(0, i + 1); FB.page = 0; fbLoad(); }));
     return row;
@@ -3577,7 +3711,8 @@
     if (L.capped) c.appendChild(el("div", "warn", "Only the first 100,000 entries of this folder are listed."));
     if (!L.entries.length) c.appendChild(el("div", "mut dk-none", "Nothing here."));
     for (const e of L.entries) {
-      const r = el("button", "row dk-frow"), tag = FB_TAG[e.kind];
+      const r = el("button", "row dk-frow" + (FB.hit && e.inode === FB.hit ? " hit" : "")), tag = FB_TAG[e.kind];
+      if (FB.hit && e.inode === FB.hit) requestAnimationFrame(() => r.scrollIntoView({block: "center"}));
       const meta = e.kind === "folder" ? (e.mtime ? stamp(e.mtime) : "folder") : e.kind === "link" ? `points to ${e.target || "?"}`
                  : `${GB(e.size)}${e.mtime ? " · " + stamp(e.mtime) : ""}`;
       add(r, add(el("div", "dk-fn"), el("b", null, e.name), tag ? el("span", "tag " + tag[1], tag[0]) : null), el("div", "mut", meta));
@@ -3598,8 +3733,11 @@
     }
   }
   function fbFileView(c) {
-    const e = FB.file || {};
-    c.appendChild(add(el("div", "btnrow"), fbBack("BACK TO THE FOLDER", () => { FB.view = "folder"; FB.file = null; renderDisk(); })));
+    const e = FB.file || {}, fromSearch = FB.from === "search";
+    const top = el("div", "btnrow");
+    top.appendChild(fbBack(fromSearch ? "BACK TO THE RESULTS" : "BACK TO THE FOLDER", () => { FB.view = fromSearch ? "search" : "folder"; FB.file = null; renderDisk(); }));
+    if (fromSearch && FB.hitRow) top.appendChild(fbBack("SHOW IN FOLDER", () => fbShow(FB.hitRow)));
+    c.appendChild(top);
     add(c, el("h2", null, e.name || "file"), el("div", "mut", `${GB(e.size)}${e.mtime ? " · modified " + stamp(e.mtime) : ""}`));
     const i = FB.info;
     if (!i) return;

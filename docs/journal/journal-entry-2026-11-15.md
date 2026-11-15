@@ -33,7 +33,11 @@
   sleuthkit with nothing mounted, in a sandboxed service with no network, on the Pi's own screen only, an index on the store that
   can be deleted without loss. Checking it showed that nothing reads `archive-queue.jsonl`, so no disk image has been sent
   anywhere. A real filesystem UUID from one of her drives had also ended up in two tests; it is replaced by an invented one.
-  F0, the facts script and the packages, is built and waits for the owner to run the bootstrap and the script.
+  F0, the facts script and the packages, was built, and the owner ran the bootstrap and the script on the Pi the same evening: a full
+  listing of the 80 GB drive's ext4 volume (200,331 entries) took 33.5 s using 19 MB, and the full-text index will take about 76 MB per
+  million files. Reading files out of the image is the slow part (about 6 MB/s on a large file), so previews load one at a time,
+  thumbnails are background work, and text search starts with a measurement. The drive's "photos" are system icons: a real archive
+  drive is still needed to try the browser on.
 - Not done: a first READ from the 7″ and any WRITE on real media; the hidden-area question; the cab-side checks in
   the procedure's 5.4 are the owner's. Task 3 (the MAME check on an image) still waits on a `chdman` output. The deck
   does not record the device letter, the two hash passes with their times, or a write's time and speed, so those lines of

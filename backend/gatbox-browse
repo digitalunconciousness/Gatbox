@@ -12,8 +12,9 @@ store's current mounts. Run by hand (tests), it makes its own socket at --socket
 
     gatbox-browse [--socket PATH] [--idle SECONDS] [--exit-when-store-missing]
 
-Routes (GET, JSON unless noted): /volumes /ls /stats /info /text, /preview (image/jpeg), /ping. An error is
-{"error": "a sentence for the screen"} with an HTTP code.
+Routes (GET, JSON unless noted): /volumes /ls /stats /info /text, /preview (image/jpeg), /search /locate /index, /ping. The one
+POST is /index (start, stop or remove an image's name index). An error is {"error": "a sentence for the screen"} with an
+HTTP code. It stays running while an index pass or a count has work to do.
 """
 import argparse
 import json
@@ -38,6 +39,7 @@ def lib_path():
 
 sys.path.insert(0, lib_path())
 from gatboxlib import browse as B  # noqa: E402
+from gatboxlib import browseindex as X  # noqa: E402
 
 STATE = {"last": time.time(), "active": 0, "stale": False}
 LOCK = threading.Lock()
@@ -53,7 +55,29 @@ def route_volumes(q):
 
 def route_ls(q):
     return B.ls(q1(q, "image"), q1(q, "vol"), q1(q, "dir"), q1(q, "sort") or "name", q1(q, "order") or "asc",
-                q1(q, "kind") or "all", q1(q, "page") or 0)
+                q1(q, "kind") or "all", q1(q, "page") or 0, at=q1(q, "at"))
+
+
+def route_search(q):
+    return X.search(q1(q, "q"), q1(q, "kind") or "all", q1(q, "year"), q1(q, "min"), q1(q, "max"), q1(q, "page") or 0, scope=q1(q, "in") or "names")
+
+
+def route_locate(q):
+    return X.locate(q1(q, "id"))
+
+
+def route_index(q):
+    """The index's state. Asking also starts the worker if the queue has work left from before a restart."""
+    X.IDX.kick()
+    return X.state()
+
+
+def post_index(body):
+    """The one thing here that is not a read: start, stop or remove an image's index, which lives in the browser's own folder
+    on the store and is derived from the images. Nothing in an image, and no drive, is touched."""
+    if not isinstance(body, dict):
+        raise B.Err(400, "a JSON object: {\"action\": ..., \"image\": ...}")
+    return X.IDX.request(body.get("action"), body.get("image"))
 
 
 def route_stats(q):
@@ -74,7 +98,9 @@ def route_preview(q):
 
 
 ROUTES = {"/volumes": route_volumes, "/ls": route_ls, "/stats": route_stats, "/info": route_info, "/text": route_text,
-          "/preview": route_preview, "/ping": lambda q: {"ok": True}}
+          "/preview": route_preview, "/search": route_search, "/locate": route_locate, "/index": route_index,
+          "/ping": lambda q: {"ok": True}}
+POSTS = {"/index": post_index}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -119,8 +145,33 @@ class Handler(BaseHTTPRequestHandler):
                 STATE["last"] = time.time()
 
     def do_POST(self):
+        """Only /index takes a body: the index is the one thing this service keeps, and it can be thrown away. Nothing here
+        writes to an image or a drive."""
+        fn = POSTS.get(urlsplit(self.path).path)
+        if fn is None:
+            return self.reply(405, {"error": "read-only: nothing here changes anything"})
+        with LOCK:
+            STATE["active"] += 1
+        try:
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(min(n, 4096)) or b"{}")
+                self.reply(200, fn(body))
+            except ValueError:
+                self.reply(400, {"error": "the body is not JSON"})
+            except B.Err as e:
+                self.reply(e.code, {"error": e.msg})
+            except Exception:
+                traceback.print_exc()
+                self.reply(500, {"error": "the drive browser hit an error"})
+        finally:
+            with LOCK:
+                STATE["active"] -= 1
+                STATE["last"] = time.time()
+
+    def do_PUT(self):
         self.reply(405, {"error": "read-only: nothing here changes anything"})
-    do_PUT = do_DELETE = do_PATCH = do_POST
+    do_DELETE = do_PATCH = do_PUT
 
 
 class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
@@ -145,7 +196,7 @@ def listening_socket(path):
 def watchdog(srv, idle, exit_when_stale):
     while True:
         time.sleep(0.5)
-        working = any(st.get("state") in ("computing", "waiting") for st in list(B._stats.values()))
+        working = any(st.get("state") in ("computing", "waiting") for st in list(B._stats.values())) or X.IDX.busy()
         with LOCK:
             quiet = STATE["active"] == 0 and not working
             done = quiet and (time.time() - STATE["last"] > idle or (exit_when_stale and STATE["stale"]))

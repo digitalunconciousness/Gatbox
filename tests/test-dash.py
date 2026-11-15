@@ -1711,6 +1711,85 @@ def main():
             check("rows are at least 56 px tall for a finger, and no text is under 14 px on the 7\"",
                   q("[...document.querySelectorAll('#dk-body .dk-frow')].every(b => b.getBoundingClientRect().height >= 55.5)") and not q(BOX_SMALL))
             shot("25g-files-paged")
+
+            # the name index and search (F2)
+            q("[...document.querySelectorAll('#dk-body .dk-crumbs button')][0].click()")             # ALL IMAGES
+            check("ALL IMAGES: each image shows its index state: not indexed, and what a tap does; SEARCH and INDEX ALL are there",
+                  settles(c, "[...document.querySelectorAll('#dk-body button.dk-idx')].some(b => b.textContent.includes('NOT INDEXED'))", 15)
+                  and "tap to index" in text("#dk-body") and q("[...document.querySelectorAll('#dk-body .btnrow button')].map(b => b.textContent)").count("SEARCH") == 1
+                  and "INDEX ALL" in text("#dk-body"))
+            shot("26a-files-images-index")
+            q("document.querySelector('#dk-body button.dk-idx').click()")
+            check("tap to index: it counts while it reads the list, then says INDEXED with the number of files",
+                  settles(c, "[...document.querySelectorAll('#dk-body button.dk-idx')].some(b => /INDEXED \\d+ files/.test(b.textContent))", 60)
+                  and "tap to remove" in text("#dk-body"))
+            check("... the image's own row still opens it", q("[...document.querySelectorAll('#dk-body button.dk-recrow')].some(b => b.textContent.startsWith('BROWSE-EXT'))"))
+            check("TEXT: the documents were read on their own after the names (a short job): READ n of m, and how many could not be read",
+                  settles(c, "[...document.querySelectorAll('#dk-body button.dk-txt')].some(b => /TEXT READ \\d+ of \\d+/.test(b.textContent))", 60)
+                  and "could not be read" in text("#dk-body"))
+            shot("26a2-files-text-read")
+            fb_btn("SEARCH", 15, exact=True)
+            c.wait("document.querySelector('#pane .kp-field')", 10)
+            tap_keys("IMG")
+            check("SEARCH: the keypad asks for words, and the results come: the photo with its path, size, date and image",
+                  dk_has("IMG_0001.jpg", 30) and "Photos/2019/" in text("#dk-body") and "BROWSE-EXT" in text("#dk-body") and "1 result" in text("#dk-body"))
+            check("... it says how much it searched (1 of the store's 3 images) and what to do about the rest", "1 result · searched 1 of 3 images" in text("#dk-body")
+                  and "INDEX it on ALL IMAGES" in text("#dk-body") and q("document.querySelectorAll('#dk-body .dk-hit').length") == 1)
+            check("... a year chip comes from the matches", q("[...document.querySelectorAll('#dk-body .dk-years button')].some(b => /^\\d{4} · 1$/.test(b.textContent))"))
+            check("... rows and buttons are as tall as a finger, no text under 14 px, and nothing is wider than the 7\"",
+                  q("[...document.querySelectorAll('#dk-body .dk-hit button')].every(b => b.getBoundingClientRect().height >= 55.5)") and not q(BOX_SMALL)
+                  and q("document.querySelector('#dk-body').scrollWidth <= document.querySelector('#dk-body').clientWidth + 1"))
+            shot("26b-files-search")
+            fb_btn("INSIDE DOCUMENTS", 15, exact=True)
+            check("INSIDE DOCUMENTS: IMG is a file's name, not in any document, so no results, and the line says how much was read and what could not be, with the reasons",
+                  dk_has("No results", 20) and re.search(r"read \d+ of \d+ documents in 1 image", text("#dk-body")) and "could not be read (" in text("#dk-body")
+                  and "not read yet" not in text("#dk-body") and not q("[...document.querySelectorAll('#dk-body .seg button')].some(b => b.textContent === 'PHOTOS')"))
+            q("document.querySelector('#dk-body .dk-q').click()")
+            c.wait("document.querySelector('#pane .kp-field')", 10)
+            tap_keys("⌫⌫⌫WIDGET")
+            check("a word inside a document finds it: the name, the folder, a snippet with the match marked, and the image",
+                  dk_has("notes.txt", 30) and q("document.querySelector('#dk-body .dk-hit .dk-snip .hl').textContent.toLowerCase()") == "widget"
+                  and "Docs/" in text("#dk-body .dk-hit") and "BROWSE-EXT" in text("#dk-body .dk-hit"))
+            check("... rows and buttons as tall as a finger, no text under 14 px, nothing wider than the 7\"",
+                  q("[...document.querySelectorAll('#dk-body .dk-hit button')].every(b => b.getBoundingClientRect().height >= 55.5)") and not q(BOX_SMALL)
+                  and q("document.querySelector('#dk-body').scrollWidth <= document.querySelector('#dk-body').clientWidth + 1"))
+            shot("26e-files-search-text")
+            fb_btn("NAMES", 15, exact=True)
+            q("document.querySelector('#dk-body .dk-q').click()")
+            c.wait("document.querySelector('#pane .kp-field')", 10)
+            tap_keys("⌫⌫⌫⌫⌫⌫IMG")
+            dk_has("IMG_0001.jpg", 20)
+            fb_btn("PHOTOS", 15, exact=True)
+            check("a kind chip narrows: PHOTOS keeps it, DOCS finds none and says so",
+                  dk_has("IMG_0001.jpg", 15))
+            fb_btn("DOCS", 15, exact=True)
+            check("... DOCS: no results", dk_has("No results", 15))
+            fb_btn("ALL", 15, exact=True)
+            dk_has("IMG_0001.jpg", 15)
+            q("document.querySelector('#dk-body .dk-hit .dk-where').click()")
+            check("SHOW IN FOLDER: the folder the photo is in (ALL IMAGES / the image / the volume / Photos / 2019), with the row marked",
+                  settles(c, "!!document.querySelector('#dk-body .dk-crumbs') && !!document.querySelector('#dk-body .dk-frow.hit')", 20)
+                  and "2019" in text("#dk-body .dk-crumbs")
+                  and q("[...document.querySelectorAll('#dk-body .dk-frow.hit')].map(b => b.querySelector('b').textContent)") == ["IMG_0001.jpg"])
+            shot("26c-files-show-in-folder")
+            q("[...document.querySelectorAll('#dk-body .dk-crumbs button')][1].click()")
+            check("the image's crumb after SHOW IN FOLDER still opens its volumes", dk_has("COUNT WHAT'S ON IT", 20) or dk_has("OPEN", 20))
+            fb_btn("ALL IMAGES", 15, exact=True)
+            fb_btn("SEARCH", 15, exact=True)
+            check("SEARCH again: the words are kept, the results are back", dk_has("FIND: IMG", 20) and dk_has("IMG_0001.jpg", 20))
+            q("document.querySelector('#dk-body .dk-hit button.dk-frow').click()")
+            check("a result's own tap opens the file as from a folder: the photo viewer; CLOSE lands on the results",
+                  settles(c, "!document.querySelector('#viewer').classList.contains('hide') && document.querySelector('#vw-img').complete && document.querySelector('#vw-img').naturalWidth > 0", 40))
+            q("document.querySelector('#vw-close').click()")
+            check("... the results, not the folder", dk_has("FIND: IMG", 15) and q("!!document.querySelector('#dk-body .dk-hit')"))
+            fb_btn("ALL IMAGES", 15, exact=True)
+            q("document.querySelector('#dk-body button.dk-idx').click()")
+            check("tap to remove: this image's names and its text are gone (the first row, not just any: the others were never indexed)",
+                  settles(c, "document.querySelector('#dk-body button.dk-idx').textContent.includes('NOT INDEXED') "
+                             "&& document.querySelector('#dk-body button.dk-txt').textContent.includes('index the names first')", 30))
+            fb_btn("SEARCH", 15, exact=True)
+            check("... and a search says 0 of 3 searched, with the reason, not 'nothing there'", dk_has("searched 0 of 3 images", 20) and "is not searched" in text("#dk-body"))
+            shot("26d-files-search-not-indexed")
             # the image store unplugged: FILES says so
             FD.mount_table(store=False)
             check("with the store unplugged: FILES says the images are on the store", dk_has("plug it in", 25))

@@ -95,8 +95,34 @@ mounted, no loop device, nothing sent to the dock):**
 6. This drive says little about photos and documents: its "photos" are icons. The browser's by-kind stats and previews need a
    real archive drive to test against, and the owner's other drives will be it.
 
-**Still unmeasured:** NTFS, FAT, exFAT, HFS+ and ISO on a real image; the spread of per-file read times (F3's first step); whether
-a drive that has been idle for a while adds a spin-up to the first read.
+**F3's report, read on the Pi 2026-11-15, against the same WD800JD image (`docs/plans/2026-11-15-drive-browser-f3.py`):**
+
+| What | Measured |
+|---|---|
+| Documents a reader could read | 744 (21.5 MB): 362 `.txt`, 354 `.html`, 14 `.pdf`, 6 `.md`, 4 `.odt`, 3 `.csv`, 1 `.doc`. Median 4 KB, 90th percentile 46 KB, largest 4.8 MB. |
+| Listing it again | 200,331 entries in 8.7 s (F0: 33.5 s, so the first pass was partly cold) |
+| 200 random documents out of the image, random order | 4.6 s: **median 15 ms, mean 23 ms, 90th percentile 40 ms, slowest 0.26 s, none over 1 s** |
+| ... in inode order | 4.0 s: mean 20 ms, **15% faster** |
+| ... in random order again | 4.9 s: **two identical runs differ by 6%** |
+| First file of the first run | 0.26 s (a drive that was idle; no large spin-up) |
+| Extracting the text | **3 ms a file on average**: `.txt`, `.html`, `.csv`, `.odt` and the one real `.doc` (7,068 characters, the first real catdoc output) all read |
+
+**What this changes in the design:**
+1. **For small documents, reading is cheap: about 25 ms a document in all (20 to read, 3 to extract)**, so 10,000 documents is
+   about four minutes, not hours. F0's one 3-second read (an 85 KB file) did not come back in 600 reads here: none took even
+   a second. It stays unexplained; a per-file time limit contains it.
+2. **Inode order is worth sorting by and not worth more than that:** 15% faster against 6% noise. It is free, so the text pass
+   reads in inode order, and nothing is built around it.
+3. **For large documents, time is bytes, not files:** F0 measured 6 MB/s on a 36 MB file, so 100 GB of PDFs is about
+   four and a half hours. This image has nothing over 4.8 MB, so it could not say; the script now reads its largest documents
+   and reports the rate, and prints the projection from files and bytes together. Its first version printed "0.0 h" for 744
+   documents, which was right and useless, and chose no PDF to try by chance: both fixed.
+4. **So text is read automatically after the names when the estimate is short, and waits for a tap when it is long.** The estimate
+   is files × 25 ms plus bytes at 5 MB/s (a little under F0's rate), shown with its basis on the screen; once the pass is running
+   the screen shows the running average of the files already read instead.
+
+**Still unmeasured:** NTFS, FAT, exFAT, HFS+ and ISO on a real image; the rate for big documents (the script now measures it);
+PDFs and Office files from a real archive (this drive's 14 PDFs and its one `.doc` are the only real ones read so far).
 
 ## 4. The flow (the 7")
 
@@ -182,8 +208,8 @@ which are short, are never blocked.
   at service start by `ExecStartPre=+`, only when the store is mounted and carries its marker.
 - **Keyed by the image's SHA-1.** An image is immutable, so everything derived from it can be rebuilt. **Deleting `_browse`
   loses nothing of record**; the image and its sidecar are the record.
-- **Tables:** `volumes` (image, offset, filesystem, label, sizes), `files` (volume, inode, path, name, extension, kind, size,
-  dates), an FTS5 table over paths, and a second FTS5 table over extracted text (capped per file). Thumbnails are
+- **Tables (F2 built the first three, see §10):** `volumes` (image, offset, filesystem, label, sizes), `files` (volume, inode, path,
+  name, extension, kind, size, dates), an FTS5 table over paths, and (F3) a second FTS5 table over extracted text (capped per file). Thumbnails are
   `thumbs/<image sha1>/<inode>.jpg` with a size cap that drops the oldest.
 - The store drive carries the data; if it is unplugged, FILES says IMAGE STORE NOT CONNECTED like the rest of the tab.
 
@@ -259,8 +285,65 @@ documents and search. Then, to the seven below: **"recommended"**, all of them.
     work, which F2 brings with the index.
   - No file is ever opened by the web process. `ReadOnlyPaths` on the store, no network, no devices, `MemoryMax=512M`.
   - The same change stops a READ for no machine from queueing for the archive: the sidecar says `archive: none, not for a machine`.
-- **F2: the index and name search.** The indexer with pause and resume, `browse.sqlite`, search routes and the results list.
-- **F3: text search.** PDF, text and Office extraction, snippets, per-image coverage, the optional `catdoc`.
+- **F2: the index and name search (built 2026-11-15, stacked on F1, not installed).** `gatboxlib/browseindex.py`, three more routes
+  (`/search`, `/locate`, `/index`) and the one POST, and the FILES search view. As built, and where it differs from the sketch above:
+  - One SQLite file, `<store>/_browse/browse.sqlite` (WAL), schema version 1 (a different version is deleted and rebuilt from the
+    images). `volumes` (state `pending`, `indexing`, `done`, `error`), `files` (inode, name, kind, size, mtime, and the parent
+    folder's row, so SHOW IN FOLDER can open the folder), an FTS5 table over the path (`unicode61`, prefix indexes), and `wanted`,
+    the queue. Keyed by the image's SHA-1: the same bytes under two machines are indexed once.
+  - **A volume is indexed in one pass over `fls -r` and is searchable only when the pass is complete.** A stop or a crash leaves
+    nothing a search can see, and the next start deletes the rows of a pass that never finished. The note said "progress is per
+    file"; the unit is a volume instead, because killing and redoing a pass costs minutes (F0: about 6,000 entries a second)
+    where a per-folder walk would start a process per folder.
+  - It stands still while a disk job is queued or running (it stops reading `fls`, which stalls on its full pipe) and says so
+    on the screen. It runs only while the browser runs; the browser does not leave while it is indexing. After a reboot nothing
+    runs until FILES is opened, which asks for the state and goes on with the queue.
+  - Words, not substrings: every word is a prefix of a word in the path, all are required, case does not matter, and what is typed
+    is cut to words before it reaches FTS, so a query cannot be syntax. Filters: kind (photos, documents, other, folders), year (chips
+    built from the matches), size (in the API). **A date range is not in the screen**, only the year chips.
+  - The answer always says how many of the store's images it searched ("1 result · searched 1 of 3 images. One that is not
+    indexed is not searched"), so an empty result is never read as "not there". An image with no filesystem says so.
+  - SHOW IN FOLDER is a button on each result, not inside the viewer: it opens the folder on the page that holds the file
+    (`ls` takes `at=<inode>`) with the row marked. A result's own tap opens the file as from a folder.
+  - Not indexed: deleted entries and links (hidden in v1, as in the folder view). Limits: 10,000,000 entries a volume, 500,000
+    folders remembered (a file below the rest opens from the top of its volume), results counted up to 10,000.
+- **F3: text search.** PDF, text and Office extraction, snippets, per-image coverage, `catdoc`.
+  - **F3a (built 2026-11-15, stacked on F2, not installed): the readers and the measurement.** `gatboxlib/browsetext.py` reads
+    plain text (UTF-8, UTF-16 with a mark, else Windows-1252), HTML, PDF (`pdftotext`), `.docx`, `.xlsx`, `.pptx`, `.odt`, `.ods`,
+    `.odp` and `.epub` (zips read by hand), and `.doc`, `.xls`, `.ppt` (catdoc's `catdoc`, `xls2csv`, `catppt`, which the
+    bootstrap now installs). It keeps at most 1 MB of folded text a file. A file it cannot read is refused with one of six
+    codes the screen will count, so an empty result can say why: `encrypted`, `damaged`, `no text` (a scan: OCR is F4), `too big`,
+    `too slow`, `binary`, or `no reader`. The limits are built to refuse: no XML parser at all (the text is lifted out of the XML
+    with patterns, so there are no entity tricks), at most 4,000 parts in a zip, 32 MB from a part and 128 MB from a file, a zip
+    that expands more than 200 times refused, a password-protected part refused, and the tools through the browse core's runner
+    (a time limit, the whole process group killed, output cut at 4 MB). Not read: `.rtf` and anything else with no reader.
+    `docs/plans/2026-11-15-drive-browser-f3.py` is the measurement §3 asked for: it lists one volume, takes 200 random
+    documents, reads them out of the image three times (random, inode order, random again, the image's cached pages dropped
+    before each run) so that inode order's gain can be told from the noise between two identical runs, times the readers per
+    kind, and projects the time for every document in the volume both by file count and by bytes. It prints no name and changes
+    nothing. **No indexing time is promised until her report is in.**
+  - **F3b (built 2026-11-15, stacked on F3a, not installed): the text index, search and screen.** The report (§3) settled it: for
+    small documents reading is cheap, so text is read on its own when it is short and waits for a tap when it is long.
+    - A second phase after the names, **per document, in inode order, one at a time, each committed as it is read**: a pause, a
+      stop, a crash or a restart costs nothing, and the next pass starts after what was read. (The first version committed every
+      twenty documents; a transaction held open across slow documents would have kept the screen's own stop and remove waiting.)
+      Names go first: asking for another image's names while text is being read lets the names run, and the text goes on after.
+    - **On its own when the estimate is 30 minutes or less** (25 ms a document plus bytes at 5 MB/s, §3), shown on the screen with
+      its basis (`TEXT NOT READ · 38,000 documents · 61 GB · about 3 h (tap to read)` when it is longer). Once it runs, the screen
+      shows the running average of the documents already read, never a prediction.
+    - It stands still for a disk job, and for an unplugged store. It can be stopped (what was read stays and is searchable; the cell
+      says the count and a tap goes on), removed (text only; the names stay), and is dropped with the names when an image is.
+    - Every document with a reader is accounted for: read, or not with the reason (`encrypted`, `damaged`, `no text`, `too big`,
+      `too slow`, `binary`). The search says "read 234 of 237 documents in 1 image; 3 could not be read (1 damaged, 1 no text, 1 too
+      big)" and, when some are unread, that they are not searched and where to read them. A reader that raises on a hostile file is
+      counted `damaged` and the pass goes on. `.rtf` and the kinds with no reader are not counted at all.
+    - The search takes a scope, **NAMES** or **INSIDE DOCUMENTS**. A result has its path, folder, image and a **snippet with the
+      match marked** (FTS5 `snippet()`; the screen draws it as text, never markup). Words, as in the names: each a prefix, all
+      required. **No phrase search and no "near"**, and no OCR: a scanned PDF is `no text`, which is F4.
+    - Limits: 1 MB of text a document (a word past it is not found, and the document says nothing about being cut on the screen yet), 64 MB a
+      file, 120 s to read one out of the image, 60 s to extract it. The schema is version 2 (a version 1 file from F2 is rebuilt).
+    - What it found in F3a's readers: a file with fewer than 10% control bytes was read as Windows-1252 text even when it was random
+      binary (a 4% chance per file); a NUL byte now makes a file binary.
 - **F4 (not covered by this OK):** a phone with a pairing PIN, copying files out, deleted files, OCR, HEIC, duplicate
   detection across drives.
 

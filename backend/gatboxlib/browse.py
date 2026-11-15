@@ -31,6 +31,7 @@ BROWSE_DIR = os.environ.get("GATBOX_BROWSE_DIR", os.path.join(dl.DISKS, "_browse
 DISK_SPOOL = os.environ.get("GATBOX_DISK_SPOOL", "/var/spool/gatbox-disk")
 TSK = ("mmls", "fsstat", "fls", "icat")                 # the only programs that ever open an image
 PDF_TOOLS = ("pdfinfo", "pdftoppm")                     # they read a copy in the cache, never the image
+TEXT_TOOLS = ("pdftotext", "catdoc", "xls2csv", "catppt")   # the text readers (browsetext.py), on a copy of a file as well
 MiB = 1 << 20
 PREVIEW_CAP = 64 * MiB                                  # the most read out of an image for one preview
 TEXT_CAP = 64 * 1024
@@ -72,7 +73,7 @@ def run(argv, timeout, cap=None, stdout=None):
     """One sleuthkit or poppler tool. Returns (exit code, stdout bytes, stderr text). Killed at `timeout` (Err 504). With
     cap, output past that many bytes is cut and the process is stopped (the tool itself is not at fault). With stdout=a
     file object, the output goes there instead of into memory and the byte count is returned in place of the bytes."""
-    if argv[0] not in TSK + PDF_TOOLS:
+    if argv[0] not in TSK + PDF_TOOLS + TEXT_TOOLS:
         raise Err(500, f"refusing to start {argv[0]}")
     with _sem:
         p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env(), start_new_session=True)
@@ -312,9 +313,10 @@ def _entries(path, start, inode):
     return entries, hidden, capped
 
 
-def ls(rel, start, dir_inode=None, sort="name", order="asc", kind="all", page=0, per_page=PER_PAGE):
+def ls(rel, start, dir_inode=None, sort="name", order="asc", kind="all", page=0, per_page=PER_PAGE, at=None):
     """One page of a folder. The folder is named by its inode (None is the root), and every entry carries its own, so a
-    client walks down by inode and never builds a path."""
+    client walks down by inode and never builds a path. `at` is an entry's inode: the page that holds it is returned
+    (SHOW IN FOLDER from a search result), whatever `page` said."""
     path, side = image(rel)
     v = _volume(rel, start)
     ino = _inode(dir_inode)
@@ -339,10 +341,18 @@ def ls(rel, start, dir_inode=None, sort="name", order="asc", kind="all", page=0,
     files = sorted((e for e in shown if e["kind"] != "folder"), key=keyf, reverse=rev)
     ordered = folders + files                                       # folders first, whatever the sort
     page = max(0, _num(page, 0))
+    found = None
+    if at:
+        found = _inode(at)
+        where = next((i for i, e in enumerate(ordered) if e["inode"] == found), None)
+        if where is None:
+            found = None
+        else:
+            page = where // per_page
     pages = max(1, -(-len(ordered) // per_page))
     page = min(page, pages - 1)
     return {"image": rel, "start": v["start"], "dir": ino, "total": len(ordered), "page": page, "pages": pages,
-            "entries": ordered[page * per_page:(page + 1) * per_page], "capped": capped, "deleted_hidden": hidden}
+            "entries": ordered[page * per_page:(page + 1) * per_page], "capped": capped, "deleted_hidden": hidden, "at": found}
 
 
 # --- what is on a volume (counted by a background pass) ---------------------------------------------------------------------

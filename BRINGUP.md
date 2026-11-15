@@ -684,7 +684,37 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           `systemd-analyze security gatbox-browse.service`, `systemctl status gatbox-browse.socket`, `ls -ld /run/gatbox-browse`,
           then FILES on the 7": open the 80 GB image, COUNT WHAT'S ON IT, open a folder, a text file and a photo if there is one;
           `journalctl -u gatbox-browse` clean; `/srv/gatbox/disks/_browse` exists (0700, the service's); no USB reset in `dmesg`.
-    - [ ] F2 index and name search, F3 text search. Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
+    - [x] F2 built, 2026-11-15, **not installed** (stacked on F1): a name index and search. On FILES → ALL IMAGES each image shows
+          NOT INDEXED, QUEUED, INDEXING n, WAITING (for a disk job) or INDEXED n files, and a tap starts, stops or removes it; INDEX ALL
+          and STOP INDEXING; SEARCH opens the keypad. Results: path, size, date, image, with kind chips (ALL, PHOTOS, DOCS, OTHER) and year
+          chips, and a line saying how many of the store's images were searched. A result opens as from a folder, and SHOW IN FOLDER opens
+          its folder on the right page with the row marked. The index is `/srv/gatbox/disks/_browse/browse.sqlite`, disposable. No new
+          unit, user or system config; one more library file in the MANIFEST (`gatboxlib/browseindex.py`). `test-browse-index.sh`: 68
+          (indexing, search, locate, a stop or a crash leaves nothing, the disk-job pause, a restart, the index deleted, the image moved,
+          limits, the service staying up while it works, a phone's 403), `test-dash.sh`: 271. Mutation checks, each fails a test.
+          **Not on a real drive yet:** the 80 GB image's 200,331 entries should take about half a minute and about 15 MB of index.
+          Read-only check at the Pi after the install: index it from the 7", then `ls -l /srv/gatbox/disks/_browse/`.
+    - [x] F3a built, 2026-11-15, **not installed** (stacked on F2): the text readers (`gatboxlib/browsetext.py`: text, HTML, PDF, Word,
+          Excel, PowerPoint, OpenDocument, ePub, and the old Office formats through catdoc) and the measurement script
+          `docs/plans/2026-11-15-drive-browser-f3.py`. **The bootstrap gains `catdoc`** (apt): `--check` lists it, and the owner reads
+          that diff and runs the bootstrap. `test-browse-text.sh`: 33, `test-drive-f3.sh`: 21, `test-bootstrap.sh`: 146; each of 13
+          breakages of them fails a test. Not tested here: a real `.doc`, `.xls` or `.ppt` (no tool to make one; catdoc is
+          stood in for), so the Pi's report is also the first sight of them.
+    - [x] F3's report from the Pi, 2026-11-15, in the note's §3: 744 documents in the 80 GB image; reading one out of the image is about 20 ms
+          and extracting its text 3 ms (nothing over 0.26 s in 600 reads); inode order 15% faster against 6% noise; so 10,000 documents
+          is about four minutes. The script's first version printed "0.0 h" and tried no PDF by chance; both fixed. **Re-run it** on the
+          branch for the big-file rate, the PDFs and the 14 `.pdf` files' extraction time (`git pull`, then the same command; it now takes seconds).
+    - [x] F3b built, 2026-11-15, **not installed** (stacked on F3a): the text phase. On FILES → ALL IMAGES each image has a second
+          cell: TEXT NOT READ (with the estimate: documents, bytes, about how long), QUEUED, TEXT n of m (and the time left, from the
+          running average), WAITING, PARTLY, TEXT READ n of m (and how many could not be). A short job (30 minutes or less) starts on
+          its own after the names; a long one waits for a tap. SEARCH has NAMES and INSIDE DOCUMENTS; a result shows a snippet with
+          the match marked, and the line under the chips says how many documents were read and why the rest could not be. Same sandbox,
+          no new unit or user; the one system change is still `catdoc` (F3a). `test-browse-textindex.sh`: 39 (every kind of document,
+          inode order, a disk job, a stop, a restart, names first, a long job, a reader that raises, a read that hangs, the store
+          unplugged, removal, no copy left behind), `test-browse-index.sh`: 73, `test-browse-text.sh`: 33, `test-dash.sh`: 275; each of
+          16 breakages fails a test (two are equivalent and say so in the PR). **Not on a real drive yet:** after the install, TEXT on the 80
+          GB image should read its 744 documents in under a minute; then search a word that is in one of its `.txt` files.
+    - [ ] F4, not covered by the OK: a phone with a PIN, copying files out, deleted files, OCR, HEIC. Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4

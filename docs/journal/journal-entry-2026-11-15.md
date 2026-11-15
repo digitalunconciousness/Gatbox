@@ -55,6 +55,41 @@
   empty inode passed validation and read the root; and I had written "streamed, never held whole" about a folder in the
   note, when sorting needs the whole folder in memory (it is cut at 100,000 entries and says so). The unit's sandbox has not run
   on the Pi: the install step has read-only checks for that.
+- F2 of the browser, the name index and search, built on top of F1 and not installed. One SQLite file with an FTS5 table in
+  `_browse/` on the store, keyed by the image's SHA-1 and safe to delete. A volume is indexed in one `fls -r` pass and becomes
+  searchable only when the pass is whole; a stop, a crash or a restart leaves nothing a search can see, and the pass stands still
+  while a disk job runs. The search says how many of the store's images it looked at, so an empty answer is not read as "not
+  there". Three things the tests showed me: the browser starts its tools with a scrubbed environment, so a stand-in `fls` has to
+  be steered by files beside it, not by environment variables (the first "slow" test was only slow by accident); my
+  "a stopped pass leaves no rows" test passed for the wrong reason, because the rows it counted belonged to another image and the
+  pass had not written any yet, which a mutation check caught; and asking for the index's state created the index file and started
+  a worker, which now does neither unless there is work. And on the screen, SEARCH showed the results from before an image was
+  removed from the index until a new search was typed.
+- F3a of the browser, the text readers and the measurement, built and not installed. The readers pull text out of plain files,
+  HTML, PDFs, the zipped Office, OpenDocument and ePub formats and, through catdoc (a new package in the bootstrap), the old
+  Word, Excel and PowerPoint ones. They are written to refuse: no XML parser, a limit on parts and on how far a zip may expand,
+  a password-protected part refused, every program through the one runner with a time limit and the whole process group killed. A
+  file that cannot be read says why in one of seven words, so a search that finds nothing can say how much was not read. The
+  measurement script is the F3 step the note asked for before promising an indexing time: it reads 200 random documents out of an
+  image three times, in random, inode and random order again, and projects the time for the whole volume. The same lesson as in F1
+  came back in it: a timed-out `icat` held the pipe through a grandchild, so the script kills the whole group, and a test with a
+  stand-in that sleeps found it by hanging. Two of my first tests were also wrong: a zip's "password" bit is reset by Python's own
+  writer, so the test sets it in the bytes, and a check for "too many parts" passed on a zip that was refused for having no
+  document part. F3b, the index and the screen, waits for her numbers.
+- Her F3 report came back the same evening and changed the design: reading a document out of the image is about 20 ms and
+  extracting it 3 ms, and none of 600 reads took a second, so F0's one 3-second file did not come back. Inode order was 15%
+  faster against 6% noise between two identical runs, so the text pass sorts by it and builds nothing around it. The script's first
+  version printed "0.0 h" for 744 documents (right and useless) and, by chance, tried no PDF; it now prints readable times, reads
+  the largest documents for a big-file rate and tries every kind.
+- F3b of the browser, the text search, built on that and not installed. Text is a second phase after the names, one document at a
+  time in inode order, each committed as it is read, so nothing is lost by a stop or a crash; a short job starts on its own and a
+  long one waits for a tap, with the estimate shown. Four things the tests showed me: looking at the index took the write lock
+  (every connection ran the schema script), which kept a search from opening while the worker wrote, so a connection now makes the
+  schema only for a new file; committing every twenty documents would have held a transaction open across slow ones and kept the
+  screen's own stop waiting, so each document is committed; a file of random bytes was read as Windows-1252 text about one time in
+  twenty (it passed my test most runs), so a NUL byte now makes a file binary; and a dashboard check that waited for "some image
+  says NOT INDEXED" was true from the start, because the other images were never indexed, and it hid a race until the removal got
+  slower.
 - Not done: a first READ from the 7″ and any WRITE on real media; the hidden-area question; the cab-side checks in
   the procedure's 5.4 are the owner's. Task 3 (the MAME check on an image) still waits on a `chdman` output. The deck
   does not record the device letter, the two hash passes with their times, or a write's time and speed, so those lines of

@@ -5,6 +5,7 @@ Every route is for the Pi's own screen only (server.py checks h.is_local() first
 gatbox-web has never served bytes from an image. It still never does: a preview is a JPEG the service drew, or a piece of text.
 """
 import http.client
+import json
 import os
 import socket
 from urllib.parse import urlencode
@@ -12,7 +13,8 @@ from urllib.parse import urlencode
 from . import config
 from .meter import Bad
 
-PARAMS = ("image", "vol", "dir", "sort", "order", "kind", "page", "inode", "size", "w", "begin")   # all the service reads
+PARAMS = ("image", "vol", "dir", "sort", "order", "kind", "page", "inode", "size", "w", "begin",
+          "q", "year", "min", "max", "id", "at", "in")                                                      # all the service reads
 
 
 class _Conn(http.client.HTTPConnection):
@@ -36,6 +38,23 @@ def call(route, query, timeout=300):
     conn = _Conn(path, timeout)
     try:
         conn.request("GET", f"{route}?{qs}" if qs else route)
+        r = conn.getresponse()
+        return r.status, r.getheader("Content-Type") or "application/json", r.read()
+    except (OSError, http.client.HTTPException):
+        raise Bad(503, "the drive browser isn't answering") from None
+    finally:
+        conn.close()
+
+
+def post(route, body):
+    """POST a small JSON body to the service (only /index takes one). Returns (status, content type, body bytes)."""
+    path = config.BROWSE_SOCK
+    if not os.path.exists(path):
+        raise Bad(503, "the drive browser isn't installed yet")
+    data = json.dumps({k: body.get(k) for k in ("action", "image") if isinstance(body, dict) and body.get(k) is not None}).encode()
+    conn = _Conn(path, 60)
+    try:
+        conn.request("POST", route, body=data, headers={"Content-Type": "application/json", "Content-Length": str(len(data))})
         r = conn.getresponse()
         return r.status, r.getheader("Content-Type") or "application/json", r.read()
     except (OSError, http.client.HTTPException):

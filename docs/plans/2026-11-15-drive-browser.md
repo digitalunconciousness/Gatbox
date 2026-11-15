@@ -50,9 +50,19 @@ nothing more.
 - No Python bindings for sleuthkit turned up in Debian 13, so the design calls its command line tools (`mmls`, `fsstat`,
   `fls`, `icat`), whose output is stable, and does not depend on a binding.
 
-**To read off the Pi in F0 (a read-only stage, like Task 0), against the WD800JD image already in the store:**
-- What is on it: partition table, filesystem type, label. This is the first real answer to "does it browse".
-- `fls -r` time and memory for that image; `icat` time for a small file.
+**Read so far (2026-11-15, the WD800JD image, with `file`, `fdisk -l` and `blkid -p` at each partition's byte offset; nothing
+mounted, no loop device, nothing sent to the dock):**
+- A DOS (MBR) partition table and three partitions: a bootable Linux partition of 73.5 GB, an extended partition, and a
+  1020 MB swap inside it. The ext4 filesystem fills its partition exactly. The image is 80,000,000,000 bytes, which is
+  156,250,000 sectors of 512 bytes.
+- So this drive is a Linux system disk, and ext4 is on sleuthkit's list. It should browse, but nothing has been listed yet.
+  It is a good first test of listing speed on a large tree; it is not a test of photos and documents, which will come with her
+  other drives.
+- `blkid -p` on the whole image names only the partition table, so the filesystem types needed the offsets. FILES finds each
+  volume the same way: from the partition table, then at each offset.
+
+**Still to read off the Pi in F0 (a read-only stage, like Task 0), against that image:**
+- `fls -r` time and memory; `icat` time for a small file.
 - That `fsstat` reports used and free for that filesystem.
 - Whether the Pi's SQLite has FTS5.
 - Whether an ISO or an exFAT card (any she has) is read, so the support list is measured and not copied from a package page.

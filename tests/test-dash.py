@@ -1427,6 +1427,149 @@ def main():
               [i["item"] for i in cl["items"] if i["done"]] == ["five_volts"])
         q("document.querySelector('#dk-body .dk-reading').scrollIntoView({block: 'center'})")
         shot("23h-disk-checklist")
+
+        # DRIVE INFO, the CF adapter's warning, the swap's steps and the job record (the owner's bench procedure, 2026-11-12)
+        sda_args = dict(port=1, devnum="8:0")
+
+        def dk_step(text_part, mode=None):
+            return q("(() => { const s = [...document.querySelectorAll('#dk-body .dk-step')].find(s => s.textContent.includes("
+                     + json.dumps(text_part) + ")); return s ? s.className.replace('dk-step ', '') : null; })()")
+
+        def dk_wait_step(text_part, state, timeout=20):
+            return settles(c, "(() => { const s = [...document.querySelectorAll('#dk-body .dk-step')].find(s => s.textContent.includes("
+                           + json.dumps(text_part) + ")); return !!s && s.classList.contains(" + json.dumps(state) + "); })()", timeout)
+        dk_seg("READ")
+        dk_tap("DRIVE INFO")
+        c.wait("document.querySelector('#dk-body .dk-infocard')", 10)
+        cards = q("[...document.querySelectorAll('#dk-body .dk-infocard')].map(c => c.textContent)")
+        sda_card = next((t for t in cards if t.startswith("sda · WIDGET WIDGETDRIVE 1000")), "")
+        check("DRIVE INFO: a card for each drive with something in it, none for the empty slot; sda's has its model, serial, "
+              "exact size and sector size", bool(sda_card) and not any(t.startswith("sdd") for t in cards)
+              and "Serial" in sda_card and "none the drive reported" in sda_card and "3,145,728 bytes" in sda_card
+              and "512 logical" in sda_card)
+        check("... a drive that passed no IDENTIFY says so, and shows only the kernel's facts (no firmware, SATA or cache lines)",
+              "passed no IDENTIFY through the bridge" in sda_card and "Firmware" in sda_card and "not reported" in sda_card
+              and "Write cache" not in sda_card)
+        check("... and the page says nothing is sent to a drive from here, and why SMART and the native size aren't read",
+              "Nothing is sent to a drive from here" in text("#dk-body") and "hangs on those commands" in text("#dk-body"))
+        FD.usb_disk("sdk", 4 * MiB, "XinTop", "XT-U33502", port=11, devnum="8:160", data=os.urandom(4 * MiB), physical=4096,
+                    ata=("WDC WD800JD-75MSA1", "WD-WIDGET0001"),
+                    udev={"ID_REVISION": "10.0", "ID_ATA_ROTATION_RATE_RPM": "7200", "ID_ATA_SATA": "1",
+                          "ID_ATA_SATA_SIGNAL_RATE_GEN2": "1", "ID_ATA_WRITE_CACHE": "1", "ID_ATA_WRITE_CACHE_ENABLED": "1",
+                          "ID_ATA_FEATURE_SET_HPA": "1", "ID_ATA_FEATURE_SET_HPA_ENABLED": "1",
+                          "ID_ATA_FEATURE_SET_SMART": "1", "ID_ATA_FEATURE_SET_SMART_ENABLED": "0"})
+        check("DRIVE INFO on an ATA drive: its own model and serial, firmware, spin speed, SATA speed, cache, feature sets "
+              "and sector sizes, and the dock's name as the bridge",
+              settles(c, "[...document.querySelectorAll('#dk-body .dk-infocard')].some(c => c.textContent.startsWith('sdk · WDC WD800JD-75MSA1'))", 20)
+              and all(s in text("#dk-body") for s in ("WD-WIDGET0001", "10.0", "7,200 rpm", "signalling up to 3.0 Gb/s", "Write cache", "on",
+                                                      "Host Protected Area (on), SMART (off)", "512 logical, 4096 physical",
+                                                      "XinTop XT-U33502")))
+        check("... and that the drive has the HPA feature set, which says nothing about a hidden area the dock can't show",
+              "can't be read through this dock" in text("#dk-body"))
+        q("document.querySelector('#dk-body .dk-infocard:nth-of-type(2)') && document.querySelector('#dk-body .dk-infobox').scrollIntoView()")
+        small = q(BOX_SMALL)
+        check("DRIVE INFO on the 7\": no text under 14 px", not small)
+        shot("23j-disk-drive-info")
+        dk_tap("HIDE DRIVE INFO")
+        check("HIDE DRIVE INFO: the cards go", settles(c, "!document.querySelector('#dk-body .dk-infocard')", 5))
+        # the CF adapter's power (procedure §2)
+        check("READ: no CF warning until it's a CF card", not q("document.querySelector('#dk-body .dk-cf')"))
+        q("[...document.querySelectorAll('#dk-body .seg button')].find(b => b.textContent === 'CF').click()")
+        c.wait("document.querySelector('#dk-body .dk-cf')", 5)
+        check("READ with CF picked: +5 V ONLY, red and black, the yellow +12 V never reaches the card, meter the plug first",
+              all(s in text("#dk-body .dk-cf") for s in ("+5 V ONLY", "red is +5 V", "black is ground", "yellow +12 V wire must never reach the card",
+                                                          "Meter the plug", "don't take a card hot")))
+        check("the CF warning on the 7\": no text under 14 px", not q(BOX_SMALL))
+        shot("23k-disk-cf-warning")
+        q("[...document.querySelectorAll('#dk-body .seg button')].find(b => b.textContent === 'HDD').click()")
+        check("... HDD again: the warning goes", settles(c, "!document.querySelector('#dk-body .dk-cf')", 5))
+        FD.usb_disk("sdj", 6 * MiB, "WIDGET", "WIDGET CF 6M", port=10, devnum="8:144", data=os.urandom(6 * MiB), rotational=False)
+        dk_seg("WRITE")
+        c.wait("[...document.querySelectorAll('#dk-body .dk-drives button')].some(b => b.textContent.startsWith('sdj ·'))", 20)
+        dk_tile("sdj")
+        check("WRITE to a target that doesn't spin: the CF warning, worded as a question (the dock can't tell a card from an SSD)",
+              "CF-to-IDE adapter? +5 V ONLY" in text("#dk-body .dk-cf"))
+        FD.unplug("sdj")
+
+        # SWAP: the steps tick themselves from the live drive list (procedure A7, B5 and ground rule 7)
+        dk_seg("SWAP")
+        check("SWAP: IDE is not hot-swap, dock off for every change; a picker for the drive being replaced, no steps yet",
+              "IDE is not hot-swap" in text("#dk-body") and "Which drive is being replaced?" in text("#dk-body")
+              and q("document.querySelectorAll('#dk-body .dk-step').length") == 0)
+        q("[...document.querySelectorAll('#dk-body .dk-drives button')].find(b => b.textContent.startsWith('sda ·')).click()")
+        c.wait("document.querySelectorAll('#dk-body .dk-step').length === 6", 10)
+        check("... picked: six steps; the first is NOW (the dock must go off), the rest wait",
+              dk_step("Power the dock off") == "now" and dk_step("Pull the original") == "todo"
+              and dk_step("Seat the new one") == "todo" and dk_step("Prove the swap") == "todo")
+        shot("23l-disk-swap")
+        FD.unplug("sda")
+        check("the original leaves the list (the dock is off): step 1 is DONE by itself, and the pull is NOW",
+              dk_wait_step("Power the dock off", "done") and dk_step("Pull the original") == "now")
+        q("[...document.querySelectorAll('#dk-body button.dk-step')].find(b => b.textContent.includes('Pull the original')).click()")
+        check("... tapping the pull ticks it, and the new drive is what the page waits for",
+              dk_step("Pull the original") == "done" and dk_step("Seat the new one") == "now")
+        FD.usb_disk("sda", 5 * MiB, "WIDGET", "WIDGETDRIVE 2000", data=os.urandom(5 * MiB), **sda_args)
+        check("a different drive appears: seated, not the original, big enough with 512-byte sectors; TARGET CHECK is NOW",
+              dk_wait_step("Seat the new one", "done") and dk_step("It is not the original") == "done"
+              and dk_step("Big enough") == "done" and dk_step("Prove the swap") == "now"
+              and "WIDGETDRIVE 2000" in text("#dk-body"))
+        check("... a drive that was already on the list (sde, in another slot) is not taken for the new one",
+              q("[...document.querySelectorAll('#dk-body .dk-step')].every(s => !s.textContent.includes('OLDSPINNER'))"))
+        check("the swap's steps on the 7\": no text under 14 px, and each step button is at least 56 px tall (a finger)",
+              not q(BOX_SMALL) and q("[...document.querySelectorAll('#dk-body button.dk-step')].every(b => b.getBoundingClientRect().height >= 55.5)"))
+        shot("23m-disk-swap-seated")
+        q("[...document.querySelectorAll('#dk-body button.dk-step')].find(b => b.textContent.includes('Prove the swap')).click()")
+        check("the last step hands the new drive to WRITE's TARGET CHECK, as the target",
+              settles(c, "[...document.querySelectorAll('#dk-body .dk-drives .tile.on')].some(t => t.textContent.startsWith('sda ·'))", 10)
+              and q("document.querySelector('#dk-body .seg .on').textContent") == "WRITE")
+        # the same drive put back: the swap did not take (procedure A7's STOP), by serial where there is one
+        dk_seg("SWAP")
+        dk_tap("START OVER")
+        q("[...document.querySelectorAll('#dk-body .dk-drives button')].find(b => b.textContent.startsWith('sdk ·')).click()")
+        c.wait("document.querySelectorAll('#dk-body .dk-step').length === 6", 10)
+        FD.unplug("sdk")
+        dk_wait_step("Power the dock off", "done")
+        FD.usb_disk("sdk", 4 * MiB, "XinTop", "XT-U33502", port=11, devnum="8:160", data=os.urandom(4 * MiB),
+                    ata=("WDC WD800JD-75MSA1", "WD-WIDGET0001"))
+        check("the same drive back (same model and serial): STOP, the swap didn't take, dock off and reseat",
+              dk_wait_step("It is not the original", "bad", 25)
+              and "the swap didn't take" in text("#dk-body") and dk_step("Prove the swap") == "todo")
+        shot("23n-disk-swap-same")
+        q("[...document.querySelectorAll('#dk-body .seg button')].find(b => b.textContent === 'CF').click()")
+        check("SWAP with CF picked: the CF adapter's +5 V warning is in the steps too",
+              settles(c, "!!document.querySelector('#dk-body .dk-cf')", 5) and "+12 V" in text("#dk-body .dk-cf"))
+        q("[...document.querySelectorAll('#dk-body .seg button')].find(b => b.textContent === 'HDD').click()")
+        FD.unplug("sdk")
+        dk_tap("START OVER")
+        FD.usb_disk("sda", 3 * MiB, "WIDGET", "WIDGETDRIVE 1000", data=os.urandom(3 * MiB), **sda_args)
+
+        # RECORDS: Appendix B, filled in from what the deck wrote down
+        dk_seg("RECORDS")
+        c.wait("document.querySelector('#dk-body button.dk-recrow')", 10)
+        check("RECORDS: one row per stored image, newest first; no PRINT button on the 7\" (it has no printer)",
+              "WW-HDD" in text("#dk-body") and not q("[...document.querySelectorAll('#dk-body button')].some(b => b.textContent.includes('PRINT'))"))
+        q("[...document.querySelectorAll('#dk-body button.dk-recrow')].find(b => b.textContent.startsWith('WW-HDD')).click()")
+        c.wait("document.querySelector('#dk-body .dk-rec')", 10)
+        side = json.load(open(f"{FD.store}/gauntlet-legends/{stored[0][:-4]}.json"))
+        rec_text = text("#dk-body .dk-rec")
+        check("the record: the read (machine, source drive, fingerprint, bytes, SHA-1 and SHA-256), the write that went to sdh, "
+              "and this image's cab checklist",
+              "JOB RECORD · WW-HDD" in rec_text and "THE READ" in rec_text and "gauntlet-legends" in rec_text
+              and "WIDGETDRIVE 1000" in rec_text and side["sha1"] in rec_text and side["sha256"] in rec_text
+              and f"{side['bytes']:,}" in rec_text and "WRITTEN TO A DRIVE" in rec_text
+              and "verified: read back twice, both equal the image" in rec_text and "IN THE CAB" in rec_text)
+        check("... the cab line that was ticked shows done with its time; one the deck can't know says 'not recorded'",
+              q("[...document.querySelectorAll('#dk-body .dk-rt tr')].some(r => r.textContent.includes('5 V at the board') && r.textContent.includes('done'))")
+              and q("[...document.querySelectorAll('#dk-body .dk-rt tr')].some(r => r.textContent.startsWith('Notes') && r.textContent.includes('not recorded'))"))
+        check("... a verified write is green, a record fits the 7\" without scrolling sideways",
+              q("document.querySelector('#dk-body .dk-rt .ok')") is not None
+              and q("document.querySelector('#dk-body .dk-rec').scrollWidth <= document.querySelector('#dk-body .dk-rec').clientWidth + 1"))
+        q("document.querySelector('#dk-body .dk-rec').scrollIntoView()")
+        check("the job record on the 7\": no text under 14 px", not q(BOX_SMALL))
+        shot("23o-disk-record")
+        dk_tap("ALL RECORDS")
+        check("ALL RECORDS: back to the list", settles(c, "!document.querySelector('#dk-body .dk-rec') && !!document.querySelector('#dk-body button.dk-recrow')", 5))
+        dk_seg("CHECKLIST")
         FD.mount_table(store=False)
         dk_seg("READ")
         check("the store unplugged: NOT CONNECTED, READ off and it says why, the nav says so",
@@ -1456,6 +1599,35 @@ def main():
             check("from a phone: no horizontal scroll, and nothing runs past a card's edge",
                   q("document.documentElement.scrollWidth <= 391")
                   and q("[...document.querySelectorAll('#dk-body .card')].every(c => c.scrollWidth <= c.clientWidth + 1)"))
+            q("[...document.querySelectorAll('#dk-body button')].find(b => b.textContent === 'DRIVE INFO').click()")
+            check("from a phone: DRIVE INFO opens the drives' cards, without horizontal scroll",
+                  settles(c, "!!document.querySelector('#dk-body .dk-infocard')", 5) and q("document.documentElement.scrollWidth <= 391")
+                  and q("[...document.querySelectorAll('#dk-body .card')].every(c => c.scrollWidth <= c.clientWidth + 1)"))
+            q("[...document.querySelectorAll('#dk-body button.dk-recrow')].find(b => b.textContent.startsWith('WW-HDD')).click()")
+            check("from a phone: a tap on an image opens its job record, with PRINT OR SAVE AS PDF (the 7\" has none)",
+                  settles(c, "!!document.querySelector('#dk-body .dk-rec')", 10)
+                  and q("[...document.querySelectorAll('#dk-body button')].some(b => b.textContent === 'PRINT OR SAVE AS PDF')")
+                  and q("document.documentElement.scrollWidth <= 391")
+                  and q("[...document.querySelectorAll('#dk-body .dk-rec')].every(c => c.scrollWidth <= c.clientWidth + 1)"))
+            q("document.querySelector('#dk-body .dk-rec').scrollIntoView()")
+            time.sleep(0.5)
+            shot("24b-disk-record-phone")
+            # the print view: only the record, black on white, a rule where the deck has no value
+            c.send("Emulation.setEmulatedMedia", {"media": "print"})
+            q("document.body.classList.add('dk-printing')")
+            check("the print view keeps only the record: no header, no nav, no other card, no buttons; black on white",
+                  q("getComputedStyle(document.querySelector('header')).display") == "none"
+                  and q("getComputedStyle(document.querySelector('nav')).display") == "none"
+                  and q("[...document.querySelectorAll('#dk-body > *:not(.dk-rec)')].every(e => getComputedStyle(e).display === 'none')")
+                  and q("getComputedStyle(document.querySelector('#dk-body .dk-rec')).display") != "none"
+                  and q("getComputedStyle(document.querySelector('#dk-body .dk-noprint')).display") == "none"
+                  and q("getComputedStyle(document.body).backgroundColor") == "rgb(255, 255, 255)"
+                  and q("getComputedStyle(document.body).color") == "rgb(0, 0, 0)")
+            check("... and a value the deck doesn't have is a blank rule to write on, not text",
+                  q("getComputedStyle(document.querySelector('#dk-body .dk-blank')).color") == "rgba(0, 0, 0, 0)"
+                  and q("getComputedStyle(document.querySelector('#dk-body .dk-blank')).borderBottomStyle") == "solid")
+            c.send("Emulation.setEmulatedMedia", {"media": ""})
+            q("document.body.classList.remove('dk-printing')")
             c.open(B + "/dash/", 1024, 600)
             c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
         else:

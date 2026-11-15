@@ -629,8 +629,32 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   - [x] Identity, 2026-11-14 (stacked on the above): a drive behind the dock is named by its own ATA model and serial from
         udev (`/run/udev/data`, no root), the INQUIRY only as the fallback; "the drive the image came from" is the drive's
         serial, or without one its make, size and first 64 MiB; the image's fingerprint is in the sidecar and on the 7".
-        `test-disk.sh`: 128, `test-dash.sh`: 196. Still to do: "power the dock off for every change" in the 7"'s swap
-        steps, DRIVE INFO (`hdparm -I` only: see the dock facts below), a job record page
+        `test-disk.sh`: 128, `test-dash.sh`: 196
+  - [x] The four buttons from the owner's bench procedure (rev 1, 2026-11-12), 2026-11-15. None of them writes hardware or
+        sends anything new to a drive (hard rule 6 is untouched); the 7" gains the segments SWAP and RECORDS beside READ,
+        WRITE and CHECKLIST, and a phone gets DRIVE INFO and the records too:
+        - **DRIVE INFO**, a toggle under the drive tiles in READ, WRITE and on a phone: model, serial, firmware, exact size and
+          sectors, logical and physical sector size, spin speed, SATA speed, write cache and feature sets, and the dock as the
+          bridge. It is what udev kept from the drive's own IDENTIFY when it was plugged in, plus sysfs
+          (`gatboxlib.disks.drive_info`), so nothing is asked of the dock: `hdparm -N` hangs it (the Pi, 2026-11-14). A key
+          udev did not keep says "not reported"; a drive that passed no IDENTIFY through the bridge shows only the kernel's
+          facts and says so. Health (SMART) and the native size (HPA) are not read, and the card says why. `/api/disk` carries
+          `info` on each disk. CHS is in IDENTIFY and udev does not keep it, so it is not shown
+        - **SWAP**, procedure A7 and B5 with ground rule 7: pick the drive being replaced while it is still on the dock, then
+          six steps that tick themselves from the live drive list: the dock goes off (the original leaves the list), pull the
+          original and label it ORIGINAL, DO NOT WRITE (a tap), the new one seated (a drive appears), it is not the original
+          (STOP when it has the same model and serial: the swap did not take; CHECK when there is no serial to tell by),
+          big enough with 512-byte sectors and nothing mounted, and TARGET CHECK, which hands the new drive to WRITE as the
+          target. The state lives in the page only (no storage), so a reload starts over
+        - **RECORDS**, the procedure's Appendix B (`GET /api/disk/record?image=`): one page per image from its sidecar, the
+          store's `writes.jsonl` (every write of the same bytes, newest first, stopped ones with why) and that image's cab
+          checklist. A line the deck does not know (notes, the cab ticks not yet made) says "not recorded"; written out, it is a
+          blank rule. On a phone, PRINT OR SAVE AS PDF prints only the record, black on white; the 7" has no printer and no button.
+          Not in it, because the deck does not record them: the device letter, the two hash passes and times, the write's time and speed
+        - **the CF adapter's warning**, procedure §2: +5 V only, red +5 V, black ground, the yellow +12 V never reaches the
+          card, meter the plug first, no hot insertion. It shows when CF is chosen on READ or SWAP, and as a question on WRITE
+          for any target that does not spin, because the dock cannot tell a CF card from an SSD
+        `test-disk.sh`: 141, `test-dash.sh`: 228. Screenshots 23j to 23o and 24b
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4

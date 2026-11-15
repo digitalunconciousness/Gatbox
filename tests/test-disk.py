@@ -205,6 +205,31 @@ def main():
     code, out = disk("list")
     check("the terminal's list shows the drive, not the dock", "WDC WD800JD-75MSA1" in out and "serial WD-WIDGET0001" in out)
 
+    print("DRIVE INFO (what udev kept from the drive's own IDENTIFY, and sysfs; nothing is sent to the drive):")
+    usb_disk("sdk", 3 * MiB, "XinTop", "XT-U33502", port=11, devnum="8:160", data=os.urandom(3 * MiB), physical=4096,
+             ata=("WDC WD800JD-75MSA1", "WD-WIDGET0001"),
+             udev={"ID_REVISION": "10.0", "ID_ATA_ROTATION_RATE_RPM": "7200", "ID_ATA_SATA": "1",
+                   "ID_ATA_SATA_SIGNAL_RATE_GEN1": "1", "ID_ATA_SATA_SIGNAL_RATE_GEN2": "1",
+                   "ID_ATA_WRITE_CACHE": "1", "ID_ATA_WRITE_CACHE_ENABLED": "1",
+                   "ID_ATA_FEATURE_SET_HPA": "1", "ID_ATA_FEATURE_SET_HPA_ENABLED": "1",
+                   "ID_ATA_FEATURE_SET_SMART": "1", "ID_ATA_FEATURE_SET_SMART_ENABLED": "0"})
+    usb_disk("sdm", 3 * MiB, "XinTop", "XT-U33502", port=13, devnum="8:192", data=os.urandom(3 * MiB),
+             ata=("WDC WD800JD-75MSA1", "WD-WIDGET0009"))                # IDENTIFY gave a model and serial and nothing else
+    code, out = disk("list", "--json")
+    info = {d["name"]: d["info"] for d in json.loads(out)["disks"]}
+    ik, il, im = info["sdk"], info["sdl"], info["sdm"]
+    check("an ATA drive: its firmware, spin speed, SATA speed, write cache and feature sets, as udev kept them",
+          ik["identify"] and ik["firmware"] == "10.0" and ik["rpm"] == 7200 and ik["sata_gen"] == 2 and ik["write_cache"] is True
+          and ik["features"] == [{"name": "Host Protected Area", "enabled": True}, {"name": "SMART", "enabled": False}])
+    check("... and what the kernel knows: the sectors (512-byte units), the logical and physical sector size",
+          ik["sectors"] == 3 * MiB // 512 and ik["logical"] == 512 and ik["physical"] == 4096)
+    check("a key udev did not keep is not shown, not guessed: an ATA drive with only a model and serial has no firmware, "
+          "spin speed, SATA speed, cache or features", im["identify"] and im["firmware"] is None and im["rpm"] is None
+          and im["sata_gen"] is None and im["write_cache"] is None and im["features"] == [])
+    check("a card reader's disk has no IDENTIFY to show: only the kernel's facts", not il["identify"] and il["firmware"] is None
+          and il["features"] == [] and il["logical"] == 512)
+    F.unplug("sdm")
+
     print("the source, by the drive's own serial:")
     srcA = os.urandom(3 * MiB)
     usb_disk("sdk", len(srcA), "XinTop", "XT-U33502", port=11, devnum="8:160", data=srcA,
@@ -889,6 +914,52 @@ def web_side(image):
         code, r = call("GET", "/api/disk/checklists")
         check("... both kept, newest first, with their ticks counted", code == 200
               and [(x["write"], x["done"], x["of"]) for x in r["checklists"]] == [(own, 1, 10), (write_id, 1, 10)])
+        print("the job record (the bench procedure's Appendix B):")
+        code, rec = call("GET", f"/api/disk/record?image={image}")
+        sec = {s["title"]: {r["label"]: r for r in s["rows"]} for s in rec["sections"]} if code == 200 else {}
+        side = json.load(open(f"{STORE}/{image[:-4]}.json"))
+        rd = sec.get("THE READ", {})
+        check("GET /api/disk/record: the read, from the sidecar: machine, source drive, fingerprint, image bytes and hashes",
+              code == 200 and rec["image"] == image and rd["Date and machine"]["value"] == "widget-wars"
+              and rd["Date and machine"]["at"] == side["started"] and "WIDGETDRIVE 1000" in rd["Source media"]["value"]
+              and rd["Image bytes"]["value"] == f"{side['bytes']:,}" and rd["Image SHA-1"]["value"] == side["sha1"]
+              and rd["Image SHA-256"]["value"] == side["sha256"] and rd["Image file"]["value"] == image
+              and rd["Fingerprint, first 64 MiB (non-zero bytes)"]["value"] == f"{side['fingerprint']['nonzero']:,}")
+        check("... the ddrescue result and how many times it was read", "100.0% rescued" in rd["ddrescue"]["value"]
+              and "0 bad areas" in rd["ddrescue"]["value"] and rd["ddrescue"]["ok"] is True and "read once" in rd["Passes"]["value"])
+        check("... a line the deck cannot know stays blank, to write in: Notes", rd["Notes"]["value"] is None)
+        wl = next(s["rows"] for s in rec["sections"] if s["title"] == "WRITTEN TO A DRIVE")
+        wr = {r["label"]: r for r in wl[:4]}                     # the newest write first: this test's verified one
+        check("... the writes, from writes.jsonl, newest first: verified, the target drive, what was on it, the bytes beyond "
+              "the image", wr["Write"]["value"].startswith("verified") and wr["Write"]["ok"] is True
+              and "WIDGET SSD 64G C" in wr["Target media"]["value"] and "overwrite acknowledged" in wr["On the target before"]["value"]
+              and "bytes" in wr["Beyond the image, left as it was"]["value"])
+        stopped = [r for r in wl if r["label"] == "Write" and r["ok"] is False]
+        check("... the earlier writes of the same bytes are listed too, and a stopped one says why and that nothing was written",
+              rec["writes"] >= 2 and stopped and "stopped:" in stopped[0]["value"] and "nothing was written" in stopped[0]["value"])
+        cab = sec.get("IN THE CAB", {})
+        ticked = [k for k, r in cab.items() if r["value"] == "done"]
+        check("... the cab lines, from this image's checklist: the five-volt tick is there with its time, the rest are blank",
+              len(cab) == 10 and len(ticked) == 1 and "5 V at the board" in ticked[0] and cab[ticked[0]]["at"] > 0
+              and rec["checklist"] == write_id)
+        codes = [call("GET", f"/api/disk/record?image={p}")[0] for p in ("../../etc/passwd", "/etc/passwd", "nope.img",
+                                                                          "widget-wars/nope.img", "", "widget-wars/x.json")]
+        check("an image that isn't in the store, a path out of it, or no name -> 404", all(c == 404 for c in codes))
+        # a sidecar and an image just outside the store, and a write line for other bytes: neither may show up
+        open(f"{T}/outside.img", "wb").write(b"x")
+        json.dump({"label": "OUTSIDE", "sha1": "f" * 40}, open(f"{T}/outside.json", "w"))
+        code_out = call("GET", "/api/disk/record?image=../outside.img")[0]
+        with open(f"{STORE}/writes.jsonl", "a") as f:
+            f.write(json.dumps({"state": "stopped", "sha1": "0" * 40, "epoch": time.time() + 60, "target": None,
+                                "error": "OTHER-BYTES-MARKER"}) + "\n")
+            f.write("this line is not JSON\n")
+        code_w, rec2 = call("GET", f"/api/disk/record?image={image}")
+        check("a file outside the store is never read (404), a write of other bytes isn't on this image's record, and a bad "
+              "line in writes.jsonl is skipped", code_out == 404 and code_w == 200 and "OTHER-BYTES-MARKER" not in json.dumps(rec2))
+        mount_table(store=False)
+        code, _ = call("GET", f"/api/disk/record?image={image}")
+        mount_table()
+        check("with the store unplugged -> 409, IMAGE STORE NOT CONNECTED", code == 409)
         code, r = call("POST", "/api/disk/retry", {"machine": "widget-wars", "label": "NOPE"})
         check("RETRY with no read in progress -> 404", code == 404)
         usb_disk("sde", MiB, "WIDGET", "OLDSPINNER 40", port=5, devnum="8:64", data=os.urandom(MiB))

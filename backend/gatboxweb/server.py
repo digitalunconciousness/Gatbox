@@ -623,6 +623,11 @@ def api_disk_write(h, m, q):
     _disk_queued(h, req, f"WRITE ARMED {os.path.basename(req['image'])} -> {req['device']} ({req['armed']['by']})")
 
 
+def api_disk_record(h, m, q):
+    """GET /api/disk/record?image=REL: the job record of one stored image (the bench procedure's Appendix B)."""
+    h.json(200, disk.record(q1(q, "image")))
+
+
 def api_disk_checklist_get(h, m, q):
     h.json(200, disk.checklist(q1(q, "write")))
 
@@ -1048,6 +1053,7 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("GET", r"/api/burn/images", api_burn_images),
     ("GET", r"/api/disk", api_disk_get),
     ("GET", r"/api/disk/images", api_disk_images),
+    ("GET", r"/api/disk/record", api_disk_record),
     ("POST", r"/api/disk/read", api_disk_read),
     ("POST", r"/api/disk/retry", api_disk_retry),
     ("POST", r"/api/disk/check", api_disk_check),

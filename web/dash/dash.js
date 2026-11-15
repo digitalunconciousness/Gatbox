@@ -2847,7 +2847,7 @@
   // 7" (note §10, and the owner's 2026-11-03 answer on ticking).
   const K = {st: null, sig: null, images: null, imgSig: null, list: null, cap: null, listFor: undefined, mode: "read",
              src: null, media: null, machine: null, machineName: null, label: null, image: null, target: null,
-             ackFor: null, holding: false, pending: false, expT: null};
+             ackFor: null, holding: false, pending: false, expT: null, info: false, swap: null, rec: null};
   const GB = n => n >= 1e12 ? (n / 1e12).toFixed(2) + " TB" : n >= 1e9 ? (n / 1e9).toFixed(1) + " GB"
                 : n >= 1e6 ? Math.round(n / 1e6) + " MB" : (n || 0).toLocaleString("en-US") + " bytes";
   const exact = n => (n || 0).toLocaleString("en-US") + " bytes";
@@ -2931,22 +2931,24 @@
     else if (s && s.state) B.appendChild(diskResult(s, ctl));
     if (!ctl) {                                      // a phone: what's going on, no controls
       const c = el("div", "card");
-      add(c, el("h2", null, "Drives on USB"), driveTiles(st, null, null, 0),
+      add(c, el("h2", null, "Drives on USB"), driveTiles(st, null, null, 0), driveInfoBlock(st),
           el("div", "mut", "READ and WRITE are on the Pi's own screen."));
-      add(B, c, checklistCard(), diskImagesCard(st));
+      add(B, c, checklistCard(), recordCard(), diskImagesCard(st));
       return;
     }
     const seg = el("div", "seg");
-    for (const [k, t] of [["read", "READ"], ["write", "WRITE"], ["checklist", "CHECKLIST"]]) {
+    for (const [k, t] of [["read", "READ"], ["write", "WRITE"], ["swap", "SWAP"], ["records", "RECORDS"], ["checklist", "CHECKLIST"]]) {
       const b = el("button", K.mode === k ? "on" : null, t);
       b.addEventListener("click", () => { K.mode = k; renderDisk(); });
       seg.appendChild(b);
     }
     B.appendChild(seg);
     if (K.mode === "write") diskWritePanel(B, st);
+    else if (K.mode === "swap") B.appendChild(swapCard(st));
+    else if (K.mode === "records") B.appendChild(recordCard());
     else if (K.mode === "checklist") B.appendChild(checklistCard());
     else diskReadPanel(B, st);
-    if (K.mode !== "checklist") B.appendChild(diskImagesCard(st));
+    if (K.mode === "read" || K.mode === "write") B.appendChild(diskImagesCard(st));
   }
   function storeLine(st) {
     const c = el("div", "card dk-store"), sto = st.store;
@@ -3067,7 +3069,7 @@
     const src = K.src && ds.find(d => d.name === K.src.name && d.role === "ok" && sameDrive(d.identity, K.src.identity));
     if (K.src && !src) K.src = null;                 // taken off, or another drive in its place: pick it again
     add(p, el("h2", null, "1 · SOURCE"),
-        driveTiles(st, d => { K.src = {name: d.name, identity: d.identity}; renderDisk(); }, src, 0));
+        driveTiles(st, d => { K.src = {name: d.name, identity: d.identity}; renderDisk(); }, src, 0), driveInfoBlock(st));
     add(p, el("h2", null, "2 · WHAT IT IS"));
     const seg = el("div", "seg");
     for (const [k, t] of DISK_MEDIA) {
@@ -3075,7 +3077,9 @@
       b.addEventListener("click", () => { K.media = k; renderDisk(); });
       seg.appendChild(b);
     }
-    add(p, seg, el("div", "mut", "The dock can't tell a disk from a card: say which it is."), machineRow());
+    add(p, seg, el("div", "mut", "The dock can't tell a disk from a card: say which it is."));
+    if (K.media === "cf") p.appendChild(cfWarning(false));
+    p.appendChild(machineRow());
     const lb = el("button", null, K.label ? "LABEL: " + K.label : "TYPE A LABEL");
     lb.addEventListener("click", async () => {
       const v = await keypad({title: "A label for the image (e.g. WW-HDD, BOOT-CF)", max: 40, value: K.label || ""});
@@ -3136,7 +3140,9 @@
     if (!imgs.length) p.appendChild(el("div", "mut", st.store.mounted ? "No images in the store yet: READ a drive first."
                                                                     : "The images are on the image store: plug it in."));
     add(p, el("h2", null, "2 · TARGET"),
-        driveTiles(st, d => { K.target = {name: d.name, identity: d.identity}; renderDisk(); }, tgt, K.image ? K.image.bytes : 0));
+        driveTiles(st, d => { K.target = {name: d.name, identity: d.identity}; renderDisk(); }, tgt, K.image ? K.image.bytes : 0),
+        driveInfoBlock(st));
+    if (tgt && !tgt.rotational) p.appendChild(cfWarning(true));
     add(p, el("h2", null, "3 · TARGET CHECK"));
     const chk = el("button", null, "TARGET CHECK");
     chk.disabled = !(K.image && tgt && st.store.mounted && st.spool && !st.busy);
@@ -3195,6 +3201,192 @@
     if (imgs.length > 20) c.appendChild(el("div", "mut", `and ${imgs.length - 20} older ones`));
     return c;
   }
+  // --- DRIVE INFO ---------------------------------------------------------------------------------------------------
+  // What the drive told udev about itself when it was plugged in (its own IDENTIFY), and what the kernel knows. Nothing is
+  // sent to the drive from here: the dock hangs on SMART and native-max commands and has to be reset (the Pi, 2026-11-14),
+  // so health and the HPA's real size are not read. What udev did not keep is "not reported", never a guess.
+  const SATA_GBPS = {1: "1.5", 2: "3.0", 3: "6.0"};
+  function driveInfoRows(d) {
+    const i = d.identity, n = d.info || {}, rows = [];
+    const feat = (n.features || []).map(f => f.name + (f.enabled === null ? "" : f.enabled ? " (on)" : " (off)")).join(", ");
+    rows.push(["Serial", i.serial || "none the drive reported"], ["Firmware", n.firmware || "not reported"],
+              ["Size", `${exact(i.bytes)} (${(n.sectors || 0).toLocaleString("en-US")} × 512)`],
+              ["Sector size", `${i.logical} logical, ${n.physical ? n.physical + " physical" : "physical not reported"}`],
+              ["Spin", n.rpm > 0 ? `${n.rpm.toLocaleString("en-US")} rpm` : n.rpm === 0 ? "not a spinning disk"
+                       : n.rotational ? "spins (the kernel's word)" : "doesn't spin (the kernel's word)"]);
+    if (n.identify) {
+      rows.push(["SATA", n.sata_gen ? `signalling up to ${SATA_GBPS[n.sata_gen]} Gb/s` : "not reported"],
+                ["Write cache", n.write_cache === true ? "on" : n.write_cache === false ? "off" : "not reported"],
+                ["Feature sets", feat || "none reported"]);
+    }
+    rows.push(["Behind", i.bridge ? `${i.bridge} · USB ${i.usb}${i.driver ? " · " + i.driver : ""}` : `USB ${i.usb}${i.driver ? " · " + i.driver : ""}`]);
+    return rows;
+  }
+  function driveInfoBlock(st) {
+    const ds = (st.disks || []).filter(d => d.role !== "empty"), wrap = el("div", "dk-infobox");
+    if (!ds.length) return wrap;
+    const b = el("button", null, K.info ? "HIDE DRIVE INFO" : "DRIVE INFO");
+    b.addEventListener("click", () => { K.info = !K.info; renderDisk(); });
+    wrap.appendChild(b);
+    if (!K.info) return wrap;
+    for (const d of ds) {
+      const c = el("div", "dk-infocard"), list = el("dl", "dk-info"), role = DISK_ROLE[d.role];
+      add(c, el("b", null, `${d.name} · ${driveName(d.identity)}`), role ? el("span", "badge " + role[1], role[0]) : null);
+      for (const [k, v] of driveInfoRows(d)) add(list, el("dt", null, k), el("dd", null, v));
+      c.appendChild(list);
+      c.appendChild(el("div", "dk-note", (d.info || {}).identify
+        ? "From the drive's own IDENTIFY, which udev read when it was plugged in."
+        : "This one passed no IDENTIFY through the bridge, so this is only what the kernel knows."));
+      if (((d.info || {}).features || []).some(f => f.name === "Host Protected Area"))
+        c.appendChild(el("div", "dk-note", "Host Protected Area: the drive has the feature set. Whether any area is hidden can't be read through this dock."));
+      wrap.appendChild(c);
+    }
+    wrap.appendChild(el("div", "dk-note", "Nothing is sent to a drive from here. SMART health and the native size aren't read: this dock hangs on those commands and has to be reset."));
+    return wrap;
+  }
+
+  // --- the CF adapter's power (bench procedure §2) ------------------------------------------------------------------
+  function cfWarning(maybe) {
+    const c = el("div", "dk-cf");
+    add(c, el("h3", null, maybe ? "A CF card in a CF-to-IDE adapter? +5 V ONLY" : "CF ADAPTER: +5 V ONLY"),
+        el("div", null, "The adapter's 4-pin header takes +5 V only: red is +5 V, black is ground. The yellow +12 V wire must never reach the card. "
+                        + "Molex and floppy plugs run in opposite order, so wire by colour. Meter the plug before the card goes in: about 5.0 V. "
+                        + "These adapters don't take a card hot, so the dock is off while it goes in."));
+    return c;
+  }
+
+  // --- the swap, step by step (bench procedure A7 and B5, ground rule 7) ---------------------------------------------------
+  // The steps tick themselves from the live drive list: the original leaving it is "dock off", a drive showing up is "new one
+  // seated". Nothing here touches a drive. K.swap lives in this page only (no storage), so a reload starts it over.
+  function swapSteps(sw, ds, img) {
+    const seen = ds.filter(d => d.identity.bytes > 0 && (d.role === "ok" || d.role === "mounted"));
+    if (!ds.some(d => d.identity.bytes > 0 && sameDrive(d.identity, sw.orig))) sw.gone = true;
+    const fresh = seen.find(d => !(sw.before || []).some(b => sameDrive(b, d.identity)));      // not on the list when the swap began
+    const now = sw.gone ? fresh || seen.find(d => sameDrive(d.identity, sw.orig)) || null : null;
+    const same = !!now && sameDrive(now.identity, sw.orig), mounted = !!now && now.role === "mounted";
+    const fits = !!now && !same && !mounted && (!img || now.identity.bytes >= img.bytes) && now.identity.logical === 512;
+    return {now, same, steps: [
+      {text: "Power the dock off: USB and its PSU. IDE is not hot-swap.", state: sw.gone ? "done" : "now",
+       detail: sw.gone ? "the original left the list" : "waiting for the original to leave the list"},
+      {text: "Pull the original. Label it ORIGINAL, DO NOT WRITE, and set it aside.", tick: "pulled",
+       state: sw.pulled ? "done" : sw.gone ? "now" : "todo", detail: sw.pulled ? "" : "tap when it's done"},
+      {text: "Seat the new one, switch the dock's PSU on, plug the USB in. Wait about 10 s.",
+       state: now ? "done" : sw.gone ? "now" : "todo",
+       detail: now ? `${now.name} · ${driveName(now.identity)}` : sw.gone ? "waiting for a drive to appear" : ""},
+      {text: "It is not the original.", state: !now ? "todo" : same && sw.orig.serial ? "bad" : same ? "warn" : "done",
+       detail: !now ? "" : same && sw.orig.serial ? "Same model and serial: the swap didn't take. Dock off, reseat, dock on."
+             : same ? "Same make and size and no serial to tell them apart: TARGET CHECK compares the first 64 MiB as well."
+             : `${driveName(now.identity)} is a different drive`},
+      {text: "Big enough, 512-byte sectors, nothing mounted.",
+       state: !now ? "todo" : mounted || (img && now.identity.bytes < img.bytes) || now.identity.logical !== 512 ? "bad" : "done",
+       detail: !now ? "" : mounted ? "Something on it is mounted: eject it first."
+             : now.identity.logical !== 512 ? `${now.identity.logical}-byte sectors: the procedure wants 512.`
+             : img && now.identity.bytes < img.bytes ? `${exact(now.identity.bytes)}: smaller than the image (${exact(img.bytes)}).`
+             : `${exact(now.identity.bytes)}, 512-byte sectors${img ? ", fits the image" : ". Pick an image on WRITE to check it fits."}`},
+      {text: "Prove the swap: TARGET CHECK.", state: fits ? "now" : "todo", check: true,
+       detail: fits ? "Compares the first 64 MiB with the original's." : "after the new drive checks out"}]};
+  }
+  const STEP_WORD = {done: ["DONE", "ok"], now: ["NOW", "cy"], bad: ["STOP", "bad"], warn: ["CHECK", "warn"], todo: ["LATER", "mut"]};
+  function swapCard(st) {
+    const c = el("div", "card"), ds = st.disks || [], sw = K.swap;
+    c.appendChild(el("h2", null, "Swap a drive or card"));
+    c.appendChild(powerNote());
+    c.appendChild(el("div", "warn dk-over", "IDE is not hot-swap. Power the dock off, USB and PSU, for every change, then wait for the new drive to appear."));
+    if (!sw) {
+      add(c, el("h3", null, "Which drive is being replaced?"),
+          driveTiles(st, d => {
+            // `before`: every drive on the list now, so a drive that was already there (another slot, a reader) is never taken for the new one
+            K.swap = {orig: d.identity, name: d.name, flash: !d.rotational, gone: false, pulled: false,
+                      before: (st.disks || []).filter(x => x.identity.bytes > 0).map(x => x.identity)};
+            renderDisk();
+          }, null, 0));
+      c.appendChild(el("div", "mut", "Pick it now, while it's still on the dock: the steps below watch for it to leave and for the new one to arrive."));
+      return c;
+    }
+    const seg = el("div", "seg");
+    for (const [k, t] of DISK_MEDIA) {
+      const b = el("button", K.media === k ? "on" : null, t);
+      b.addEventListener("click", () => { K.media = k; renderDisk(); });
+      seg.appendChild(b);
+    }
+    add(c, el("h3", null, `Replacing ${sw.name} · ${driveName(sw.orig)}`), el("div", "mut", "What it is, so the right warnings show:"), seg);
+    if (K.media === "cf" || (!K.media && sw.flash)) c.appendChild(cfWarning(!K.media));
+    const r = swapSteps(sw, ds, K.image);
+    r.steps.forEach((s, n) => {
+      const word = STEP_WORD[s.state], row = el(s.tick || s.check ? "button" : "div", "dk-step " + s.state);
+      add(row, el("span", "dk-box", s.state === "done" ? "✓" : s.state === "bad" ? "✕" : String(n + 1)),
+          add(el("span", "dk-t"), el("span", null, s.text), s.detail ? el("div", "mut", s.detail) : null),
+          el("span", "badge " + word[1], word[0]));
+      if (s.tick) row.addEventListener("click", () => { sw.pulled = !sw.pulled; renderDisk(); });
+      if (s.check) {
+        row.disabled = !r.now || s.state === "todo";
+        row.addEventListener("click", () => {
+          K.target = {name: r.now.name, identity: r.now.identity}; K.mode = "write";
+          renderDisk();
+          if (!K.image) toast("Pick the image to write, then TARGET CHECK", "warn", 6000);
+        });
+      }
+      c.appendChild(row);
+    });
+    const again = el("button", null, "START OVER");
+    again.addEventListener("click", () => { K.swap = null; renderDisk(); });
+    c.appendChild(add(el("div", "btnrow"), again));
+    return c;
+  }
+
+  // --- the job record (the bench procedure's Appendix B) ---------------------------------------------------------------
+  // One image's record, filled in from what the deck wrote down. A line the deck doesn't know is blank: write it in. On a
+  // phone, PRINT saves it as a PDF; the 7" has no printer, so it has no button.
+  function loadRecord(rel) {
+    api("GET", "/api/disk/record?image=" + encodeURIComponent(rel)).then(r => { K.rec = r; renderDisk(); }).catch(fail);
+  }
+  function recordCard() {
+    const c = el("div", "card"), imgs = K.images, rec = K.rec;
+    if (rec) {
+      c.classList.add("dk-rec");
+      c.appendChild(el("h2", null, `JOB RECORD · ${rec.label || base(rec.image)}`));
+      for (const sec of rec.sections) {
+        c.appendChild(el("h3", null, sec.title));
+        const t = el("table", "dk-rt");
+        for (const r of sec.rows) {
+          const v = el("td", r.ok === false ? "bad" : r.ok === true ? "ok" : null);
+          if (r.value == null) v.appendChild(el("span", "dk-blank", "not recorded"));
+          else v.appendChild(document.createTextNode(r.value));
+          if (r.at) v.appendChild(el("div", "mut", stamp(r.at)));
+          add(t, add(el("tr"), el("th", null, r.label), v));
+        }
+        c.appendChild(t);
+      }
+      const row = el("div", "btnrow dk-noprint"), back = el("button", null, "ALL RECORDS");
+      back.addEventListener("click", () => { K.rec = null; renderDisk(); });
+      row.appendChild(back);
+      if (!S.local) {
+        const pr = el("button", null, "PRINT OR SAVE AS PDF");
+        pr.addEventListener("click", () => {
+          document.body.classList.add("dk-printing");
+          window.addEventListener("afterprint", () => document.body.classList.remove("dk-printing"), {once: true});
+          window.print();
+        });
+        row.appendChild(pr);
+      }
+      c.appendChild(row);
+      return c;
+    }
+    c.appendChild(el("h2", null, "Job records"));
+    if (!K.st || !K.st.store.mounted) { c.appendChild(el("div", "mut", "The records are kept with the images: plug in the image store.")); return c; }
+    if (!imgs) { c.appendChild(el("div", "mut", "Reading the store's list…")); return c; }
+    if (!imgs.length) { c.appendChild(el("div", "mut", "None yet: READ a drive and its record starts.")); return c; }
+    c.appendChild(el("div", "mut", "One page per image: what was read, what was written to it, and the cab checks. Tap one."));
+    for (const x of imgs.slice(0, 30)) {
+      const row = el("button", "row dk-recrow");
+      add(row, el("b", null, x.label || base(x.image)),
+          el("div", "mut", `${x.machine} · ${GB(x.bytes)} · ${stamp(x.started)}${x.source ? " · from " + x.source : ""}`));
+      row.addEventListener("click", () => loadRecord(x.image));
+      c.appendChild(row);
+    }
+    return c;
+  }
+
   // The swap checklist (note §4.4): it blocks nothing, and each tick keeps its time. One per write; one can be
   // started on its own (a drive written elsewhere, an original put back).
   function readingLine(L) {

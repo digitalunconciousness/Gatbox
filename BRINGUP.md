@@ -655,6 +655,16 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           card, meter the plug first, no hot insertion. It shows when CF is chosen on READ or SWAP, and as a question on WRITE
           for any target that does not spin, because the dock cannot tell a CF card from an SSD
         `test-disk.sh`: 141, `test-dash.sh`: 228. Screenshots 23j to 23o and 24b
+  - [ ] **The drive browser**: look inside stored images (partitions, folders, photos, PDFs, text) and search them, on the 7" only
+        (`docs/plans/2026-11-15-drive-browser.md`, OK'd 2026-11-15 with all seven decisions as recommended).
+    - [x] F0 built, 2026-11-15: `sleuthkit` and `python3-pil` in the bootstrap's package list (**the owner reads that diff and runs
+          the bootstrap**), and `docs/plans/2026-11-15-drive-browser-f0.py`, read-only, which times a full listing of an image,
+          its memory, how fast a file comes out, what the drive holds by kind, SQLite's FTS5 speed and Pillow's thumbnail speed,
+          and prints no file name, folder name or label. `test-drive-f0.sh`: 22, on invented ext4, FAT32 and random images; each
+          of six breakages of it fails a test.
+    - [ ] F0's report from the Pi, into the note's §3. Run: `sg gatbox-disk-queue -c 'python3 docs/plans/2026-11-15-drive-browser-f0.py --bench-dir /srv/gatbox/disks'`
+    - [ ] F1 browse and preview (also stops a READ that is not for a machine from queueing for the archive), F2 index and name
+          search, F3 text search. Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4

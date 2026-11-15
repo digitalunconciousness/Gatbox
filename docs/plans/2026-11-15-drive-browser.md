@@ -1,8 +1,8 @@
 # The drive browser: look inside stored images, with search: design note
 
-**Status: proposed 2026-11-15, waiting for the owner's OK (§9).** Its home in the repo is
-`docs/plans/2026-11-15-drive-browser.md`. Per RULES §3, her OK on this note covers the code, the tests and the push; the system
-config in §7 is shown to her as a bootstrap diff first (hard rule 5).
+**Status: OK'd 2026-11-15 ("recommended": all seven decisions in §9 as recommended). F0 built, waiting for its report from the Pi.**
+Its home in the repo is `docs/plans/2026-11-15-drive-browser.md`. Per RULES §3, her OK on this note covers the code, the tests
+and the push; the system config in §7 is shown to her as a bootstrap diff first (hard rule 5).
 
 **Why now.** The disk job has imaged its first real drive (the 80 GB WD800JD, 2026-11-14: one pass, 100% rescued, no bad areas,
 no kernel messages). The owner's next question was what can be done with what is in the store: browse a drive's files, see photos
@@ -61,7 +61,8 @@ mounted, no loop device, nothing sent to the dock):**
 - `blkid -p` on the whole image names only the partition table, so the filesystem types needed the offsets. FILES finds each
   volume the same way: from the partition table, then at each offset.
 
-**Still to read off the Pi in F0 (a read-only stage, like Task 0), against that image:**
+**Still to read off the Pi in F0, against that image. `docs/plans/2026-11-15-drive-browser-f0.py` reads all of this in one run
+and prints counts, sizes, dates and timings only, never a file or folder name, a volume label, a UUID or a serial:**
 - `fls -r` time and memory; `icat` time for a small file.
 - That `fsstat` reports used and free for that filesystem.
 - Whether the Pi's SQLite has FTS5.
@@ -113,10 +114,12 @@ and photos, documents and other counted by number and by size. Hardware stays un
    gets a 403 that says so. This is a change in what gatbox-web serves: until now it has never served bytes from an image. It
    would serve rendered previews and text, to loopback only, and never an image's raw bytes. CLAUDE.md will say so.
 5. **Nothing leaves the Pi.** The index and thumbnails are not synced, and not queued for the archive.
-6. **To check before F1 ships:** the READ job queues every new image for the archive (`archive-queue.jsonl`). I have not
-   confirmed whether anything sends a disk image from that queue. A personal drive's image must never go without a per-image
-   yes. F1 begins by reading what drains the queue; if disk images can be sent, the READ gets an explicit "archive this" choice
-   that defaults to no for anything that is not a machine's drive.
+6. **The archive queue, checked 2026-11-15 against main:** the READ job writes a line to `archive-queue.jsonl` for every new
+   image and sets the sidecar's `archive` to `pending`, which the DISK tab shows as ARCHIVE PENDING. **Nothing reads that
+   file.** gatbox-sync, the archive and gatbox-web never open the disk store, so no disk image has left the Pi, and none can
+   until a drain is written. Two things follow. F1 stops a READ that is not for a machine (`unassigned`) from queueing
+   anything, and the tab says "not for the archive" for it instead of ARCHIVE PENDING. And when a drain is built, it sends
+   only what the owner has said yes to, one image at a time.
 7. **Imaging keeps priority.** A READ, RETRY or WRITE must never be slowed by indexing on the same USB bus. gatbox-web does not
    start index work while a disk job is queued or running, and tells a running indexer to pause the moment one is queued (§6.2).
 
@@ -189,23 +192,25 @@ A file that exceeds a limit is skipped and counted as "not read", never as "noth
 ## 9. Owner decisions
 
 **Answered 2026-11-15:** the 7" only, no phone for now; the aim is archival, including non-arcade drives, with photos,
-documents and search.
+documents and search. Then, to the seven below: **"recommended"**, all of them.
 
-**To answer** (each has a recommendation; "recommended" accepts every one):
-1. **FILES as a segment of DISK, not a ninth tab.** Recommended.
-2. **A daemon, not a spool of request files** (§6.1). Recommended.
-3. **The index and thumbnails live on the 4 TB drive and are disposable** (§6.3). Recommended.
-4. **Deleted files are hidden in v1.** Showing them, and recovering them, is its own feature (F4). Recommended.
-5. **Old Word, Excel and PowerPoint files (`.doc`, `.xls`, `.ppt`) searchable in F3 through `catdoc`?** It is one small package.
-   Recommended: yes, with `.docx`, `.xlsx`, `.pptx` and `.odt` read without any package.
-6. **The archive queue (§5.6): a per-image choice that defaults to no for anything that is not a machine's drive.**
-   Recommended, after I read what drains the queue.
+1. **FILES as a segment of DISK, not a ninth tab.** Yes.
+2. **A daemon, not a spool of request files** (§6.1). Yes.
+3. **The index and thumbnails live on the 4 TB drive and are disposable** (§6.3). Yes.
+4. **Deleted files are hidden in v1.** Showing them, and recovering them, is its own feature (F4). Yes.
+5. **Old Word, Excel and PowerPoint files (`.doc`, `.xls`, `.ppt`) searchable in F3 through `catdoc`.** Yes, with `.docx`, `.xlsx`,
+   `.pptx` and `.odt` read without any package.
+6. **The archive queue (§5.6): a per-image choice that defaults to no for anything that is not a machine's drive.** Yes. The
+   check is done: nothing drains the queue today.
 7. **F0 first:** the bootstrap installs `sleuthkit` and `python3-pil`, and a read-only stage looks at the WD800JD image,
-   before any code is written. Recommended.
+   before any code is written. Yes.
 
 ## 10. Tasks (one branch and PR each; small commits, each with a test that fails without it)
 
-- **F0 (the owner runs the bootstrap diff; read-only on the Pi):** the facts in §3. They go into this note.
+- **F0 (built 2026-11-15):** `sleuthkit` and `python3-pil` in the bootstrap's package list, and `docs/plans/2026-11-15-drive-browser-f0.py`,
+  with `tests/test-drive-f0.sh` (invented ext4, FAT32 and random images; the report never carries a name or label, the image
+  is unchanged, each failure path stops cleanly). The owner reads the bootstrap diff and runs it, then runs the script, and its
+  report goes into §3. F1 does not start before that report is in.
 - **F1: browse and preview, no index.** `gatbox-browse` (volumes, listings, stats, previews), the loopback routes, the FILES view,
   the unit, sysusers, the bootstrap lines, and the archive-queue check from §5.6.
 - **F2: the index and name search.** The indexer with pause and resume, `browse.sqlite`, search routes and the results list.

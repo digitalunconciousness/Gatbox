@@ -225,7 +225,7 @@ else
         '! grep -qE "create     /etc/gatbox/(hubs.d|hub.conf|archive.conf)" "$T/etc-closed" && grep -q "^note: /etc/gatbox is readable by root only" "$T/etc-closed"'
 fi
 # The store's mount unit
-UUID=5210F177-0573-4CB3-9080-AB25F051F744; uuid=${UUID,,}
+UUID=3F2A7C19-8D4E-4B60-9A15-6E0C2B7D4F83; uuid=${UUID,,}
 unit=$(bash "$BOOT" --print-store-unit "$UUID" 2>&1); rc=$?
 check "--print-store-unit prints a mount unit for that UUID, lower-cased (exit 0)" \
     '[ $rc = 0 ] && grep -qx "What=/dev/disk/by-uuid/$uuid" <<<"$unit" && grep -qx "Where=/srv/gatbox/disks" <<<"$unit" && grep -qx "Type=ext4" <<<"$unit"'
@@ -238,7 +238,7 @@ if command -v systemd-escape >/dev/null 2>&1; then
 else
     echo "  skip  the device unit name against systemd-escape (not installed here)"
 fi
-for bad in "" nope 5210f177-0573-4cb3-9080-ab25f051f74 "5210f177-0573-4cb3-9080-ab25f051f744; rm -rf /"; do
+for bad in "" nope 3f2a7c19-8d4e-4b60-9a15-6e0c2b7d4f8 "3f2a7c19-8d4e-4b60-9a15-6e0c2b7d4f83; rm -rf /"; do
     out=$(bash "$BOOT" --print-store-unit "$bad" 2>&1); rc=$?
     check "--print-store-unit refuses '$bad' (exit 2, usage, no unit)" '[ $rc = 2 ] && [[ $out == *"usage"* ]] && [[ $out != *"[Mount]"* ]]'
 done

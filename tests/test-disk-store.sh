@@ -39,7 +39,7 @@ exit 0
 EOF
 cat > "$B/blkid" <<'EOF'
 #!/bin/sh
-echo "${FAKE_UUID:-5210f177-0573-4cb3-9080-ab25f051f744}"
+echo "${FAKE_UUID:-3f2a7c19-8d4e-4b60-9a15-6e0c2b7d4f83}"
 EOF
 # mktemp: the store script asks for a directory under /run; the test gives it one of its own
 cat > "$B/mktemp" <<EOF
@@ -122,11 +122,11 @@ check "nothing is run against the whole drive after the format except the partit
 check "the store is mounted nodev,nosuid,noexec for the marking, marked, handed to the queue group setgid, synced and unmounted" \
       'grep -q "^mount -o nodev,nosuid,noexec /dev/sdb1 " "$LOG" && grep -q "^chown gatbox-disk:gatbox-disk-queue " "$LOG" \
        && grep -q "^chmod 2770 " "$LOG" && grep -q "^sync" "$LOG" && grep -q "^umount " "$LOG" && grep -qx ".gatbox-image-store" "$LOG.mnt"'
-check "disks.conf holds the new filesystem UUID" 'grep -qx "UUID=5210f177-0573-4cb3-9080-ab25f051f744" "$T/disks.conf"'
+check "disks.conf holds the new filesystem UUID" 'grep -qx "UUID=3f2a7c19-8d4e-4b60-9a15-6e0c2b7d4f83" "$T/disks.conf"'
 check "disks.conf is made 600 and replaced in one move" 'grep -q "^chmod 0600 " "$LOG"'
 check "it says what to do next (the bootstrap)" 'grep -q "bootstrap/gatbox-bootstrap.sh" "$T/out"'
 fresh; echo "UUID=00000000-0000-0000-0000-000000000000" > "$T/disks.conf"; go "WX12AA3456\nERASE\n" /dev/sdb; rc=$?
-check "an older store in disks.conf is named before it is replaced" '[ $rc = 0 ] && grep -q "already names a store" "$T/out" && grep -qx "UUID=5210f177-0573-4cb3-9080-ab25f051f744" "$T/disks.conf"'
+check "an older store in disks.conf is named before it is replaced" '[ $rc = 0 ] && grep -q "already names a store" "$T/out" && grep -qx "UUID=3f2a7c19-8d4e-4b60-9a15-6e0c2b7d4f83" "$T/disks.conf"'
 fresh; export FAKE_UUID=not-a-uuid; go "WX12AA3456\nERASE\n" /dev/sdb; rc=$?
 check "a format that leaves no UUID stops before anything is written to disks.conf" '[ $rc = 1 ] && [ ! -e "$T/disks.conf" ] && grep -q "no filesystem UUID" "$T/out"'
 

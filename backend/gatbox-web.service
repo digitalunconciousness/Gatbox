@@ -37,6 +37,11 @@ ReadWritePaths=-/srv/gatbox/library
 # cannot change the network itself -- DynamicUser leaves it no D-Bus, so nmcli fails here.
 SupplementaryGroups=gatbox-wifi
 ReadWritePaths=-/var/spool/gatbox-wifi
+# Disk imaging: the 7" writes a request into gatbox-disk's spool (group gatbox-disk-queue, setgid) and reads the job's status
+# and the image store's sidecars (the store's root is the same group). This service never holds the devices' group
+# (gatbox-disk) and never opens a drive: its /dev is empty (PrivateDevices above). "-": start anyway before the spool exists.
+SupplementaryGroups=gatbox-disk-queue
+ReadWritePaths=-/var/spool/gatbox-disk
 # gatbox-sync's status, for the SYSTEM panel's hub block. Read-only and fails soft: that job
 # is the only writer of its own state. "-": start anyway on a Pi where sync never ran.
 ReadOnlyPaths=-/var/lib/gatbox-sync

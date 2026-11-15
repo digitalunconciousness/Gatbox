@@ -617,8 +617,27 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4
-  - [ ] Task 4 ⏸: the units, the udev rule, sysusers (two groups), tmpfiles, the store's mount unit from
-        `/etc/gatbox/disks.conf`, `gddrescue` + `mame-tools`; the owner sees the system-config diff first (hard rule 5)
+  - [ ] Task 4 ⏸ (built 2026-11-14, **not installed**: the owner reads this diff first, hard rule 5, then runs the bootstrap):
+        the user `gatbox-disk` (its own group is the devices' group) and the group `gatbox-disk-queue` (sysusers); the spool
+        `/var/spool/gatbox-disk` 2770 and the store's bare mountpoint (tmpfiles; its mode and owner are `-` so a mounted drive's
+        root is never reset); `/etc/gatbox/disks.conf` created empty; the udev rule `98-gatbox-disk.rules` (whole disks with
+        any USB parent: group `gatbox-disk` 0660 and `UDISKS_IGNORE`; **`SUBSYSTEMS=="usb"`, not `ID_BUS=="usb"`, because the
+        dock's SATA drive has `ID_BUS=ata`**); `gatbox-disk.service` + `.path`, `tools/gatbox-disk`; `gddrescue`; gatbox-web
+        joins the spool's group; the store's mount unit `srv-gatbox-disks.mount`, written from the UUID in `disks.conf` only
+        (mounted when the drive appears, `nodev,nosuid,noexec`, nothing requires it). `mame-tools` waits for Task 3.
+        `test-bootstrap.sh`: 109. Checked read-only on the Pi, 2026-11-14 (the owner's local session, from unpacked copies of the
+        branches): `/run/udev/data` is world-readable and gives both drives' own model and serial; both have a USB ancestor, so
+        the rule matches; `udevadm verify` said **Unknown group 'gatbox-disk'**, because step 5 loaded the rule before step 6
+        made the group: the bootstrap now loads udev again after sysusers. Still before the first READ: format the 4 TB drive
+  - [ ] The store drive ⏸ (the owner runs it, at the Pi): `sudo bash docs/plans/2026-11-02-disk-imaging-store.sh /dev/sdX` ERASES
+        the drive it names, makes one GPT ext4 partition (`-m 0`, `largefile4`), puts the marker and the queue group on its
+        root and writes its UUID to `/etc/gatbox/disks.conf`; then the bootstrap writes and starts the mount unit. It refuses a
+        non-`/dev/sdX` name, anything not behind USB, a mounted drive, anything under 1 TB (the 80 GB donor is not the store), a
+        drive with no serial, and a Pi without the `gatbox-disk` user; and asks for the serial and the word ERASE, typed.
+        `test-disk-store.sh`: 30, on a stand-in machine (no device is opened); six deliberate breakages of the guards each fail it.
+        Read on the Pi (2026-11-14): `lsblk` shows the 4 TB drive's serial, so the script accepts it; its own model is
+        `WDC WD40NMZW-11GX6S1` (not the case's "My Passport"); and the desktop had **mounted** its partition (label BATOCERA), so
+        the script refuses until it is unmounted. Once the udev rule is in, the desktop leaves USB disks alone
   - [x] `hdparm` + `smartmontools` in the bootstrap (2026-11-13), ahead of Task 4, for Task 0's remaining reads. Two side
         effects of installing them are switched off: smartmontools enables **smartd**, which polls every disk (the
         bootstrap disables it; the tool stays), and hdparm's own **udev rule** sets APM `-B254` on each drive as it appears

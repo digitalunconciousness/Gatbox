@@ -51,6 +51,7 @@ import stat
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -76,6 +77,8 @@ FLASH = ("cf", "sd", "ssd")
 SECTOR = 512                                                     # the IDE2SAT2 takes nothing else (note §4.2)
 CHECK_FRESH_S = 300                                              # a TARGET CHECK is good for 5 minutes
 CHUNK = 4 << 20                                                  # read and write in 4 MiB pieces
+TICK_S = float(os.environ.get("GATBOX_DISK_TICK", "5"))          # a long step rewrites its progress at most this often
+POLL_S = float(os.environ.get("GATBOX_DISK_POLL", "2"))          # how often a running ddrescue is looked at
 HEAD_SCAN = 64 << 20                                             # what 'blank' and the fingerprint look at: the first 64 MiB
 LOCK = ".gatbox-disk.lock"                                       # in the store: one read or write at a time
 
@@ -151,8 +154,9 @@ def _is_block(path):
         return False
 
 
-def hashed_read(path, length, sha256=False):
-    """SHA-1 (and SHA-256) of exactly the first LENGTH bytes of PATH. A block device is read with O_DIRECT, past the
+def hashed_read(path, length, sha256=False, on_progress=None):
+    """SHA-1 (and SHA-256) of exactly the first LENGTH bytes of PATH. ON_PROGRESS(bytes so far) is called after every
+    4 MiB piece, so a half-hour pass can say where it is; it must be cheap and must not raise. A block device is read with O_DIRECT, past the
     page cache, so a verify reads the drive and not memory, with no replug needed (note §1, row 6). The plain files
     that stand in for devices in the tests are read normally: tmpfs refuses O_DIRECT."""
     h1, h2 = hashlib.sha1(), (hashlib.sha256() if sha256 else None)
@@ -175,6 +179,8 @@ def hashed_read(path, length, sha256=False):
                 if h2:
                     h2.update(view[:take])
                 done += take
+                if on_progress:
+                    on_progress(done)
         finally:
             view.release()
             buf.close()
@@ -207,6 +213,24 @@ def map_summary(path, size):
             "complete": not bad and rescued == size}
 
 
+def gb(n):
+    """Bytes as the dashboard writes them: 55.4 GB, 812 MB."""
+    return f"{n / 1e9:.1f} GB" if n >= 1e9 else f"{n / 1e6:.0f} MB"
+
+
+def bytes_read(pid):
+    """What a process has read so far: rchar in /proc/PID/io counts every read and pread it has made. ddrescue's reads are the
+    source drive's (its map and its image are written, not read), and it does not wait for its map: it saves that every five
+    minutes, so a pass could not be followed from it. None where the kernel won't say."""
+    try:
+        for line in read_file(f"/proc/{pid}/io").splitlines():
+            if line.startswith("rchar:"):
+                return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
 # --- READ -------------------------------------------------------------------------------------------------------------
 
 class Work:
@@ -214,15 +238,29 @@ class Work:
     def __init__(self, status=None, say=print):
         self.status_file, self.say = status, say
         self.info = {"steps": []}
+        self.current, self._ticked = "", 0.0
 
     def step(self, name, detail="", progress=None):
         self.info["steps"].append({"step": name, "detail": detail, "at": round(time.time(), 3)})
         self.say(f"  {name}" + (f": {detail}" if detail else ""))
+        self.current, self._ticked = name, time.monotonic()
+        self._publish(name, detail, progress)
+
+    def _publish(self, name, detail, progress):
         if self.status_file:
             tmp = self.status_file + ".tmp"
             with open(tmp, "w") as f:
                 json.dump(dict(self.info, state="running", step=name, detail=detail, progress=progress), f)
             os.replace(tmp, self.status_file)
+
+    def tick(self, detail, progress):
+        """Where a long step has got to: the status file only (the dashboard reads it), not another entry in the steps.
+        At most one write every TICK_S seconds, because the status file is on the SD card."""
+        now = time.monotonic()
+        if now - self._ticked < TICK_S:
+            return
+        self._ticked = now
+        self._publish(self.current, detail, round(progress, 4))
 
 
 class Read(Work):
@@ -281,10 +319,10 @@ class Read(Work):
         size = ident["bytes"]
         if retry:
             self.step("retry", "ddrescue -r3 on the same map", progress=0.05)
-            self._ddrescue(["-r3"], d["node"], part, mapf)
+            self._ddrescue(["-r3"], d["node"], part, mapf, size, retry=True)
         else:
             self.step("read", "ddrescue, one pass with no scraping", progress=0.05)
-            self._ddrescue(["-n", "--sparse"], d["node"], part, mapf)
+            self._ddrescue(["-n", "--sparse"], d["node"], part, mapf, size)
         summary = map_summary(mapf, size)
         self.info["ddrescue"] = summary
         if not summary["complete"]:
@@ -293,7 +331,9 @@ class Read(Work):
                        "RETRY runs ddrescue -r3 on the same map. It's your call on an old drive: each pass spins it up",
                        needs_retry=True)
         self.step("hash", "SHA-1 and SHA-256", progress=0.8)
-        sha1, sha256 = hashed_read(part, size, sha256=True)
+        flash = self.media in FLASH                 # a card is read a second time after this, so this pass ends earlier
+        sha1, sha256 = hashed_read(part, size, sha256=True,
+                                   on_progress=self._pass("SHA-1 and SHA-256", size, 0.8, 0.85 if flash else 0.97))
         self.info.update(sha1=sha1, sha256=sha256, bytes=size, reads=1)
         fd = os.open(part, os.O_RDONLY)          # the image's own first 64 MiB: no second look at a fragile source drive
         try:
@@ -303,7 +343,7 @@ class Read(Work):
         self.info["fingerprint"] = {"bytes": scan["bytes"], "nonzero": scan["nonzero"], "sha1": scan["sha1"]}
         if self.media in FLASH:
             self.step("second read", "flash: the whole card again, past the cache", progress=0.85)
-            again = hashed_read(d["node"], size)
+            again = hashed_read(d["node"], size, on_progress=self._pass("the card again", size, 0.85, 0.97))
             if again != sha1:
                 raise Stop("the card reads differently twice: flaky",
                            "reseat it (or try another reader slot) and read again; the first read is kept as .part")
@@ -335,12 +375,49 @@ class Read(Work):
         raise Stop(f"the drive this read started on isn't plugged in ({describe(ident)})",
                    "plug it back into the dock and wait for it to show in gatbox-disk list")
 
-    def _ddrescue(self, opts, node, part, mapf):
-        r = subprocess.run([DDRESCUE, *opts, node, part, mapf], capture_output=True, text=True)
-        self.info.setdefault("passes", []).append({"opts": opts, "exit": r.returncode, "at": round(time.time(), 3)})
-        if r.returncode != 0:
-            tail = " / ".join(l for l in (r.stderr or r.stdout).strip().splitlines()[-3:])
-            raise Stop(f"ddrescue exited {r.returncode}: {tail}", "the map and the partial image are kept; RETRY resumes")
+    def _pass(self, what, size, lo, hi):
+        """A tick for hashed_read: LO to HI of the bar over one pass of SIZE bytes."""
+        return lambda done: self.tick(f"{what}: {gb(done)} of {gb(size)}", lo + (hi - lo) * done / size)
+
+    def _ddrescue(self, opts, node, part, mapf, size=0, retry=False):
+        """Run ddrescue and say where it is while it runs: the first pass from the bytes it has read (plus what an earlier,
+        interrupted pass had already rescued); a retry only that it is still going, because it re-reads scattered bad areas."""
+        have = map_summary(mapf, size)["rescued_bytes"] if size and not retry and os.path.exists(mapf) else 0
+        started = time.monotonic()
+        # Output goes to unlinked files beside the image, not a pipe nobody reads: ddrescue prints a screen a second, and a
+        # full pipe would stop it. Not /tmp: that is RAM.
+        with tempfile.TemporaryFile("w+", dir=os.path.dirname(part)) as out, \
+                tempfile.TemporaryFile("w+", dir=os.path.dirname(part)) as err:
+            p = subprocess.Popen([DDRESCUE, *opts, node, part, mapf], stdout=out, stderr=err, text=True)
+            try:
+                while True:
+                    try:
+                        rc = p.wait(timeout=POLL_S)
+                        break
+                    except subprocess.TimeoutExpired:
+                        self._ddrescue_tick(p.pid, size, have, retry, started)
+            except BaseException:                   # the job is being stopped: ddrescue goes with it (its map is kept)
+                p.kill()
+                p.wait()
+                raise
+            tails = []
+            for f in (err, out):
+                f.seek(0, os.SEEK_END)
+                f.seek(max(0, f.tell() - 4096))
+                tails.append(f.read())
+        self.info.setdefault("passes", []).append({"opts": opts, "exit": rc, "at": round(time.time(), 3)})
+        if rc != 0:
+            tail = " / ".join(l for l in (tails[0].strip() or tails[1].strip()).splitlines()[-3:])
+            raise Stop(f"ddrescue exited {rc}: {tail}", "the map and the partial image are kept; RETRY resumes")
+
+    def _ddrescue_tick(self, pid, size, have, retry, started):
+        mins = int((time.monotonic() - started) // 60)
+        got = None if retry or not size else bytes_read(pid)
+        if got is None:
+            self.tick(f"{'retrying the bad areas' if retry else 'ddrescue is running'}: {mins} min so far", 0.05)
+            return
+        done = min(size, have + got)
+        self.tick(f"{gb(done)} of {gb(size)} read from the drive", 0.05 + 0.73 * done / size)
 
     def store(self, folder, part, mapf, state):
         """Name the image after its label, its read's date and its SHA-1; never store the same bytes twice."""

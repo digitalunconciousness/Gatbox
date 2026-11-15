@@ -680,6 +680,10 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         branches): `/run/udev/data` is world-readable and gives both drives' own model and serial; both have a USB ancestor, so
         the rule matches; `udevadm verify` said **Unknown group 'gatbox-disk'**, because step 5 loaded the rule before step 6
         made the group: the bootstrap now loads udev again after sysusers. Still before the first READ: format the 4 TB drive
+  - [x] READ shows where it is (2026-11-15, found on the Pi: the 7″ sat at 5% for the whole ddrescue pass and at 80% for the whole
+        hash). `gatbox-disk` ticks the status file at most every 5 s: bytes ddrescue has read (`/proc/PID/io`) for a first pass,
+        bytes hashed for a hash or a card's second read, as a line under the bar. `test-disk.sh`: 149, `test-dash.sh`: 229. **Not
+        done:** WRITE has the same gap, and the duplicate check does not look across machine folders (owner's call).
   - [ ] The store drive ⏸ (the owner runs it, at the Pi): `sudo bash docs/plans/2026-11-02-disk-imaging-store.sh /dev/sdX` ERASES
         the drive it names, makes one GPT ext4 partition (`-m 0`, `largefile4`), puts the marker and the queue group on its
         root and writes its UUID to `/etc/gatbox/disks.conf`; then the bootstrap writes and starts the mount unit. It refuses a

@@ -1287,6 +1287,8 @@ def main():
                         extra["FAKE_DDRESCUE_BAD"] = "0:512"
                     if os.path.exists(f"{T}/dk-heal"):
                         extra["FAKE_DDRESCUE_HEAL"] = "1"
+                    if os.path.exists(f"{T}/dk-slow"):          # a drive that takes its time, and a job that says where it is
+                        extra.update(FAKE_DDRESCUE_SLOW="4", FAKE_DDRESCUE_NOISE="1", GATBOX_DISK_POLL="0.3", GATBOX_DISK_TICK="0")
                     subprocess.run(["python3", os.path.join(REPO, "tools/gatbox-disk"), "--job", f"{T}/dspool/request.json",
                                     "--status", f"{T}/dspool/status.json"], capture_output=True, timeout=120, check=False,
                                    env=FD.env(GATBOX_API=B, **extra))
@@ -1355,7 +1357,13 @@ def main():
         c.wait("document.querySelector('#pane .kp-field')")
         tap_keys("⌫⌫⌫OLD")
         c.wait("document.querySelector('#dk-body').textContent.includes('LABEL: WW-OLD')", 10)
+        open(f"{T}/dk-slow", "w").close()
         click("#dk-body button.dk-go")
+        check("READ in progress: the card says how much has been read from the drive, not just the step it began at",
+              dk_has("read from the drive", 30) and q("!!document.querySelector('#dk-body .dk-live')")
+              and 0.05 < float(q("parseFloat(document.querySelector('#dk-body .dk-bar > div').style.width) / 100")) < 0.78)
+        shot("23c-disk-reading-live")
+        os.remove(f"{T}/dk-slow")
         dk_has("BAD AREAS", 40)
         check("bad areas: BAD AREAS with the map's numbers, and RETRY is the tech's call",
               "% read · 1 bad area" in text("#dk-body") and "never retries on its own" in text("#dk-body")

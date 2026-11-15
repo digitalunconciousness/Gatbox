@@ -97,7 +97,12 @@ def route_preview(q):
     return data, ctype
 
 
-ROUTES = {"/volumes": route_volumes, "/ls": route_ls, "/stats": route_stats, "/info": route_info, "/text": route_text,
+def route_thumb(q):
+    data, ctype = B.thumb(q1(q, "image"), q1(q, "vol"), q1(q, "inode"), q1(q, "size"))
+    return data, ctype
+
+
+ROUTES = {"/thumb": route_thumb, "/volumes": route_volumes, "/ls": route_ls, "/stats": route_stats, "/info": route_info, "/text": route_text,
           "/preview": route_preview, "/search": route_search, "/locate": route_locate, "/index": route_index,
           "/ping": lambda q: {"ok": True}}
 POSTS = {"/index": post_index}

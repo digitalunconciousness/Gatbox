@@ -1655,9 +1655,11 @@ def main():
                   and q("document.querySelectorAll('#dk-body .dk-frow')[0].textContent.includes('FOLDER')")
                   and q("document.querySelector('#dk-body .dk-files .seg button.on').textContent.startsWith('SIZE')"))
             fb_btn("PHOTOS")
-            check("PHOTOS: only the folders and the photos",
+            check("PHOTOS: the folders as rows, the photos as a grid (the ones that cannot be drawn still show their names), and nothing else",
                   settles(c, "![...document.querySelectorAll('#dk-body .dk-frow')].some(b => b.querySelector('b').textContent === 'big.bin')", 15)
-                  and fb_wait_row("bomb.png"))
+                  and settles(c, "[...document.querySelectorAll('#dk-body .dk-cn')].some(n => n.textContent === 'bomb.png')", 15)
+                  and sorted(q("[...document.querySelectorAll('#dk-body .dk-cn')].map(n => n.textContent)")) == ["bomb.png", "broken.jpg"]
+                  and q("[...document.querySelectorAll('#dk-body .dk-frow')].every(b => b.textContent.includes('FOLDER'))"))
             fb_btn("ALL", 15, exact=True)
             fb_btn("NAME", 15)
             check("ALL and NAME: everything back, folders first, by name", fb_wait_row("big.bin") and fb_wait_row("Photos"))
@@ -1673,6 +1675,29 @@ def main():
             shot("25d-files-photo")
             q("document.querySelector('#vw-close').click()")
             check("CLOSE: back on the same folder, where it was", fb_wait_row("red.png") and "2019" in text("#dk-body .dk-crumbs"))
+            fb_btn("PHOTOS", 15, exact=True)
+            imgs_js = "[...document.querySelectorAll('#dk-body .dk-cell img')]"
+            check("PHOTOS in a folder of photos: a grid of thumbnails, each really drawn, the name under it, and no list rows for the photos",
+                  settles(c, f"{imgs_js}.length === 2 && {imgs_js}.every(i => i.complete && i.naturalWidth > 0)", 40)
+                  and sorted(q("[...document.querySelectorAll('#dk-body .dk-cn')].map(n => n.textContent)")) == ["IMG_0001.jpg", "red.png"]
+                  and q("document.querySelectorAll('#dk-body .dk-frow').length") == 0)
+            check("... the thumbnails are small (192 px at most), the cells as tall as a finger, no text under 14 px, nothing wider than the 7\"",
+                  q(f"{imgs_js}.every(i => Math.max(i.naturalWidth, i.naturalHeight) <= 192)")
+                  and q("[...document.querySelectorAll('#dk-body .dk-cell')].every(b => b.getBoundingClientRect().height >= 55.5)") and not q(BOX_SMALL)
+                  and q("document.querySelector('#dk-body').scrollWidth <= document.querySelector('#dk-body').clientWidth + 1"))
+            shot("27a-files-grid")
+            q("[...document.querySelectorAll('#dk-body .dk-cell')].find(b => b.querySelector('.dk-cn').textContent === 'IMG_0001.jpg').click()")
+            check("a thumbnail opens the photo in the viewer, titled with its name, at 1 of 2 (the folder's photos are the pages)",
+                  settles(c, "!document.querySelector('#viewer').classList.contains('hide') && document.querySelector('#vw-img').complete && document.querySelector('#vw-img').naturalWidth > 0", 40)
+                  and q("document.querySelector('#vw-title').textContent") == "IMG_0001.jpg" and q("document.querySelector('#vw-page').textContent") == "1 / 2"
+                  and q("document.querySelector('#vw-prev').disabled") and not q("document.querySelector('#vw-next').disabled"))
+            q("document.querySelector('#vw-next').click()")
+            check("NEXT: the folder's other photo, and the title follows it",
+                  settles(c, "document.querySelector('#vw-title').textContent === 'red.png' && document.querySelector('#vw-page').textContent === '2 / 2' && document.querySelector('#vw-img').complete", 40))
+            q("document.querySelector('#vw-close').click()")
+            check("CLOSE: the grid again", settles(c, f"{imgs_js}.length === 2", 15))
+            fb_btn("ALL", 15, exact=True)
+            fb_wait_row("red.png")
             q("[...document.querySelectorAll('#dk-body .dk-crumbs button')][2].click()")      # the volume's crumb: the root again
             fb_wait_row("Docs")
             fb_tap("Docs")

@@ -90,6 +90,14 @@
   twenty (it passed my test most runs), so a NUL byte now makes a file binary; and a dashboard check that waited for "some image
   says NOT INDEXED" was true from the start, because the other images were never indexed, and it hid a race until the removal got
   slower.
+- F4, asked for the same evening: it is six features, four of them behind something she has held back on purpose, so I wrote
+  `docs/plans/2026-11-15-drive-browser-f4.md` (deleted files, HEIC, OCR, duplicates, copy out, a phone with a PIN, each with what
+  it would cost, what could go wrong and what I recommend, and six questions) and built only what the first design had already
+  promised and I had left out twice: photo thumbnails. They are a JPEG of 192 pixels made once and kept on the store, with a grid
+  under the PHOTOS filter and the viewer stepping through a folder's photos. Facts checked on Debian's package pages: Debian 13
+  has no `python3-pillow-heif`, so HEIC would go through `libheif-examples`' `heif-convert` (or a venv, her decision), and
+  `tesseract-ocr` 5.5.0 is there for arm64. Her re-run of the F3 script: big documents read at 11.2 MB/s, seven of eight PDFs read
+  at a median 26 ms, and the eighth is a scan.
 - Not done: a first READ from the 7″ and any WRITE on real media; the hidden-area question; the cab-side checks in
   the procedure's 5.4 are the owner's. Task 3 (the MAME check on an image) still waits on a `chdman` output. The deck
   does not record the device letter, the two hash passes with their times, or a write's time and speed, so those lines of

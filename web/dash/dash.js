@@ -2244,7 +2244,7 @@
   const snapW = px => [800, 1200, 1600, 2400].find(w => w >= px) || 2400;
   function openViewer(slug, doc, page) {
     if (!doc) return toast("That document isn't on the Pi yet", "warn");
-    Object.assign(V, {slug, doc, page: Math.max(1, Math.min(page || 1, doc.pages || 1)), z: 1, tx: 0, ty: 0, w: 0, url: null});
+    Object.assign(V, {slug, doc, page: Math.max(1, Math.min(page || 1, doc.pages || 1)), z: 1, tx: 0, ty: 0, w: 0, url: null, titles: null});
     $("#vw-search").classList.remove("hide");
     $("#vw-title").textContent = doc.title;
     const a = $("#vw-pdf");
@@ -2256,9 +2256,11 @@
   }
   // A photo or a PDF from inside a stored image (FILES): the same viewer, with its pages drawn by gatbox-browse. urlFn(page, width)
   // is the preview address; there is no search and no PDF link for these.
-  function openFileViewer(title, pages, urlFn) {
-    Object.assign(V, {slug: null, doc: {title, pages}, page: 1, z: 1, tx: 0, ty: 0, w: 0, url: urlFn});
-    $("#vw-title").textContent = title;
+  // opts.titles: a name for each page (a folder's photos are the pages, and the title follows the photo); opts.start: the page to open on
+  function openFileViewer(title, pages, urlFn, opts) {
+    const o = opts || {};
+    Object.assign(V, {slug: null, doc: {title, pages}, page: o.start || 1, z: 1, tx: 0, ty: 0, w: 0, url: urlFn, titles: o.titles || null});
+    $("#vw-title").textContent = o.titles ? o.titles[V.page - 1] : title;
     $("#vw-pdf").classList.add("hide");
     $("#vw-search").classList.add("hide");
     $("#vw-img").removeAttribute("src"); $("#vw-img").dataset.url = "";
@@ -2269,6 +2271,7 @@
     const st = $("#vw-stage"), img = $("#vw-img");
     const w = snapW(st.clientWidth * (window.devicePixelRatio || 1) * V.z);
     $("#vw-page").textContent = `${V.page} / ${V.doc.pages}`;
+    if (V.titles) $("#vw-title").textContent = V.titles[V.page - 1];
     $("#vw-prev").disabled = V.page <= 1; $("#vw-next").disabled = V.page >= V.doc.pages;
     if (w > V.w || img.dataset.page !== String(V.page)) {
       V.w = Math.max(w, img.dataset.page === String(V.page) ? V.w : 0);
@@ -3517,7 +3520,13 @@
       if (t) FB.text = t;
     } else if (info.kind === "photo" || info.kind === "pdf") {
       FB.view = back; FB.file = null;                                // closing the viewer lands on the folder (or the results)
-      openFileViewer(e.name, info.pages || 1, (page, w) => "/api/browse/preview?" + fbQ(Object.assign({page, w}, q)));
+      // a photo in a folder: PREV and NEXT step through the folder's photos (this page of it), and the title follows
+      const set = info.kind === "photo" && back === "folder" && FB.ls ? FB.ls.entries.filter(x => x.kind === "photo") : [];
+      const at = set.findIndex(x => x.inode === e.inode), img = FB.img, vol = FB.vol;
+      if (set.length > 1 && at >= 0)
+        openFileViewer(e.name, set.length, (page, w) => "/api/browse/preview?" + fbQ({image: img, vol, inode: set[page - 1].inode, size: set[page - 1].size, w}),
+                       {titles: set.map(x => x.name), start: at + 1});
+      else openFileViewer(e.name, info.pages || 1, (page, w) => "/api/browse/preview?" + fbQ(Object.assign({page, w}, q)));
     }
     renderDisk();
   }
@@ -3765,7 +3774,10 @@
                                     + (L.deleted_hidden ? ` · ${num(L.deleted_hidden)} deleted not shown` : "")));
     if (L.capped) c.appendChild(el("div", "warn", "Only the first 100,000 entries of this folder are listed."));
     if (!L.entries.length) c.appendChild(el("div", "mut dk-none", "Nothing here."));
+    // with the PHOTOS filter on, the photos are a grid of thumbnails (made once, kept on the store) and the folders stay rows above it
+    const grid = FB.kind === "photos" ? L.entries.filter(x => x.kind === "photo") : [];
     for (const e of L.entries) {
+      if (grid.length && e.kind === "photo") continue;
       const r = el("button", "row dk-frow" + (FB.hit && e.inode === FB.hit ? " hit" : "")), tag = FB_TAG[e.kind];
       if (FB.hit && e.inode === FB.hit) requestAnimationFrame(() => r.scrollIntoView({block: "center"}));
       const meta = e.kind === "folder" ? (e.mtime ? stamp(e.mtime) : "folder") : e.kind === "link" ? `points to ${e.target || "?"}`
@@ -3777,6 +3789,21 @@
         else fbOpenFile(e);
       });
       c.appendChild(r);
+    }
+    if (grid.length) {
+      const g = el("div", "dk-grid");
+      for (const e of grid) {
+        const cell = el("button", "dk-cell" + (FB.hit && e.inode === FB.hit ? " hit" : "")), img = el("img");
+        img.loading = "lazy";
+        img.alt = "";
+        img.addEventListener("error", () => img.remove());               // a photo that cannot be drawn, or a disk job: the name is still there
+        img.src = "/api/browse/thumb?" + fbQ({image: FB.img, vol: FB.vol, inode: e.inode, size: e.size});
+        add(cell, img, el("div", "dk-cn", e.name));
+        cell.addEventListener("click", () => fbOpenFile(e));
+        if (FB.hit && e.inode === FB.hit) requestAnimationFrame(() => cell.scrollIntoView({block: "center"}));
+        g.appendChild(cell);
+      }
+      c.appendChild(g);
     }
     if (L.pages > 1) {
       const row = el("div", "btnrow"), prev = el("button", null, "◀ PREV"), next = el("button", null, "NEXT ▶");

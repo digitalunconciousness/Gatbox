@@ -11,6 +11,7 @@ starts from systemd's socket and leaves when idle; and gatbox-web answers only t
 Needs the sleuthkit tools, mke2fs, mkfs.fat, mtools and Pillow; without them it skips, saying which.
     python3 tests/test-browse.py
 """
+import re
 import hashlib
 import http.client
 import json
@@ -302,6 +303,94 @@ def main():
           "when the cap is passed", len(one) == 1 and len(left) == 2
           and sum(os.path.getsize(os.path.join(B._cache.dir, n)) for n in left) <= 300 * 1024)
 
+    print("thumbnails:")
+    import io as _io
+    from PIL import Image as _Img
+    runs = []
+    real_run = B.run
+
+    def counting_run(argv, *a, **k):
+        runs.append(argv[0])
+        return real_run(argv, *a, **k)
+    B.run = counting_run
+    real_sniff = B._sniff_file
+    data, ctype = B.thumb(E, 2048, jpg["inode"], jpg["size"])
+    tim = _Img.open(_io.BytesIO(data))
+    check("a photo's thumbnail: a JPEG, its longest side 192 px, the proportions kept (1600x1200 -> 192x144)", ctype == "image/jpeg" and tim.size == (192, 144) and tim.format == "JPEG"
+          and len(data) < 60_000)
+    n_made = len(runs)
+    data2, _ = B.thumb(E, 2048, jpg["inode"], jpg["size"])
+    check("made once: the second look reads nothing out of the image, and is the same bytes", len(runs) == n_made and data2 == data)
+    jp = [os.path.join(d, n) for d, _, ns in os.walk(os.path.join(B.BROWSE_DIR, "thumbs")) for n in ns if n.endswith(".jpg")]
+    check("kept on the store in its own folder, named by hash (two characters, then the rest), nothing the client typed", len(jp) == 1
+          and re.fullmatch(r"[0-9a-f]{2}", os.path.basename(os.path.dirname(jp[0]))) and re.fullmatch(r"[0-9a-f]{38}\.jpg", os.path.basename(jp[0])))
+    red = pn["red.png"]
+    td, _ = B.thumb(E, 2048, red["inode"], red["size"])
+    check("a PNG too (300x200 -> 192x128)", _Img.open(_io.BytesIO(td)).size == (192, 128))
+    exif = f"{T}/rot.jpg"
+    im = _Img.new("RGB", (400, 200), (10, 120, 200))
+    ex = im.getexif()
+    ex[0x0112] = 6                                                   # EXIF: rotate 90 degrees to display; stored 400x200, shown 200x400
+    im.save(exif, "JPEG", exif=ex)
+    real_extract = B.extract
+    B.extract, B._sniff_file = (lambda *a, **k: exif), (lambda *a, **k: ("photo", "image/jpeg"))
+    try:
+        rd, _ = B.thumb(E, 2048, "99999", None)
+    finally:
+        B.extract, B._sniff_file = real_extract, real_sniff
+    check("the photo's own orientation is applied: stored 400x200 and marked 'rotate', its thumbnail is 96x192 (tall)", _Img.open(_io.BytesIO(rd)).size == (96, 192))
+    for name in ("bomb.png", "broken.jpg"):
+        ent = names[name]
+        code = _code(lambda: B.thumb(E, 2048, ent["inode"], ent["size"]))
+        for n in os.listdir(B._cache.dir):                           # the copy read out of the image is gone: only the note can answer
+            if n.endswith(".bin"):
+                os.remove(os.path.join(B._cache.dir, n))
+        n1 = len(runs)
+        code2 = _code(lambda: B.thumb(E, 2048, ent["inode"], ent["size"]))
+        check(f"{name}: refused in words ({code}), and remembered, so the second ask reads nothing", code in (413, 415) and code2 == code and len(runs) == n1)
+    bads = [n for d, _, ns in os.walk(os.path.join(B.BROWSE_DIR, "thumbs")) for n in ns if n.endswith(".bad")]
+    check("what could not be drawn is written down on the store (one note each for the two), with its code", len(bads) == 2)
+    txt = [e for e in B.ls(E, 2048, names["Docs"]["inode"])["entries"] if e["name"] == "notes.txt"][0]
+    check("a file that is not a photo: 415, and no thumbnail", _code(lambda: B.thumb(E, 2048, txt["inode"], txt["size"])) == 415)
+    huge = names["huge.pdf"]
+    check("a PDF is not a photo: 415", _code(lambda: B.thumb(E, 2048, huge["inode"], huge["size"])) == 415)
+    B._sniff_file = lambda *a, **k: ("photo", "image/jpeg")
+    n_before = len(runs)
+    try:
+        code = _code(lambda: B.thumb(E, 2048, "88888", 100 * MiB))
+    finally:
+        B._sniff_file = real_sniff
+    check("a photo whose listed size is over the limit: 413, the file is never read out of the image", code == 413 and len(runs) == n_before)
+    check("an inode that is not one, and an image that is not in the store: 400 and 404, nothing made",
+          _code(lambda: B.thumb(E, 2048, "12;rm", None)) == 400 and _code(lambda: B.thumb("../outside.img", 2048, jpg["inode"])) == 404)
+    spool_dir = f"{T}/spool"
+    open(os.path.join(spool_dir, "request.json"), "w").write("{}")
+    other = pn["red.png"]
+    os.remove(next(p for p in jp))                                    # forget the JPEG's thumbnail, so that the next ask must be made
+    n2 = len(runs)
+    check("a disk job running: a thumbnail that has to be made is refused (409) and nothing is read; one already made is still given",
+          _code(lambda: B.thumb(E, 2048, jpg["inode"], jpg["size"])) == 409 and len(runs) == n2 and B.thumb(E, 2048, other["inode"], other["size"])[0])
+    os.remove(os.path.join(spool_dir, "request.json"))
+    old_cap = B.THUMB_CAP
+    side_e = B.image(E)[1]
+    jpg_path, red_path = (B._thumb_paths(side_e, 2048, e["inode"])[1] for e in (jpg, red))
+    B.thumb(E, 2048, jpg["inode"], jpg["size"])
+    time.sleep(0.05)
+    B.thumb(E, 2048, red["inode"], red["size"])                       # looked at last
+    both = os.path.isfile(jpg_path) and os.path.isfile(red_path)
+    B.THUMB_CAP = os.path.getsize(red_path) + 500                     # room for the newer one only
+    B._trim_thumbs()
+    B.THUMB_CAP = old_cap
+    check("the thumbnails are kept under their cap, the oldest-looked-at going first: the photo's goes, the PNG's (newer, and small) stays",
+          both and not os.path.isfile(jpg_path) and os.path.isfile(red_path))
+    B.run = real_run
+    import stat as _st
+    tdir = os.path.join(B.BROWSE_DIR, "thumbs")
+    shutil.rmtree(tdir)
+    open(tdir, "w").write("a file where the folder should be")
+    check("nowhere to keep thumbnails (the folder cannot be made): the thumbnail is still returned, not an error", B.thumb(E, 2048, jpg["inode"], jpg["size"])[0][:3] == b"\xff\xd8\xff")
+    os.remove(tdir)
+
     print("the limits on running things:")
     check("the runner refuses any program that is not sleuthkit's or poppler's (500)", _code(lambda: B.run(["ls", "/"], 5)) == 500)
     slow = f"{T}/slowbin"
@@ -450,6 +539,10 @@ def web_side(E, jpg, daemon, denv):
         check("from the Pi's own screen (127.0.0.1): /api/browse/volumes is answered by the service", code == 200 and json.loads(body)["volumes"][0]["fs"]["type"] == "Ext4")
         code, ctype, body = get(f"/api/browse/preview?image={E}&vol=2048&inode={jpg['inode']}&w=500&size={jpg['size']}")
         check("... and a preview comes back as the JPEG, cacheable", code == 200 and ctype == "image/jpeg" and body[:3] == b"\xff\xd8\xff")
+        code, ctype, body = get(f"/api/browse/thumb?image={E}&vol=2048&inode={jpg['inode']}&size={jpg['size']}")
+        check("... and a thumbnail is a small JPEG", code == 200 and ctype == "image/jpeg" and body[:3] == b"\xff\xd8\xff" and len(body) < 60_000)
+        code, ctype, body = get(f"/api/browse/thumb?image={E}&vol=2048&inode=12;rm")
+        check("... a bad inode is refused with its words (400)", code == 400 and "inode" in json.loads(body)["error"])
         code, ctype, body = get(f"/api/browse/ls?image={E}&vol=2048&evil=1&dir=")
         check("... a parameter the service does not read is dropped, an empty one is too", code == 200 and json.loads(body)["total"] > 0)
         code, ctype, body = get(f"/api/browse/ls?image=../outside.img&vol=2048")
@@ -460,6 +553,8 @@ def web_side(E, jpg, daemon, denv):
             check("from a phone (the LAN address): 403, 'FILES is on the Pi's own screen', and nothing was read", code == 403 and "Pi's own screen" in json.loads(body)["error"])
             code, ctype, body = get(f"/api/browse/preview?image={E}&vol=2048&inode={jpg['inode']}", base=f"http://{lan}:{port}")
             check("... for a preview too", code == 403)
+            code, ctype, body = get(f"/api/browse/thumb?image={E}&vol=2048&inode={jpg['inode']}", base=f"http://{lan}:{port}")
+            check("... and for a thumbnail", code == 403)
         else:
             print("  skip  the phone's 403 (no LAN address here)")
         d.terminate()

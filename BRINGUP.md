@@ -714,7 +714,16 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           unplugged, removal, no copy left behind), `test-browse-index.sh`: 73, `test-browse-text.sh`: 33, `test-dash.sh`: 275; each of
           16 breakages fails a test (two are equivalent and say so in the PR). **Not on a real drive yet:** after the install, TEXT on the 80
           GB image should read its 744 documents in under a minute; then search a word that is in one of its `.txt` files.
-    - [ ] F4, not covered by the OK: a phone with a PIN, copying files out, deleted files, OCR, HEIC. Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
+    - [x] F3 re-run on the fixed script, 2026-11-15, in the note's §3: big documents read at 11.2 MB/s, PDFs 7 of 8 read (the eighth has no
+          text layer) at a median 26 ms, the whole drive's 744 documents projected at 18 s.
+    - [x] F4a built, 2026-11-15, **not installed**: photo thumbnails (`browse.thumb`, `/api/browse/thumb`, a JPEG of at most 192 pixels,
+          made once and kept under `/srv/gatbox/disks/_browse/thumbs/`, capped at 2 GB, remembered when a photo cannot be drawn,
+          refused with a 409 while a disk job runs); with the PHOTOS filter on, a folder's photos are a grid, and the viewer's
+          PREV and NEXT step through the folder's photos with the title following. No new unit, user or system config.
+          `test-browse.sh`: 81, `test-dash.sh`: 281. **Not on a real photo drive yet:** the first look at a folder of large photos
+          fills in one thumbnail at a time (a read out of the image each), the second is instant.
+    - [ ] F4's other pieces (deleted files, HEIC, OCR, duplicates, copy out, a phone with a PIN) wait for her answers in
+          `docs/plans/2026-11-15-drive-browser-f4.md` §9. Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4

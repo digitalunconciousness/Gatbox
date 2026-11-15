@@ -121,8 +121,15 @@ mounted, no loop device, nothing sent to the dock):**
    is files × 25 ms plus bytes at 5 MB/s (a little under F0's rate), shown with its basis on the screen; once the pass is running
    the screen shows the running average of the files already read instead.
 
-**Still unmeasured:** NTFS, FAT, exFAT, HFS+ and ISO on a real image; the rate for big documents (the script now measures it);
-PDFs and Office files from a real archive (this drive's 14 PDFs and its one `.doc` are the only real ones read so far).
+**F3's report, run again on the fixed script, 2026-11-15** (the same 744 documents): reading 200 random documents took 4.7, 4.2 and
+4.8 s (random, inode, random again; two identical runs differ by 2%, inode order is 12% faster); **the 8 largest documents (9.4 MB)
+read at 11.2 MB/s**, so the 5 MB/s in the estimate is conservative, not generous; and the readers on real files: `.csv` 3 of 3,
+`.doc` 1 of 1, `.html` 8 of 8, `.md` 6 of 6, `.odt` 4 of 4, `.txt` 8 of 8, and **`.pdf` 7 of 8 (the eighth has no text layer: a scan or
+empty), at a median 26 ms and 100 ms at most a file**. Extracting the text costs 12 ms a file on average against 21 ms to read it out
+of the image. The projection is 18 s for all 744 documents, and about 4 minutes per 10,000 documents of this mix.
+
+**Still unmeasured:** NTFS, FAT, exFAT, HFS+ and ISO on a real image; the rate for documents of tens of megabytes; real Office files
+other than the one `.doc` and four `.odt` (no `.xls`, `.ppt`, `.docx`, `.xlsx` or `.pptx` has been read yet).
 
 ## 4. The flow (the 7")
 

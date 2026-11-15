@@ -144,11 +144,67 @@ check "gatbox-disk.path is enabled and --check lists it" 'grep -q "svc gatbox-di
 all_in() { local f=$1 w; shift; for w in "$@"; do grep -qF -- "$w" "$f" || return 1; done; }     # every string is in the file
 check "--check reports the user, group, spool, mountpoint and the owner's group" \
     'all_in "$BOOT" "user gatbox-disk" "group gatbox-disk-queue (sysusers" "/var/spool/gatbox-disk" "/srv/gatbox/disks" "+= gatbox-disk-queue"'
-# udev resolves GROUP= when it loads a rule, so it has to load this one again AFTER sysusers has made the group: on the Pi,
-# `udevadm verify` said "Unknown group 'gatbox-disk'" because step 5 loaded the rule before step 6 created the group.
-check "udev loads its rules again after sysusers has run, and only when it ran" \
-    'awk "/systemd-sysusers \/etc\/sysusers/ { s = NR } /udevadm control --reload-rules/ { r[NR] = 1 } END { for (n in r) if (n + 0 > s) ok = 1; exit !ok }" "$BOOT" \
-     && grep -q "SYSUSERS_RAN:-0}\" = 1 \] && \[ -f /etc/udev/rules.d/98-gatbox-disk.rules" "$BOOT"'
+# udev works out GROUP= when it loads a rule. On the Pi (2026-11-14) telling the running udevd to reload did not make it see the
+# group the bootstrap had just created; only restarting systemd-udevd did. So after sysusers: restart it, then re-apply the rule.
+check "after sysusers, systemd-udevd is restarted and then the rule is re-applied to the drives already plugged in" \
+    'awk "/systemd-sysusers \/etc\/sysusers/ { s = NR } /systemctl restart systemd-udevd/ { r = NR } /udevadm trigger --action=change --subsystem-match=block/ { if (r && NR > r) t = NR } END { exit !(s && r > s && t > r) }" "$BOOT"'
+check "... and not just told to reload after sysusers (that did nothing on the Pi)" \
+    '! awk "/systemd-sysusers \/etc\/sysusers/ { s = NR } /udevadm control --reload-rules/ { if (s && NR > s) bad = 1 } END { exit !bad }" "$BOOT"'
+want='[ "${SYSUSERS_RAN:-0}" = 1 ] || [ -n "$(unfixed_disk_nodes)" ]'
+check "... when sysusers has just made the group, and also when a USB disk is still outside it (a run cut short is mended by a re-run)" \
+    'grep -qF -- "$want" "$BOOT"'
+# unfixed_disk_nodes, through --check, with a fake /sys/block and /dev and a stand-in getent: a disk behind USB whose node is
+# not in the group is named; a disk that is not behind USB, a missing group and a missing rule say nothing.
+S="$T/udev"; mkdir -p "$S/sys/devices/platform/xhci/usb1/1-2/host0/block/sdb" "$S/sys/devices/platform/emmc/block/sdc" "$S/sys/block" "$S/dev" "$S/bin"
+ln -s ../devices/platform/xhci/usb1/1-2/host0/block/sdb "$S/sys/block/sdb"
+ln -s ../devices/platform/emmc/block/sdc "$S/sys/block/sdc"          # not behind USB
+: > "$S/dev/sdb"; : > "$S/dev/sdc"; : > "$S/rule"
+nodegid=$(stat -c %g "$S/dev/sdb"); REAL_GETENT=$(command -v getent)
+udev_check() {   # <gid getent reports for gatbox-disk, or "none"> [rule file]
+    if [ "$1" = none ]; then printf '#!/bin/sh\n[ "$2" = gatbox-disk ] && exit 2\nexec %s "$@"\n' "$REAL_GETENT" > "$S/bin/getent"
+    else printf '#!/bin/sh\n[ "$2" = gatbox-disk ] && { echo "gatbox-disk:x:%s:"; exit 0; }\nexec %s "$@"\n' "$1" "$REAL_GETENT" > "$S/bin/getent"; fi
+    chmod +x "$S/bin/getent"
+    PATH="$S/bin:$PATH" GATBOX_DISK_RULE="${2:-$S/rule}" GATBOX_SYS_BLOCK="$S/sys/block" GATBOX_DEV="$S/dev" bash "$BOOT" --check 2>&1
+}
+udev_check $((nodegid + 1)) > "$T/udev-stale"
+check "--check: a USB disk whose node is outside group gatbox-disk: told to restart udevd and re-apply the rule, naming only it" \
+    'grep -qxF "  restart    systemd-udevd and re-apply the disk rule: sdb is not in group gatbox-disk yet" "$T/udev-stale"'
+udev_check "$nodegid" > "$T/udev-ok"
+check "--check: every USB disk already in the group: nothing said" '! grep -q "systemd-udevd" "$T/udev-ok"'
+udev_check none > "$T/udev-nogroup"
+check "--check: the group does not exist yet: nothing to compare with, nothing said" '! grep -q "restart    systemd-udevd" "$T/udev-nogroup"'
+udev_check $((nodegid + 1)) "$S/no-such-rule" > "$T/udev-norule"
+check "--check: the rule is not installed yet: nothing said" '! grep -q "restart    systemd-udevd" "$T/udev-norule"'
+# smartmontools' postinst starts smartd, whose SMART ENABLE hung the dock's bridge twice on the Pi's first install
+# (2026-11-14). apt runs with a policy-rc.d that refuses that one unit; the bootstrap's own printf is run here.
+pol="$T/policy-rc.d"; POLICY=$pol
+POLICY_MARK=$(sed -n 's/^POLICY_MARK="\(.*\)"$/\1/p' "$BOOT")
+eval "$(grep -m1 -F 'case "$1" in smartmontools' "$BOOT" | sed 's/^ *//')"; chmod +x "$pol" 2>/dev/null
+check "the policy-rc.d refuses to start smartmontools, by either unit name (exit 101)" \
+    '"$pol" smartmontools.service start >/dev/null 2>&1; a=$?; "$pol" smartd start >/dev/null 2>&1; b=$?; [ $a = 101 ] && [ $b = 101 ]'
+check "... and allows every other unit (exit 0)" \
+    '"$pol" ssh.service restart >/dev/null 2>&1 && "$pol" systemd-udevd.service restart >/dev/null 2>&1 && "$pol" gatbox-raillog.service start >/dev/null 2>&1'
+check "... it carries the mark the bootstrap uses to recognise its own leftover" 'grep -qxF "$POLICY_MARK" "$pol"'
+check "the policy is put in before apt runs and taken out right after it, before a failed install can die" \
+    'awk "/^POLICY=/ { p = 1 } /> \"\\\$POLICY\"/ { w = NR } /apt-get install -y -q/ { a = NR } /rm -f \"\\\$POLICY\"$/ { if (a) r = NR } /couldn.t install/ { d = NR } END { exit !(w && a > w && r > a && d > r) }" "$BOOT"'
+check "... only when smartmontools is about to be installed, and never over a policy-rc.d the Pi already has" \
+    'grep -qF "grep -qx smartmontools && [ ! -e \"\$POLICY\" ]" "$BOOT"'
+check "... a leftover of its own from a run that was cut short is removed first" \
+    'grep -qF "grep -qxF \"\$POLICY_MARK\" \"\$POLICY\" && rm -f \"\$POLICY\"" "$BOOT"'
+# /etc/gatbox is 0750 root: without root a test for what is inside it fails whether or not the file is there, so --check used to
+# say "create hub.conf ..." on a Pi that has them. A readable folder is still checked.
+E="$T/etcg"; mkdir -p "$E"
+GATBOX_ETC="$E" bash "$BOOT" --check > "$T/etc-empty" 2>&1
+check "--check: a readable /etc/gatbox with nothing in it: hubs.d, hub.conf and archive.conf are listed as missing" \
+    'grep -q "create     /etc/gatbox/hubs.d" "$T/etc-empty" && grep -q "create     /etc/gatbox/hub.conf" "$T/etc-empty" && grep -q "create     /etc/gatbox/archive.conf" "$T/etc-empty"'
+if [ "$(id -u)" = 0 ]; then
+    echo "  skip  --check on a /etc/gatbox that cannot be opened (this is root, which can open any folder)"
+else
+    chmod 000 "$E"
+    GATBOX_ETC="$E" bash "$BOOT" --check > "$T/etc-closed" 2>&1; chmod 755 "$E"
+    check "--check: a /etc/gatbox this user cannot open: no false 'create' lines, and a note says what was not looked at" \
+        '! grep -qE "create     /etc/gatbox/(hubs.d|hub.conf|archive.conf)" "$T/etc-closed" && grep -q "^note: /etc/gatbox is readable by root only" "$T/etc-closed"'
+fi
 # The store's mount unit
 UUID=5210F177-0573-4CB3-9080-AB25F051F744; uuid=${UUID,,}
 unit=$(bash "$BOOT" --print-store-unit "$UUID" 2>&1); rc=$?

@@ -601,7 +601,20 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         reader's and not the card's (so it cannot tell cards apart);
       - the donor's reported size is exactly 80,000,000,000 bytes: check native max (`sudo hdparm -N /dev/sdX`) for a
         hidden area (HPA) before trusting any size.
-    - Still to read: the drive's CHS and HPA (hdparm), the empty dock, a card auto-mounting, the 4 TB drive (stage 2)
+    - Read on the Pi, 2026-11-14 evening, with the 80 GB WD800JD on the dock (the journal carries the clock times):
+      - `hdparm -I` works through the dock: LBA and LBA48 user addressable sectors are both 156250000, the same as
+        `/sys/block/sdb/size`, so the dock is not cutting the drive short. 156,250,000 sectors is exactly 80,000,000,000
+        bytes; the drive's own count, as it reports it, is that (CHS current 16514064, 63 sectors/track, 512 B logical and
+        physical, 8192 KB cache, the Host Protected Area feature set supported);
+      - **`hdparm -N` hangs the dock.** It sat for about 16 s, the kernel then logged `usb 1-2: reset high-speed USB device`,
+        and hdparm printed `The running kernel lacks CONFIG_IDE_TASK_IOCTL support for this device. READ_NATIVE_MAX_ADDRESS_EXT
+        failed: Invalid argument`. That is the same pattern as smartd's SMART ENABLE on the first install (two resets), so
+        the IS611 answers IDENTIFY and hangs on some other ATA pass-through commands until it is reset. Nothing here sends
+        `hdparm -N`, `--dco-identify` or `smartctl` to a drive behind this dock, and the DRIVE INFO button will be IDENTIFY only;
+      - so whether the drive hides area above 156,250,000 sectors (an HPA) **cannot be read through this dock**. IDENTIFY gives
+        the visible size only. A drive on a direct SATA port, or the LBA count printed on its label, would settle it. It does
+        not stop imaging, which reads what the drive shows.
+    - Still to read: the empty dock, a card auto-mounting
   - [x] Task 1, the test doubles: a fake sysfs tree, plain files as devices, a fake mount table, `tests/fake-ddrescue`
   - [x] Task 2, `tools/gatbox-disk` (list, read, retry, check, write), not installed: identity from sysfs, the
         refusals, the store's mount and marker guard, READ (one pass, RETRY on bad areas, a second read for flash,
@@ -617,7 +630,7 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         udev (`/run/udev/data`, no root), the INQUIRY only as the fallback; "the drive the image came from" is the drive's
         serial, or without one its make, size and first 64 MiB; the image's fingerprint is in the sidecar and on the 7".
         `test-disk.sh`: 128, `test-dash.sh`: 196. Still to do: "power the dock off for every change" in the 7"'s swap
-        steps, DRIVE INFO (hdparm -I/-N, smartctl), a job record page
+        steps, DRIVE INFO (`hdparm -I` only: see the dock facts below), a job record page
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4
@@ -647,6 +660,21 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         bootstrap disables it; the tool stays), and hdparm's own **udev rule** sets APM `-B254` on each drive as it appears
         (its USB guard matches `pci-*-usb-` paths and a Pi 5's are `platform-xhci-hcd`), masked by an empty
         `/etc/udev/rules.d/85-hdparm.rules`. `test-bootstrap.sh`: 80
+  - [x] Bootstrap, 2026-11-15, from the Pi's first install of Task 4 (tests: `test-bootstrap.sh` 124 as a normal user, 122 as root,
+        which skips two; each new check fails against its own breakage). **For the owner to read before running it (hard rule 5):**
+        - the udev rule's group: step 6 now **restarts `systemd-udevd`** after sysusers made `gatbox-disk` (the reload b601e43
+          added did not mend it on the Pi: the group only took after `systemd-udevd` was restarted, and why a reload is not
+          enough was not established), then re-applies the rule to drives already plugged in. It also does so on any re-run where a USB disk's
+          node is still outside the group, so an install that was cut short mends itself; `--check` says so too
+          (`restart    systemd-udevd and re-apply the disk rule: sdb ...`);
+        - smartd on a first install: while apt installs smartmontools the bootstrap puts a temporary
+          `/usr/sbin/policy-rc.d` in place that refuses (exit 101) to start `smartmontools`/`smartd` and allows every other
+          unit, and takes it out again the moment apt returns, failed or not. dpkg's `deb-systemd-invoke` honours it (checked
+          against this machine's, not the Pi's). It is skipped if the Pi already has a `policy-rc.d`, and a leftover of the
+          bootstrap's own is removed at the start of the next run. The disable step after it stays, for a Pi that already
+          has smartd enabled;
+        - `--check` without root no longer says "create" for `/etc/gatbox/hubs.d`, `hub.conf` and `archive.conf` (the folder is
+          0750 root, so the test failed whether or not they exist): it says once that it could not look and to run it with sudo
   - [x] Task 5, gatbox-web: `/api/disk` (+ images, read, retry, check, write, checklist, checklists, checklist/new),
         SSE `disk`, a write from the Pi's own screen only, after a passing check ≤ 5 min old; one checklist record per
         write. In the MANIFEST (`gatboxweb/disk.py`) and harmless before Task 4: the tab lists the USB drives and says

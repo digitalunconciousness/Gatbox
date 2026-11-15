@@ -113,6 +113,75 @@ PATH="$FB:$PATH" bash "$BOOT" --check > "$T/check-have" 2>&1
 check "--check says neither when both are installed and smartd is off" \
     '! grep -qE "package (hdparm|smartmontools)|disable    smartd" "$T/check-have"'
 
+# Task 4: the disk job. A user and two groups, a spool, a bare mountpoint, a udev rule, two units, a tool, and the image
+# store's mount unit, which is written from /etc/gatbox/disks.conf. Every system-config piece is read by the owner first.
+SYSU="$REPO/bootstrap/files/sysusers-gatbox.conf"; RULE="$REPO/bootstrap/files/98-gatbox-disk.rules"
+DISKU="$REPO/backend/gatbox-disk.service"; DISKP="$REPO/backend/gatbox-disk.path"
+for f in "tools/gatbox-disk +/usr/local/bin/gatbox-disk +755" "backend/gatbox-disk.service +/etc/systemd/system/gatbox-disk.service +644" \
+         "backend/gatbox-disk.path +/etc/systemd/system/gatbox-disk.path +644" \
+         "bootstrap/files/98-gatbox-disk.rules +/etc/udev/rules.d/98-gatbox-disk.rules +644"; do
+    check "MANIFEST installs ${f%% *}"             "grep -qE '^$f' \"\$BOOT\""
+done
+check "ddrescue is in the package list"           'grep -qw gddrescue <<<"$PKGLINES"'
+check "sysusers: the job's user and the spool's group" 'grep -qE "^u gatbox-disk - " "$SYSU" && grep -qE "^g gatbox-disk-queue -" "$SYSU"'
+check "tmpfiles: the spool is 2770 gatbox-disk:gatbox-disk-queue" \
+    'grep -qE "^d /var/spool/gatbox-disk +2770 +gatbox-disk +gatbox-disk-queue" "$TMPF"'
+# With the 4 TB drive mounted here, a line with a mode and an owner would reset the drive's own root directory at every run.
+check "tmpfiles: the store's bare mountpoint sets no mode, owner or group (it must not touch the mounted drive)" \
+    'grep -qE "^d /srv/gatbox/disks +- +- +- +-[[:space:]]*$" "$TMPF"'
+check "tmpfiles: disks.conf is created empty, 600 root" 'grep -qE "^f /etc/gatbox/disks\.conf +0600 +root +root +-" "$TMPF"'
+# ENV{ID_BUS}=="usb" would miss the dock's SATA drive: udev sets ID_BUS=ata on it (Task 0, 2026-11-06).
+check "udev: whole disks behind any USB parent, group gatbox-disk 0660, the desktop told to ignore them" \
+    'grep -qE "^SUBSYSTEM==\"block\", ENV\{DEVTYPE\}==\"disk\", SUBSYSTEMS==\"usb\", GROUP=\"gatbox-disk\", MODE=\"0660\", ENV\{UDISKS_IGNORE\}=\"1\"" "$RULE"'
+check "... and it does not match on ID_BUS"        '! grep -v "^#" "$RULE" | grep -q "ID_BUS"'
+check "gatbox-web holds the spool's group and may write the spool, not the devices' group" \
+    'grep -qx "SupplementaryGroups=gatbox-disk-queue" "$WEBU" && grep -qx "ReadWritePaths=-/var/spool/gatbox-disk" "$WEBU" && ! grep -qE "^SupplementaryGroups=.*gatbox-disk($| )" "$WEBU"'
+check "the job runs as gatbox-disk with the queue group" \
+    'grep -qx "User=gatbox-disk" "$DISKU" && grep -qx "SupplementaryGroups=gatbox-disk-queue" "$DISKU"'
+check "the job is ordered after the store's mount and never requires it (an unplugged drive must not jam the spool)" \
+    'grep -qx "After=srv-gatbox-disks.mount" "$DISKU" && ! grep -qE "^(Requires|RequiresMountsFor|BindsTo)=" "$DISKU"'
+check "gatbox-disk.path is enabled and --check lists it" 'grep -q "svc gatbox-disk.path" "$BOOT" && grep -q "gatbox-disk.path; do" "$BOOT"'
+all_in() { local f=$1 w; shift; for w in "$@"; do grep -qF -- "$w" "$f" || return 1; done; }     # every string is in the file
+check "--check reports the user, group, spool, mountpoint and the owner's group" \
+    'all_in "$BOOT" "user gatbox-disk" "group gatbox-disk-queue (sysusers" "/var/spool/gatbox-disk" "/srv/gatbox/disks" "+= gatbox-disk-queue"'
+# udev resolves GROUP= when it loads a rule, so it has to load this one again AFTER sysusers has made the group: on the Pi,
+# `udevadm verify` said "Unknown group 'gatbox-disk'" because step 5 loaded the rule before step 6 created the group.
+check "udev loads its rules again after sysusers has run, and only when it ran" \
+    'awk "/systemd-sysusers \/etc\/sysusers/ { s = NR } /udevadm control --reload-rules/ { r[NR] = 1 } END { for (n in r) if (n + 0 > s) ok = 1; exit !ok }" "$BOOT" \
+     && grep -q "SYSUSERS_RAN:-0}\" = 1 \] && \[ -f /etc/udev/rules.d/98-gatbox-disk.rules" "$BOOT"'
+# The store's mount unit
+UUID=5210F177-0573-4CB3-9080-AB25F051F744; uuid=${UUID,,}
+unit=$(bash "$BOOT" --print-store-unit "$UUID" 2>&1); rc=$?
+check "--print-store-unit prints a mount unit for that UUID, lower-cased (exit 0)" \
+    '[ $rc = 0 ] && grep -qx "What=/dev/disk/by-uuid/$uuid" <<<"$unit" && grep -qx "Where=/srv/gatbox/disks" <<<"$unit" && grep -qx "Type=ext4" <<<"$unit"'
+check "... mounted nodev, nosuid and noexec"       'grep -qx "Options=noatime,nodev,nosuid,noexec" <<<"$unit"'
+check "... mounted when the drive appears, nothing requires it" \
+    'grep -q "^WantedBy=dev-disk-by" <<<"$unit" && ! grep -qE "^(Requires|RequiresMountsFor|BindsTo|Before|After)=" <<<"$unit"'
+if command -v systemd-escape >/dev/null 2>&1; then
+    check "... its device unit is the name systemd itself gives /dev/disk/by-uuid/<uuid>" \
+        'grep -qxF "WantedBy=$(systemd-escape -p --suffix=device "/dev/disk/by-uuid/$uuid")" <<<"$unit"'
+else
+    echo "  skip  the device unit name against systemd-escape (not installed here)"
+fi
+for bad in "" nope 5210f177-0573-4cb3-9080-ab25f051f74 "5210f177-0573-4cb3-9080-ab25f051f744; rm -rf /"; do
+    out=$(bash "$BOOT" --print-store-unit "$bad" 2>&1); rc=$?
+    check "--print-store-unit refuses '$bad' (exit 2, usage, no unit)" '[ $rc = 2 ] && [[ $out == *"usage"* ]] && [[ $out != *"[Mount]"* ]]'
+done
+# --check compares what disks.conf says with the unit on disk (it reads the two paths from the environment only in this mode)
+printf '# the 4 TB drive\n  uuid = ignored lower-case key\n  UUID = %s \n' "$UUID" > "$T/disks.conf"
+GATBOX_DISKS_CONF="$T/disks.conf" GATBOX_STORE_MOUNT="$T/none.mount" bash "$BOOT" --check > "$T/check-store1" 2>&1
+check "--check: a UUID in disks.conf and no unit: told to write it" \
+    'grep -qF "write      srv-gatbox-disks.mount (the image store, UUID $uuid)" "$T/check-store1"'
+printf '%s\n' "$unit" > "$T/srv.mount"
+GATBOX_DISKS_CONF="$T/disks.conf" GATBOX_STORE_MOUNT="$T/srv.mount" bash "$BOOT" --check > "$T/check-store2" 2>&1
+check "--check: the unit already matches: nothing said" '! grep -q "srv-gatbox-disks.mount" "$T/check-store2"'
+printf 'UUID=not-a-uuid\n' > "$T/disks.conf"
+GATBOX_DISKS_CONF="$T/disks.conf" GATBOX_STORE_MOUNT="$T/none.mount" bash "$BOOT" --check > "$T/check-store3" 2>&1
+check "--check: disks.conf without a real UUID: nothing to write" '! grep -q "srv-gatbox-disks.mount" "$T/check-store3"'
+: > "$T/disks.conf"
+GATBOX_DISKS_CONF="$T/disks.conf" GATBOX_STORE_MOUNT="$T/none.mount" bash "$BOOT" --check > "$T/check-store4" 2>&1
+check "--check: an empty disks.conf (the state before the drive is formatted): nothing to write" '! grep -q "srv-gatbox-disks.mount" "$T/check-store4"'
+
 bash "$BOOT" --check > "$T/check" 2>&1; rc=$?
 check "--check runs without root (exit 0 or 3)" '[ $rc = 0 ] || [ $rc = 3 ]'
 # Without root the script refuses at its first check. As root it would go on and run for real (on a Pi, `sudo bash

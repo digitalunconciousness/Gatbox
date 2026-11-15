@@ -7,7 +7,8 @@
 #   sudo bash bootstrap/gatbox-bootstrap.sh                                   # everything
 #   sudo GATBOX_AP_PSK='at-least-8-chars' bash bootstrap/gatbox-bootstrap.sh  # + fallback "GATBOX" hotspot ('off' removes it)
 #   bash bootstrap/gatbox-bootstrap.sh --check                                # what a run would change (no root, changes nothing)
-#   bash bootstrap/gatbox-bootstrap.sh --extract DIR                          # install the files under DIR instead of / (review)
+#   bash bootstrap/gatbox-bootstrap.sh --extract DIR                          # install the files under DIR instead of /
+#   bash bootstrap/gatbox-bootstrap.sh --print-store-unit UUID                # the image store's mount unit for that UUID (no root) (review)
 #
 # Leaves the desktop alone. Idempotent: a re-run changes nothing unless the checkout changed, and restarts only the
 # services whose files changed (a logger restart ends the live session, so it never happens for nothing). Once
@@ -30,7 +31,9 @@
 #      menu launcher
 #   6  services: the gatbox-dump user + /srv/gatbox/roms + its spool, the gatbox-manuals group + /srv/gatbox/manuals
 #      (sysusers.d, tmpfiles.d), gatbox-raillog,
-#      gatbox-web (+ its fonts), gatbox-scand (the barcode scanner), gatbox-dump.path (dashboard dumps), rtc-sync.timer
+#      gatbox-web (+ its fonts), gatbox-scand (the barcode scanner), gatbox-dump.path (dashboard dumps), rtc-sync.timer,
+#      the disk job: the gatbox-disk user, the gatbox-disk-queue group, /var/spool/gatbox-disk, gatbox-disk.path, and the
+#      image store's mount unit (srv-gatbox-disks.mount, written only when /etc/gatbox/disks.conf holds a UUID)
 #   7  desktop (for the sudo user): the 7" kiosk autostart (gatbox-kiosk on|off), Pi OS autotouch off and its
 #      port-pinned touch line removed, so the panel works on either HDMI port with real touch events
 #   8  minipro (XGecu T48), built from a pinned upstream tag; its T48 part-name list for the dashboard
@@ -51,6 +54,8 @@ backend/gatbox-scand                            /usr/local/bin/gatbox-scand     
 backend/gatbox-scand.service                    /etc/systemd/system/gatbox-scand.service              644
 backend/gatbox-dump.service                     /etc/systemd/system/gatbox-dump.service               644
 backend/gatbox-dump.path                        /etc/systemd/system/gatbox-dump.path                  644
+backend/gatbox-disk.service                     /etc/systemd/system/gatbox-disk.service               644
+backend/gatbox-disk.path                        /etc/systemd/system/gatbox-disk.path                  644
 bootstrap/files/sysusers-gatbox.conf            /etc/sysusers.d/gatbox.conf                           644
 bootstrap/files/tmpfiles-gatbox.conf            /etc/tmpfiles.d/gatbox.conf                           644
 backend/gatbox-rtc-sync                         /usr/local/sbin/gatbox-rtc-sync                       755
@@ -73,6 +78,7 @@ backend/gatbox-meta                             /usr/local/bin/gatbox-meta      
 tools/gatbox-replay                             /usr/local/bin/gatbox-replay                          755
 tools/gatbox-labels                             /usr/local/bin/gatbox-labels                          755
 tools/gatbox-dump                               /usr/local/bin/gatbox-dump                            755
+tools/gatbox-disk                               /usr/local/bin/gatbox-disk                            755
 tools/gatbox-mame-roms                          /usr/local/bin/gatbox-mame-roms                       755
 tools/gatbox-library                            /usr/local/bin/gatbox-library                         755
 tools/gatbox-manuals                            /usr/local/bin/gatbox-manuals                         755
@@ -126,6 +132,7 @@ data/gatbox-mame-sets.json                      /usr/local/share/gatbox/gatbox-m
 data/gatbox-manuals.json                        /usr/local/share/gatbox/gatbox-manuals.json           644  optional
 bootstrap/files/99-gatbox-dmm.rules             /etc/udev/rules.d/99-gatbox-dmm.rules                 644
 bootstrap/files/85-hdparm-off.rules             /etc/udev/rules.d/85-hdparm.rules                     644
+bootstrap/files/98-gatbox-disk.rules            /etc/udev/rules.d/98-gatbox-disk.rules                644
 bootstrap/files/minipro-0.7.4/60-minipro.rules  /etc/udev/rules.d/60-minipro.rules                    644
 bootstrap/files/minipro-0.7.4/61-minipro-plugdev.rules /etc/udev/rules.d/61-minipro-plugdev.rules    644
 bootstrap/files/minipro-0.7.4/61-minipro-uaccess.rules /etc/udev/rules.d/61-minipro-uaccess.rules    644
@@ -146,6 +153,7 @@ PKGS=(sigrok-cli python3-matplotlib python3-qrcode rsync git curl util-linux-ext
       libarchive-tools                                              # bsdtar: XGecu .rar -> T48 firmware (minipro's dump-alg script)
       poppler-utils                                                 # pdftoppm / pdftotext / pdfinfo: the manuals viewer
       hdparm smartmontools                                          # disk imaging: hdparm -I/-N and smartctl -i/-H, run on demand
+      gddrescue                                                     # ddrescue: the disk job's READ (mame-tools comes with Task 3)
       mame)                                                        # mame -romident only, no gameplay
 # minipro: pinned upstream release. Bump deliberately: check its T48 support and changelog, and refresh
 # bootstrap/files/minipro-<tag>/ (its udev rules, which its `make install` skips on Pi OS) at the same time.
@@ -243,6 +251,36 @@ changed() {      # changed <glob>...: did this run change an installed path matc
     return 1
 }
 pkg_ok() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'ok installed'; }
+# The image store (docs/plans/2026-11-02-disk-imaging.md §5): the 4 TB drive, mounted by its filesystem UUID at
+# /srv/gatbox/disks through a mount unit that is written only when /etc/gatbox/disks.conf holds a `UUID=...` line.
+DISKS_CONF=/etc/gatbox/disks.conf
+STORE_MOUNT=/etc/systemd/system/srv-gatbox-disks.mount
+valid_uuid() { [[ ${1:-} =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; }
+store_uuid() {   # the UUID in disks.conf, lower-cased: empty when the file has none, is empty, or cannot be read
+    local v
+    v=$(awk -F= '/^[[:space:]]*UUID[[:space:]]*=/ { gsub(/[[:space:]\r]/, "", $2); print tolower($2); exit }' "$DISKS_CONF" 2>/dev/null)
+    valid_uuid "$v" && printf '%s\n' "$v"
+}
+store_mount_unit() {   # <lower-case uuid>: the mount unit text
+    local u=$1 esc=${1//-/\\x2d}
+    cat <<EOF
+# GATBOX image store. Written by gatbox-bootstrap.sh from /etc/gatbox/disks.conf: edit that, not this.
+[Unit]
+Description=GATBOX image store (the drive with filesystem UUID $u)
+
+[Mount]
+What=/dev/disk/by-uuid/$u
+Where=/srv/gatbox/disks
+Type=ext4
+# Images are data: never programs, never device nodes.
+Options=noatime,nodev,nosuid,noexec
+
+[Install]
+# Mounted when the drive appears, at boot or plugged in later. Nothing waits for it and nothing requires it, so an
+# unplugged drive is not an error: the DISK tab says IMAGE STORE NOT CONNECTED (note §9.3, item 5).
+WantedBy=dev-disk-by\\x2duuid-${esc}.device
+EOF
+}
 # minipro --version exits 1 when no programmer is plugged in, but still prints its version and supported list
 minipro_info() { minipro --version 2>&1 || true; }
 minipro_version() { minipro_info | sed -n 's/^minipro version \([^ ]*\).*/\1/p' | head -n 1; }
@@ -250,6 +288,12 @@ font_ok() { echo "$2  $FONTDIR/$1" | sha256sum -c --status 2>/dev/null; }
 
 [ -f "$REPO/backend/gatbox-raillog" ] || die "run this from a GATBOX checkout (no backend/gatbox-raillog under $REPO)"
 
+if [ "${1:-}" = "--print-store-unit" ]; then   # for a test and for review: no root, nothing changes
+    uuid=$(tr 'A-F' 'a-f' <<<"${2:-}")
+    valid_uuid "$uuid" || { echo "usage: $0 --print-store-unit <filesystem UUID, 36 characters>" >&2; exit 2; }
+    store_mount_unit "$uuid"
+    exit 0
+fi
 if [ "${1:-}" = "--extract" ]; then
     [ -n "${2:-}" ] || { echo "usage: $0 --extract DIR" >&2; exit 2; }
     ROOT=${2%/}; U=$(id -un); HOME_U=/home/$U
@@ -260,6 +304,7 @@ if [ "${1:-}" = "--extract" ]; then
 fi
 
 if [ "${1:-}" = "--check" ]; then
+    DISKS_CONF=${GATBOX_DISKS_CONF:-$DISKS_CONF}; STORE_MOUNT=${GATBOX_STORE_MOUNT:-$STORE_MOUNT}   # a test points these elsewhere; --check only reads
     while read -r src dst mode opt; do check_file "$src" "$dst" "$mode" "$opt"; done < <(manifest)
     while read -r src rel mode; do check_file "$src" "$HOME/$rel" "$mode"; done < <(user_manifest)
     grep -qE "$TOUCH_LINE" "$HOME/.config/labwc/rc.xml" 2>/dev/null \
@@ -270,11 +315,22 @@ if [ "${1:-}" = "--check" ]; then
     for l in usb_max_current_enable=1; do grep -qxF "$l" /boot/firmware/config.txt || DIFFS+=("config.txt += $l"); done
     grep -qE '^[^#]*rtc_bbat_vchg' /boot/firmware/config.txt && [ -z "$RTC_CHARGE" ] && DIFFS+=("config.txt: comment out rtc_bbat_vchg (RTC CHARGING IS ON)")
     for u in gatbox-raillog.service gatbox-web.service gatbox-scand.service gatbox-dump.path gatbox-rtc-sync.timer \
-             gatbox-sync.timer; do
+             gatbox-sync.timer gatbox-disk.path; do
         systemctl -q is-enabled "$u" 2>/dev/null || DIFFS+=("enable     $u"); done
     systemctl -q is-enabled smartmontools.service 2>/dev/null \
         && DIFFS+=("disable    smartd (smartmontools.service): the disk jobs call smartctl on demand, nothing polls the drives")
     getent passwd gatbox-dump >/dev/null || DIFFS+=("create     user gatbox-dump (sysusers.d)")
+    getent passwd gatbox-disk >/dev/null || DIFFS+=("create     user gatbox-disk (sysusers.d)")
+    getent group gatbox-disk-queue >/dev/null || DIFFS+=("create     group gatbox-disk-queue (sysusers.d)")
+    [ -d /var/spool/gatbox-disk ] || DIFFS+=("create     /var/spool/gatbox-disk (tmpfiles.d)")
+    [ -d /srv/gatbox/disks ] || DIFFS+=("create     /srv/gatbox/disks, the image store's bare mountpoint (tmpfiles.d)")
+    id -nG "$(id -un)" | grep -qw gatbox-disk-queue || DIFFS+=("group      $(id -un) += gatbox-disk-queue (the disk spool)")
+    # disks.conf is 0600 root: without root there is nothing to compare, so nothing is said.
+    if [ -r "$DISKS_CONF" ]; then
+        uuid=$(store_uuid)
+        [ -z "$uuid" ] || [ "$(store_mount_unit "$uuid")" = "$(cat "$STORE_MOUNT" 2>/dev/null)" ] \
+            || DIFFS+=("write      srv-gatbox-disks.mount (the image store, UUID $uuid)")
+    fi
     getent passwd gatbox-sync >/dev/null || DIFFS+=("create     user gatbox-sync (sysusers.d)")
     getent group gatbox-wifi >/dev/null || DIFFS+=("create     group gatbox-wifi (sysusers.d)")
     [ -d /var/spool/gatbox-wifi ] || DIFFS+=("create     /var/spool/gatbox-wifi (tmpfiles.d)")
@@ -451,6 +507,7 @@ if changed '/etc/udev/rules.d/*'; then
     udevadm control --reload-rules
     udevadm trigger --subsystem-match=tty
     udevadm trigger --subsystem-match=usb --attr-match=idVendor=a466      # the T48, if it's plugged in
+    udevadm trigger --action=change --subsystem-match=block --property-match=DEVTYPE=disk   # drives already on the dock get the disk rule
     log "udev rules reloaded"
 fi
 [ -e /dev/gatbox-dmm ] && log "DMM adapter: /dev/gatbox-dmm -> $(readlink -f /dev/gatbox-dmm)" \
@@ -473,14 +530,27 @@ svc() {   # <unit> <installed path glob>...: enable it; restart only if its file
 }
 # the dump job's user, the archive and the spool (before gatbox-web, which joins the gatbox-dump group)
 if changed /etc/sysusers.d/gatbox.conf || ! getent passwd gatbox-dump >/dev/null || ! getent group gatbox-manuals >/dev/null \
-   || ! getent passwd gatbox-sync >/dev/null || ! getent group gatbox-wifi >/dev/null; then
-    systemd-sysusers /etc/sysusers.d/gatbox.conf && log "users gatbox-dump (T48 dumps, group plugdev) and gatbox-sync (hub push), group gatbox-manuals"
+   || ! getent passwd gatbox-sync >/dev/null || ! getent group gatbox-wifi >/dev/null \
+   || ! getent passwd gatbox-disk >/dev/null || ! getent group gatbox-disk-queue >/dev/null; then
+    systemd-sysusers /etc/sysusers.d/gatbox.conf && SYSUSERS_RAN=1 && log "users gatbox-dump (T48 dumps, group plugdev), gatbox-sync (hub push) and gatbox-disk (disk jobs, its own devices' group), groups gatbox-manuals and gatbox-disk-queue"
 fi
-if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ] || [ ! -d /srv/gatbox/manuals ] || [ ! -d /srv/gatbox/library ] || [ ! -d /etc/gatbox ] || [ ! -d /etc/gatbox/hubs.d ] || [ ! -e /etc/gatbox/hub.conf ] || [ ! -e /etc/gatbox/archive.conf ] || [ ! -d /var/spool/gatbox-wifi ]; then
-    systemd-tmpfiles --create /etc/tmpfiles.d/gatbox.conf && log "/srv/gatbox/roms + /srv/gatbox/manuals + /srv/gatbox/library + /var/spool/gatbox-dump + /etc/gatbox (+ hubs.d)"
+# udev resolves GROUP= when it LOADS a rule. Step 5 loaded 98-gatbox-disk.rules before this step could make the gatbox-disk
+# group, so on a first install udev ignored GROUP="gatbox-disk" ("Unknown group": udevadm verify on the Pi said so) and left the
+# dock's drive root:disk until a reboot, and a re-run would not have fixed it (it reloads udev only when a rule file changed).
+# Load the rules again now that the group exists, and re-apply them to the drives already plugged in.
+if [ "${SYSUSERS_RAN:-0}" = 1 ] && [ -f /etc/udev/rules.d/98-gatbox-disk.rules ]; then
+    udevadm control --reload-rules
+    udevadm trigger --action=change --subsystem-match=block --property-match=DEVTYPE=disk
+    log "udev rules loaded again: the gatbox-disk group exists now"
+fi
+if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /var/spool/gatbox-disk ] || [ ! -d /srv/gatbox/disks ] || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ] || [ ! -d /srv/gatbox/manuals ] || [ ! -d /srv/gatbox/library ] || [ ! -d /etc/gatbox ] || [ ! -d /etc/gatbox/hubs.d ] || [ ! -e /etc/gatbox/hub.conf ] || [ ! -e /etc/gatbox/archive.conf ] || [ ! -d /var/spool/gatbox-wifi ]; then
+    systemd-tmpfiles --create /etc/tmpfiles.d/gatbox.conf && log "/srv/gatbox/roms + /srv/gatbox/manuals + /srv/gatbox/library + /var/spool/gatbox-dump + /var/spool/gatbox-disk + /srv/gatbox/disks (bare) + /etc/gatbox (+ hubs.d, disks.conf)"
 fi
 if ! id -nG "$U" | grep -qw gatbox-dump; then
     usermod -aG gatbox-dump "$U" && log "$U += gatbox-dump (gatbox-dump from the terminal archives too; log out/in)"
+fi
+if ! id -nG "$U" | grep -qw gatbox-disk-queue; then
+    usermod -aG gatbox-disk-queue "$U" && log "$U += gatbox-disk-queue (gatbox-disk from the terminal queues through the spool, and reads the store; log out/in)"
 fi
 if ! id -nG "$U" | grep -qw gatbox-manuals; then
     usermod -aG gatbox-manuals "$U" && log "$U += gatbox-manuals (gatbox-manuals fetch, PDFs copied in; log out/in)"
@@ -490,6 +560,26 @@ svc gatbox-web.service /usr/local/bin/gatbox-web /etc/systemd/system/gatbox-web.
     '/usr/local/lib/gatbox/gatboxweb/*' '/usr/local/lib/gatbox/gatboxlib/*'   # its package and the shared lib
 svc gatbox-scand.service /usr/local/bin/gatbox-scand /etc/systemd/system/gatbox-scand.service   # after gatbox-web
 svc gatbox-dump.path /etc/systemd/system/gatbox-dump.path /etc/systemd/system/gatbox-dump.service   # dashboard dumps
+# Dashboard disk jobs (READ, TARGET CHECK, WRITE). After gatbox-web, which queues them.
+svc gatbox-disk.path /usr/local/bin/gatbox-disk '/etc/systemd/system/gatbox-disk.*' '/usr/local/lib/gatbox/gatboxlib/*'
+# The image store's mount unit, from /etc/gatbox/disks.conf. Written only when that file holds a UUID: before the drive is
+# formatted there is nothing to mount, and the DISK tab says IMAGE STORE NOT CONNECTED. An unplugged drive is not an error.
+store_uuid_now=$(store_uuid)
+if [ -z "$store_uuid_now" ]; then
+    log "image store: no UUID in $DISKS_CONF yet (format the drive with docs/plans/2026-11-02-disk-imaging-store.sh, then re-run this)"
+else
+    if [ "$(store_mount_unit "$store_uuid_now")" != "$(cat "$STORE_MOUNT" 2>/dev/null)" ]; then
+        systemctl disable srv-gatbox-disks.mount >/dev/null 2>&1 || true        # an older UUID's device wants, if there were any
+        store_mount_unit "$store_uuid_now" > "$STORE_MOUNT.tmp" && chmod 644 "$STORE_MOUNT.tmp" && mv "$STORE_MOUNT.tmp" "$STORE_MOUNT"
+        systemctl daemon-reload
+        log "srv-gatbox-disks.mount written for UUID $store_uuid_now"
+    fi
+    systemctl enable srv-gatbox-disks.mount >/dev/null 2>&1
+    if mountpoint -q /srv/gatbox/disks; then log "image store mounted at /srv/gatbox/disks"
+    elif [ -e "/dev/disk/by-uuid/$store_uuid_now" ]; then
+        systemctl start srv-gatbox-disks.mount && log "image store mounted at /srv/gatbox/disks" || warn "the image store did not mount: systemctl status srv-gatbox-disks.mount"
+    else log "image store: the drive with UUID $store_uuid_now is not plugged in; it mounts when it appears"; fi
+fi
 # Wi-Fi requests from the dashboard and from a scanned code; the helper is the only thing
 # here that can change the network.
 svc gatbox-wifi.path /usr/local/sbin/gatbox-wifi '/etc/systemd/system/gatbox-wifi.*'

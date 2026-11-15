@@ -172,6 +172,10 @@ def main():
           side["archive"] == {"state": "pending"}
           and [json.loads(l)["sha256"] for l in open(f"{STORE}/archive-queue.jsonl")] == [side["sha256"]])
     check("the MAME check isn't claimed (it's Task 3)", side["mame"]["state"] == "not run")
+    check("sidecar: the image's own fingerprint, the bench number (non-zero bytes in the first 64 MiB) and a SHA-1",
+          side.get("fingerprint") == {"bytes": len(src), "nonzero": len(src) - src.count(0), "sha1": sha})
+    code, out = disk("list", "--json")
+    check("the image list carries it for the 7\"", [i.get("fingerprint") for i in json.loads(out)["images"]] == [len(src) - src.count(0)])
 
     print("the same bytes again:")
     usb_disk("sda", len(src), "WIDGET", "WIDGETDRIVE 1000", port=1, devnum="8:0", data=src)
@@ -182,6 +186,53 @@ def main():
     check("... the existing sidecar gains this read's date", [r["label"] for r in side["also_read"]] == ["WW-AGAIN"]
           and side["also_read"][0]["date"] == day)
     check("... and no second queue line", len(open(f"{STORE}/archive-queue.jsonl").read().splitlines()) == 1)
+
+    print("the drive's own identity (Task 0, 2026-11-06: the dock's INQUIRY names the dock):")
+    usb_disk("sdk", 3 * MiB, "XinTop", "XT-U33502", port=11, devnum="8:160", data=os.urandom(3 * MiB),
+             ata=("WDC WD800JD-75MSA1", "WD-WIDGET0001"))
+    usb_disk("sdl", 0, "Generic-", "Multi-Card", port=12, devnum="8:176",
+             udev={"ID_BUS": "usb", "ID_MODEL": "Multi-Card", "ID_SERIAL_SHORT": "20120501030900000"})
+    code, out = disk("list", "--json")
+    names = {d["name"]: d["identity"] for d in json.loads(out)["disks"]}
+    k, r = names["sdk"], names["sdl"]
+    check("a drive behind the dock is named by what it says itself: its own model (padded, \\x20-escaped by udev) and serial",
+          k["model"] == "WDC WD800JD-75MSA1" and k["vendor"] == "" and k["serial"] == "WD-WIDGET0001" and k.get("by") == "ata")
+    check("... and the dock's INQUIRY is kept as the bridge", k.get("bridge") == "XinTop XT-U33502")
+    check("a serial on a USB bus is the reader's, not the card's: not trusted, the INQUIRY stands",
+          r["serial"] is None and r.get("by") == "inquiry" and r["vendor"] == "Generic-" and r["model"] == "Multi-Card")
+    check("a drive with no udev data (nothing passed through) falls back to the INQUIRY",
+          names["sda"].get("by") == "inquiry" and names["sda"]["model"] == "WIDGETDRIVE 1000" and names["sda"]["serial"] is None)
+    code, out = disk("list")
+    check("the terminal's list shows the drive, not the dock", "WDC WD800JD-75MSA1" in out and "serial WD-WIDGET0001" in out)
+
+    print("the source, by the drive's own serial:")
+    srcA = os.urandom(3 * MiB)
+    usb_disk("sdk", len(srcA), "XinTop", "XT-U33502", port=11, devnum="8:160", data=srcA,
+             ata=("WDC WD800JD-75MSA1", "WD-WIDGET0001"))
+    code, out = disk("read", "-d", "sdk", "-m", "widget-wars", "-l", "ATA-A", "--media", "hdd")
+    imgA = f"widget-wars/ATA-A_{day}_{hashlib.sha1(srcA).hexdigest()[:8]}.img"
+    sideA = json.load(open(f"{STORE}/{imgA[:-4]}.json"))
+    check("READ records the drive's own model and serial as the source", code == 0
+          and sideA["source"]["model"] == "WDC WD800JD-75MSA1" and sideA["source"]["serial"] == "WD-WIDGET0001")
+    usb_disk("sdl", len(srcA), "XinTop", "XT-U33502", port=12, devnum="8:176", data=bytes(len(srcA)),
+             ata=("WDC WD800JD-75MSA1", "WD-WIDGET0002"))
+    code, out = disk("check", "-i", imgA, "-d", "sdl", "--json")
+    check("another drive of the same model and size, another serial: not the source", code == 0
+          and json.loads(out.splitlines()[-1])["target_ok"])
+    usb_disk("sdl", len(srcA), "XinTop", "XT-U33502", port=12, devnum="8:176", data=srcA,
+             ata=("WDC WD800JD-75MSA1", "WD-WIDGET0002"))
+    code, out = disk("check", "-i", imgA, "-d", "sdl", "--json")
+    check("... even holding the image's bytes (a copy already written): not the source, VERIFY ONLY offered",
+          code == 0 and json.loads(out.splitlines()[-1])["already_written"])
+    usb_disk("sdl", len(srcA), "XinTop", "XT-U33502", port=12, devnum="8:176", data=bytes(len(srcA)),
+             ata=("WDC WD800JD-75MSA1", "WD-WIDGET0001"))
+    code, out = disk("check", "-i", imgA, "-d", "sdl")
+    check("the same serial is the source, whatever is on it now", code == 2 and "this is the drive the image came from" in out
+          and "same model and serial" in out)
+    usb_disk("sdk", 3 * MiB, "XinTop", "XT-U33502", port=11, devnum="8:160", data=os.urandom(3 * MiB))
+    usb_disk("sdl", 0, "Generic-", "Multi-Card", port=12, devnum="8:176")
+    F.unplug("sdk")
+    F.unplug("sdl")
 
     print("READ, flash:")
     card = os.urandom(2 * MiB)
@@ -233,11 +284,21 @@ def main():
     usb_disk("sdf", 8 * MiB, "WIDGET", "WIDGET SSD 64G", port=6, devnum="8:80", logical=4096)
     code, out = disk("check", "-i", image, "-d", "sdf")
     check("4096-byte sectors: refused", code == 2 and "4096-byte sectors" in out)
-    usb_disk("sdf", len(src), "WIDGET", "WIDGETDRIVE 1000", port=6, devnum="8:80")
+    usb_disk("sdf", len(src), "WIDGET", "WIDGETDRIVE 1000", port=6, devnum="8:80", data=src)
     by_id("sdf", "usb-Widget_Dock_0001-0:0")
     code, out = disk("check", "-i", image, "-d", "sdf")
-    check("the target is the source (same by-id name, model and size): refused", code == 2
+    check("the target is the source (same make and size, and it starts with the image's bytes): refused", code == 2
           and "this is the drive the image came from" in out)
+    # The dock names itself and a card has no serial, so make and size are the same for a new card of the same size. What
+    # is on it is not: a blank or different card is a different card, and the check goes on.
+    usb_disk("sdf", len(src), "WIDGET", "WIDGETDRIVE 1000", port=6, devnum="8:80")
+    code, out = disk("check", "-i", image, "-d", "sdf", "--json")
+    check("a new drive of the same make and size, blank: not the source, the check goes on",
+          code == 0 and json.loads(out.splitlines()[-1])["target_ok"])
+    usb_disk("sdf", len(src), "WIDGET", "WIDGETDRIVE 1000", port=6, devnum="8:80", data=fat_card(len(src)))
+    code, out = disk("check", "-i", image, "-d", "sdf", "--json")
+    check("... or holding something else: still not the source, and it needs the acknowledgement",
+          code == 0 and json.loads(out.splitlines()[-1])["needs_ack"])
     code, out = disk("check", "-i", "../etc/passwd", "-d", "sdf")
     check("an image outside the store: refused", code == 2 and "isn't an image in the store" in out)
     usb_disk("sdf", 8 * MiB, "WIDGET", "WIDGET SSD 64G", port=6, devnum="8:80")
@@ -314,6 +375,18 @@ def main():
         swapped = "different drive" in s.what
     check("the drive swapped between CHECK and WRITE: stopped, nothing written",
           swapped and open(f"{DEV}/sdg", "rb").read(len(src)) == bytes(len(src)))
+    # Two drives of the same model and size behind the dock, blank both: nothing on them tells them apart, their serials do.
+    ata = lambda n: ("WDC WD800JD-75MSA1", f"WD-WIDGET000{n}")        # noqa: E731
+    usb_disk("sdg", 8 * MiB, "XinTop", "XT-U33502", port=7, devnum="8:96", ata=ata(2))
+    c = g.check(image, "sdg", say=quiet)
+    usb_disk("sdg", 8 * MiB, "XinTop", "XT-U33502", port=7, devnum="8:96", ata=ata(3))      # another drive, the same make and size
+    try:
+        g.Write(c, ack=True, armed=arm(), say=quiet).go()
+        other_drive = False
+    except g.Stop as s:
+        other_drive = "different drive" in s.what
+    check("another drive of the same model and size swapped in, both blank: stopped by its serial, nothing written",
+          other_drive and open(f"{DEV}/sdg", "rb").read(len(src)) == bytes(len(src)))
     # The same make and size on the dock, a different card in it: the identity cannot tell, what is on it can.
     usb_disk("sdg", 8 * MiB, "WIDGET", "WIDGET SSD 64G B", port=7, devnum="8:96")
     c = g.check(image, "sdg", say=quiet)

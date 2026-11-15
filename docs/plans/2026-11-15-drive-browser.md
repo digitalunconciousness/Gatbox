@@ -1,6 +1,6 @@
 # The drive browser: look inside stored images, with search: design note
 
-**Status: OK'd 2026-11-15 ("recommended": all seven decisions in §9 as recommended). F0 built, waiting for its report from the Pi.**
+**Status: OK'd 2026-11-15 ("recommended": all seven decisions in §9 as recommended). F0 done (its report is in §3). F1 is next.**
 Its home in the repo is `docs/plans/2026-11-15-drive-browser.md`. Per RULES §3, her OK on this note covers the code, the tests
 and the push; the system config in §7 is shown to her as a bootstrap diff first (hard rule 5).
 
@@ -61,13 +61,42 @@ mounted, no loop device, nothing sent to the dock):**
 - `blkid -p` on the whole image names only the partition table, so the filesystem types needed the offsets. FILES finds each
   volume the same way: from the partition table, then at each offset.
 
-**Still to read off the Pi in F0, against that image. `docs/plans/2026-11-15-drive-browser-f0.py` reads all of this in one run
-and prints counts, sizes, dates and timings only, never a file or folder name, a volume label, a UUID or a serial:**
-- `fls -r` time and memory; `icat` time for a small file.
-- That `fsstat` reports used and free for that filesystem.
-- Whether the Pi's SQLite has FTS5.
-- Whether an ISO or an exFAT card (any she has) is read, so the support list is measured and not copied from a package page.
-- How much room the SD card has, in case something has to live on it (§6.3 puts the large data on the store).
+**F0's report, read on the Pi 2026-11-15 (sleuthkit 4.12.1 on Debian 13 arm64, Python 3.13.5, SQLite 3.46.1, 4 GB of memory with
+2.8 GB free, 47 GB free on the SD card and 3.9 TB on the store), against the WD800JD image (an ext4 Linux system disk):**
+
+| What | Measured |
+|---|---|
+| `mmls`, `fsstat` | 0.35 s and 3.7 s. The ext4 filesystem is 78.9 GB with 4.95 GB of it used (6%) and 185,000 of 4.8 million inodes. |
+| A full recursive listing (`fls -r`) | **200,331 entries in 33.5 s, about 6,000 a second, using 19 MB.** 105,970 files, 16,011 folders, 63,914 links, 13,981 deleted entries. |
+| What the drive holds | By kind: 8,779 "photos" (59 MB; they are system icons), 749 documents (22 MB), 96,442 other (3.0 GB). Dates from 1994 to 2016. The most in one folder: 6,875. Fifteen folders deep. |
+| `icat`, a 3.7 KB file | 0.18 s |
+| `icat`, a 36 MB file | **6.0 s, about 6 MB/s** |
+| `icat`, an 85 KB file | **3.0 s**, and 87 MB of memory. Unexplained: one sample. |
+| FTS5 on the store | Present. 41,000 rows a second, **76 MB per million files**, a two-word search over 100,000 rows in 3 ms, a prefix search in 5 ms. |
+| Pillow | 109 ms for a 12 megapixel noise JPEG, 18 ms for a real 1146x780 photo. |
+
+**What this changes in the design:**
+1. **Browsing needs no index.** A listing is fast and small (6,000 entries a second, 19 MB), so a folder, a volume's stats and
+   the file counts can come straight from the image. F1 stays as planned. ext4 is the only filesystem measured; NTFS, FAT and
+   exFAT numbers wait for a real image of each.
+2. **The name index is cheap.** One recursive pass is minutes per drive (a million entries is about three minutes at this rate),
+   and FTS5 stores it in about 76 MB per million files and answers in milliseconds. F2 stays as planned.
+3. **Reading a file out of the image is the slow part**, and the only thing in the design that is not cheap. About 6 MB/s on a
+   large file, a fifth of a second on a small one, and one small file took three seconds. The store is a spinning drive and
+   the image is a sparse 76 GB file, so these look seek-bound, but three samples cannot say. So:
+   - A preview loads one file at a time, with a visible wait and a way to go BACK.
+   - Thumbnails are made in the background, never in the way of a folder view, one at a time, and cached.
+   - **F3 (text search) begins with a measurement before its design is final:** 200 random files, in random order and in inode
+     order, to see the spread and whether reading in inode order, which keeps the drive's head in one area, is worth building
+     around. A drive with 50,000 documents is hours at three seconds each and minutes at a fifth of a second, and F3's
+     promise about indexing time depends on which. Until then no indexing time for content is promised.
+4. **Memory is small.** 19 MB for a listing and under 90 MB for a file; the service's memory ceiling can be modest.
+5. **CPU is not the bottleneck for photos**: a thumbnail is a fifth of a second at worst.
+6. This drive says little about photos and documents: its "photos" are icons. The browser's by-kind stats and previews need a
+   real archive drive to test against, and the owner's other drives will be it.
+
+**Still unmeasured:** NTFS, FAT, exFAT, HFS+ and ISO on a real image; the spread of per-file read times (F3's first step); whether
+a drive that has been idle for a while adds a spin-up to the first read.
 
 ## 4. The flow (the 7")
 
@@ -209,8 +238,8 @@ documents and search. Then, to the seven below: **"recommended"**, all of them.
 
 - **F0 (built 2026-11-15):** `sleuthkit` and `python3-pil` in the bootstrap's package list, and `docs/plans/2026-11-15-drive-browser-f0.py`,
   with `tests/test-drive-f0.sh` (invented ext4, FAT32 and random images; the report never carries a name or label, the image
-  is unchanged, each failure path stops cleanly). The owner reads the bootstrap diff and runs it, then runs the script, and its
-  report goes into §3. F1 does not start before that report is in.
+  is unchanged, each failure path stops cleanly). The owner read the bootstrap diff, ran it, and ran the script on 2026-11-15;
+  the report and what it changes are in §3. **Done.**
 - **F1: browse and preview, no index.** `gatbox-browse` (volumes, listings, stats, previews), the loopback routes, the FILES view,
   the unit, sysusers, the bootstrap lines, and the archive-queue check from §5.6.
 - **F2: the index and name search.** The indexer with pause and resume, `browse.sqlite`, search routes and the results list.

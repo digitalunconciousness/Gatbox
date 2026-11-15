@@ -662,7 +662,9 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           its memory, how fast a file comes out, what the drive holds by kind, SQLite's FTS5 speed and Pillow's thumbnail speed,
           and prints no file name, folder name or label. `test-drive-f0.sh`: 22, on invented ext4, FAT32 and random images; each
           of six breakages of it fails a test.
-    - [ ] F0's report from the Pi, into the note's §3. Run: `sg gatbox-disk-queue -c 'python3 docs/plans/2026-11-15-drive-browser-f0.py --bench-dir /srv/gatbox/disks'`
+    - [x] F0's report from the Pi, 2026-11-15, in the note's §3: `fls -r` 200,331 entries in 33.5 s using 19 MB; FTS5 41,000
+          rows a second and 76 MB per million files; reading a file out of the image is the slow part (about 6 MB/s on a large file,
+          0.2 to 3 s on a small one, three samples), so thumbnails and text extraction are background work and F3 measures first
     - [ ] F1 browse and preview (also stops a READ that is not for a machine from queueing for the archive), F2 index and name
           search, F3 text search. Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)

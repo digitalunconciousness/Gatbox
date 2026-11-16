@@ -9,5 +9,9 @@
 - Decided, same day: RESTORE (an image back on the drive it came from) is built, not installed. FORMAT (quick only: FAT32, exFAT or ext4,
   MBR up to 2 TB and GPT above, a warning and an offer to image first when the store has no image of the drive) is decided, not built,
   and waits for what the Pi has installed and what the job's sandbox allows. `docs/plans/2026-11-16-restore-and-format.md`.
+- The card's photos are `.nef`, which is why the grid showed only names: a NEF is a TIFF whose raw data Pillow cannot draw. The browser now
+  draws the JPEG embedded in the file (`gatboxlib/rawpreview.py`). Built on invented NEF-shaped files, not on a real D100's; the first look
+  at the owner's card on the Pi is the test. The owner's laptop gave a `chdman info -i` output (MAME 0.289, a regression-test CHD with a
+  `GDDD` CHS metadata line), which is the format Task 3's parser was waiting for.
 - Approved, queued: the CF card's model name read byte-swapped (`ASSMNU G` for `SAMSUNG`), shown de-swapped; hashing the possible
   duplicates on a tap; a list of earlier copies on the 7″.

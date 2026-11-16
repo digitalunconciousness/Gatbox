@@ -174,6 +174,7 @@ ePub, and the old Office formats through catdoc) and the index's text phase read
 estimate is short; F4a (photo thumbnails, a grid under PHOTOS, PREV and NEXT through a folder's photos) and F4b (a DELETED toggle: deleted entries shown dashed
 and tagged, with a warning that what comes back may be incomplete or another file's data, and never indexed) and F4c (possible duplicates from names and sizes, nothing read) and F4d (COPY TO THE STORE: a file or a folder out of an image into `<store>/_exports/<time>_<image>_<name>/`, a new
 folder each time, every file read back from the store and its SHA-1 listed in `_export.json`; it runs inside gatbox-browse, so the system change is two lines in that unit) are built.
+Camera raws (a Nikon NEF, 2026-11-16, not installed): the picture embedded in the file is drawn (`gatboxlib/rawpreview.py`), not tried on a real camera's file yet.
 The owner's answers on F4 (2026-11-15): HEIC is skipped, OCR waits for a drive of scans, and there is no phone (FILES stays on the Pi's own screen);
 `docs/plans/2026-11-15-drive-browser-f4.md`; spec `docs/plans/2026-11-15-drive-browser.md`, progress in BRINGUP.md.
 A READ for no machine no longer queues for the archive (nothing drains that queue yet).

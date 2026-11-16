@@ -258,6 +258,8 @@ check "... its folder on the store is made only when the store is mounted and ma
     'grep -qE "^ExecStartPre=\+/bin/sh -c .mountpoint -q /srv/gatbox/disks && \[ -f /srv/gatbox/disks/.gatbox-image-store \] && install -d -o gatbox-browse" "$BRS"'
 check "... the exports folder is made by the same line, group-writable by the spool's group (setgid) so the owner can delete a copy, and the browser's own library file is installed" \
     'grep -q "install -d -o gatbox-browse -g gatbox-disk-queue -m 2775 /srv/gatbox/disks/_exports" "$BRS" && grep -q "^backend/gatboxlib/browsecopy.py " "$BOOT"'
+check "the camera-raw preview reader is in the manifest: the browser imports it for a NEF, and a missing file would make every photo's thumbnail fail" \
+    'grep -q "^backend/gatboxlib/rawpreview.py " "$BOOT"'
 check "the bootstrap enables and starts the socket, and --check lists it and the user" \
     'grep -q "^svc gatbox-browse.socket" "$BOOT" && grep -q "gatbox-browse.socket; do" "$BOOT" && grep -q "create     user gatbox-browse" "$BOOT"'
 if command -v systemd-analyze >/dev/null 2>&1; then

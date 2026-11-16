@@ -1790,7 +1790,27 @@ def main():
             tog = "document.querySelector('#dk-body .dk-count button')"
             check("DELETED is off to begin with: two photos, the line says one deleted is not shown, the toggle is a finger tall and not pressed",
                   "1 deleted not shown" in text("#dk-body") and q(f"{tog}.getBoundingClientRect().height") >= 55.5 and q(f"{tog}.getAttribute('aria-pressed')") == "false" and q(f"{tog}.textContent") == "DELETED")
+            # A disk job running (the owner's card, 2026-11-16: a READ had run for an hour, and no thumbnail had ever been made): gatbox-browse
+            # makes none while one runs, imaging has priority. The grid keeps its boxes, says why, and draws them when the job ends; the
+            # pictures already loaded stay. Nothing is cached, so the deleted photo's thumbnail has to be made.
+            _sh.rmtree(f"{FD.store}/_browse/thumbs", ignore_errors=True)
+            with open(f"{T}/dspool/running.json", "w") as rj:
+                rj.write(json.dumps({"op": "read", "id": "waitjob"}))
+            c.wait("document.querySelector('#n-disk-s').textContent === 'reading'", 20)
             q(tog + ".click()")
+            note_js = "[...document.querySelectorAll('#dk-body .mut')].find(x => x.textContent.startsWith('A disk job is running, so thumbnails wait'))"
+            check("a disk job running: the deleted photo's cell has a box that says DISK JOB RUNNING, the line says why, the two photos already "
+                  "drawn stay, and the cells are still a finger tall",
+                  settles(c, "document.querySelectorAll('#dk-body .dk-cell').length === 3 && document.querySelectorAll('#dk-body .dk-ph').length === 1", 30)
+                  and text("#dk-body .dk-ph") == "DISK JOB RUNNING" and q(f"!!({note_js}) && !({note_js}).classList.contains('hide')")
+                  and q("[...document.querySelectorAll('#dk-body .dk-cell:not(.gone) img')].every(i => i.complete && i.naturalWidth > 0)")
+                  and q("[...document.querySelectorAll('#dk-body .dk-cell')].every(b => b.getBoundingClientRect().height >= 55.5)") and not q(BOX_SMALL))
+            shot("27c-files-grid-waiting")
+            os.remove(f"{T}/dspool/running.json")
+            check("the job ends: the thumbnail is made and drawn, and the placeholder and the line go",
+                  settles(c, "document.querySelectorAll('#dk-body .dk-ph').length === 0 && document.querySelectorAll('#dk-body .dk-cell img').length === 3 "
+                             "&& [...document.querySelectorAll('#dk-body .dk-cell img')].every(i => i.complete && i.naturalWidth > 0)", 40)
+                  and q(f"!({note_js}) || ({note_js}).classList.contains('hide')"))
             check("DELETED: the deleted photo joins the grid, dashed and tagged in words, the live ones carry no tag, the toggle shows it is on",
                   settles(c, "document.querySelectorAll('#dk-body .dk-cell').length === 3", 15)
                   and q("[...document.querySelectorAll('#dk-body .dk-cell.gone .dk-cn')].map(n => n.textContent)") == ["old.png"]

@@ -839,6 +839,15 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           that failed (a disk job was running) is asked for again at the next draw. `test-dash.sh`: 333 (was 331): small writes into the store
           over a poll do not redraw the grid, and a redraw that does happen (DELETED) keeps the same elements; each half fails a test on its own
           when reverted. **Not seen on the Pi yet**: the cause is read from the code and reproduced with a store whose free space moves.
+    - [x] **Thumbnails still flashing after that, and the reason (the owner's screenshot, 2026-11-16).** The disk spool held a `running.json`
+          from an hour earlier and a `status.json` written a minute before the screenshot, so a disk job had been running for an hour, and `_browse/thumbs` **did not exist**: not one
+          thumbnail had ever been made. That is by design: `gatboxlib/browse.thumb()` makes none while a disk job runs (imaging has priority) and
+          answers 409. The grid then removed the picture box of every refused thumbnail, which is what read as a flash: the dark box appeared and
+          collapsed. Now a refused or undrawable thumbnail leaves a box of the same size (`DISK JOB RUNNING`, or `NO PICTURE` when no job is running),
+          a line above the grid says that thumbnails wait for the disk job, the pictures already drawn stay, and the boxes are asked for again when the
+          job ends (the status change redraws the grid). `test-dash.sh`: 335 (was 333): a job running, the placeholder and the line; the job ends, the
+          picture is made and drawn and both go. The job in the spool was seen only as a file listing: whether it is live or left behind by a job that
+          died is not known yet (a hard stop, such as a power cut, skips the job's cleanup, and nothing treats an old `running.json` as dead).
   - [x] **RESTORE TO THE ORIGINAL** (the owner, 2026-11-16: "I should be able to put an image back onto the disk I pull it from also
         with an arming button"; built the same day, **not installed**; `docs/plans/2026-11-16-restore-and-format.md`). The refusal "this is the
         drive the image came from" is lifted only by a deliberate RESTORE CHECK (`gatbox-disk check|write --restore`, the 7″'s RESTORE CHECK

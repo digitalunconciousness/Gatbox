@@ -13,7 +13,10 @@
   such a file (`gatboxlib/rawpreview.py`, built on invented files, not a real D100's). **They were JPG after all**, and the thumbnails flashed
   for a frame and left empty boxes: the DISK tab's 5 s poll redrew the whole tab whenever `/api/disk` differed, and the image store's free
   space, which is in it, changes with every thumbnail written, so each redraw made new blank `<img>` elements. Fixed in the dashboard (the
-  free space is compared in 256 MB steps, and a thumbnail's element is kept across redraws); not seen on the Pi yet. The owner's laptop gave a `chdman info -i` output (MAME 0.289, a regression-test CHD with a
+  free space is compared in 256 MB steps, and a thumbnail's element is kept across redraws); not seen on the Pi yet. They still flashed, and the
+  owner's screenshot of the disk spool showed why: a `running.json` from an hour before and no `_browse/thumbs` folder at all, because
+  gatbox-browse makes no thumbnail while a disk job runs, and the grid dropped each refused picture's box. It now keeps a box that says
+  `DISK JOB RUNNING`, says why in a line, and draws the pictures when the job ends. The owner's laptop gave a `chdman info -i` output (MAME 0.289, a regression-test CHD with a
   `GDDD` CHS metadata line), which is the format Task 3's parser was waiting for.
 - The first real RESTORE ran that night on the 80 GB donor: image check 32.7 min, write 36.7 min, then two read-backs at about 33 MB/s when last
   seen (about 40 minutes each, estimated), so about 2.5 hours against a unit timeout of 3. The owner's screenshots of the disk spool were what showed the job was alive and what it was. The

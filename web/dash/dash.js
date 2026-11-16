@@ -3450,18 +3450,28 @@
   // then empty boxes (the owner's card, 2026-11-16). The same element is moved into the new grid instead, still loaded. One that failed
   // (a photo that cannot be drawn, or a disk job) is left out, so its cell is just the name.
   const FB_THUMBS = new Map();
-  function fbThumb(url) {
+  // A thumbnail that is refused (gatbox-browse makes none while a disk job runs: imaging has priority) or cannot be drawn leaves a
+  // placeholder of the same size, and says so, instead of vanishing: a picture box that appeared and then collapsed read as a flash (the
+  // owner, 2026-11-16, with a READ running). `note` is the grid's line about the disk job; it is shown only when a refusal happens
+  // while one is running.
+  function fbThumb(url, note) {
     let img = FB_THUMBS.get(url);
     if (img && img.dataset.failed) { FB_THUMBS.delete(url); img = null; }              // the failure may have been a disk job: ask again on the next draw
     if (!img) {
       img = el("img");
       img.loading = "lazy";
       img.alt = "";
-      img.addEventListener("error", () => { img.dataset.failed = "1"; img.remove(); });
+      img.addEventListener("error", () => {
+        img.dataset.failed = "1";
+        const busy = !!(K.st && K.st.busy);
+        img.replaceWith(el("div", "dk-ph", busy ? "DISK JOB RUNNING" : "NO PICTURE"));
+        if (busy && img._note) img._note.classList.remove("hide");
+      });
       img.src = url;
       FB_THUMBS.set(url, img);
       if (FB_THUMBS.size > 400) FB_THUMBS.delete(FB_THUMBS.keys().next().value);       // the oldest go: a 4 TB drive has more photos than that
     }
+    img._note = note;
     return img;
   }
   const fbQ = o => Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== "")
@@ -3999,11 +4009,13 @@
       c.appendChild(r);
     }
     if (grid.length) {
+      const waiting = el("div", "mut hide", "A disk job is running, so thumbnails wait for it. They come when it ends.");
+      c.appendChild(waiting);
       const g = el("div", "dk-grid");
       for (const e of grid) {
         const cell = el("button", "dk-cell" + (FB.hit && e.inode === FB.hit ? " hit" : "") + (e.deleted ? " gone" : ""));
         // a reused inode would draw another file's picture: no thumbnail is asked for
-        const img = e.reused ? null : fbThumb("/api/browse/thumb?" + fbQ({image: FB.img, vol: FB.vol, inode: e.inode, size: e.size}));
+        const img = e.reused ? null : fbThumb("/api/browse/thumb?" + fbQ({image: FB.img, vol: FB.vol, inode: e.inode, size: e.size}), waiting);
         add(cell, img && !img.dataset.failed ? img : null, el("div", "dk-cn", e.name), e.deleted ? el("span", "tag bad", e.reused ? "NAME ONLY" : "DELETED") : null);
         cell.addEventListener("click", () => e.reused ? toast(FB_REUSED, "warn", 6000) : fbOpenFile(e));
         if (FB.hit && e.inode === FB.hit) requestAnimationFrame(() => cell.scrollIntoView({block: "center"}));

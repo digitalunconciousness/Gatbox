@@ -55,7 +55,7 @@ def route_volumes(q):
 
 def route_ls(q):
     return B.ls(q1(q, "image"), q1(q, "vol"), q1(q, "dir"), q1(q, "sort") or "name", q1(q, "order") or "asc",
-                q1(q, "kind") or "all", q1(q, "page") or 0, at=q1(q, "at"))
+                q1(q, "kind") or "all", q1(q, "page") or 0, at=q1(q, "at"), deleted=q1(q, "deleted") == "1")
 
 
 def route_search(q):

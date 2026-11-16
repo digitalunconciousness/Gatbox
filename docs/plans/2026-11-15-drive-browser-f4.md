@@ -52,6 +52,15 @@ the contents may be gone), then previews of deleted files with the warning. Not 
 because a search result that leads to a half-file is not what she asked for. Needs a real FAT or NTFS image to test the reading
 honestly, and she has none yet.
 
+**Built as F4b (2026-11-15), after her "Fine".** What sleuthkit gave on real deleted entries, tried on a FAT32 and an ext4 image (`mdel`,
+`mdeltree`, `debugfs`): both list a deleted entry with " (deleted)" after its name; a deleted FAT file reads back whole, byte for byte,
+until something is written over its clusters, after which `icat` returns whatever is there now under the old name; FAT keeps no first
+letter for a deleted short name (`a.txt` comes back as `_.txt`; a long name keeps it); an ext4 file deleted by a real system has its
+inode cleared and lists as size 0 with nothing to read; and a deleted entry whose inode a newer file now holds is marked
+"(deleted-realloc)", which is why the screen offers only its name. A deleted folder can be listed on FAT. Not tried: NTFS (no tool here
+makes an NTFS image with a deleted file) and a real camera card. Search, the index and the counts leave deleted entries out; they are
+counted as deleted.
+
 ## 3. HEIC photos
 
 **What it is.** Photos from an iPhone are HEIC, and Pillow cannot open them.
@@ -164,6 +173,11 @@ contents), if she wants that. Better to decide after F4a to F4e have been used o
 6. Duplicates with hashing (§5, step 2), OCR (§4) and the phone (§7) only when there is a drive that needs them.
 
 ## 9. Questions for the owner
+
+**Answered 2026-11-15:** "Fine" to 1, 3, 4, 5 and 6, and to 2 "no HEIC photos". So: deleted files shown with a warning and kept out of search
+(F4b, built); HEIC skipped; OCR left until a drive of scans turns up; possible duplicates from names and sizes first, hashing only on a
+tap (F4c); COPY TO THE STORE, with hard rule 6 read as allowing a write into the store's exports folder (F4d); no phone, FILES stays on the
+Pi's own screen. The questions are kept below as asked.
 
 Each has a recommendation. "Recommended" on all of them is a complete answer, as before.
 

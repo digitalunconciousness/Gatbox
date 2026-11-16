@@ -722,8 +722,21 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           PREV and NEXT step through the folder's photos with the title following. No new unit, user or system config.
           `test-browse.sh`: 81, `test-dash.sh`: 281. **Not on a real photo drive yet:** the first look at a folder of large photos
           fills in one thumbnail at a time (a read out of the image each), the second is instant.
-    - [ ] F4's other pieces (deleted files, HEIC, OCR, duplicates, copy out, a phone with a PIN) wait for her answers in
-          `docs/plans/2026-11-15-drive-browser-f4.md` §9. Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
+    - [x] Her answers to the F4 note's six questions, 2026-11-15 ("Fine" to 1, 3, 4, 5 and 6; to 2, "no HEIC photos"): deleted files
+          shown with a warning and kept out of search; HEIC skipped (nothing to look at); OCR left for a drive of scans; duplicates from names
+          and sizes first and hashing only on a tap; COPY TO THE STORE built, and a write into the store's exports folder is inside hard rule 6's
+          intent; no phone, FILES stays on the Pi's own screen. Order: deleted files, possible duplicates, COPY TO THE STORE.
+    - [x] F4b built, 2026-11-15, **not installed**: a DELETED toggle on the folder view (`ls(..., deleted=1)`, `/api/browse/ls?deleted=1`). A deleted
+          entry is a dashed row or grid cell with a DELETED tag in words; opening one shows "DELETED. Read from space the drive has marked free: it
+          may be incomplete, damaged, or another file's data" (above the text, and above each photo in the viewer, following PREV and NEXT).
+          An entry whose inode another file now holds (sleuthkit's "deleted-realloc") is NAME ONLY and is never read or drawn. A deleted
+          folder can be opened and what is in it is shown as deleted. Deleted entries are never indexed or counted as files.
+          Checked on images where files were really deleted (`mdel`, `mdeltree`, `debugfs`): a deleted FAT file reads back byte for byte;
+          once something is written over its space it reads back as the new bytes; a cleared ext4 inode lists as empty and says so.
+          FAT keeps no first letter for a deleted short name (`a.txt` comes back as `_.txt`) and the row says so. Also fixed: the volume
+          label entry on FAT was counted as a file by COUNT WHAT'S ON IT. `test-browse-deleted.sh`: 32. No system config. **Not on a real
+          drive yet:** a real NTFS volume and a card from a camera, where recovery is most likely to work.
+    - [ ] F4c (possible duplicates from names and sizes) and F4d (COPY TO THE STORE) are next. Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4

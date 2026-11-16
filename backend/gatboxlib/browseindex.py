@@ -505,7 +505,7 @@ class Indexer:
                         continue
                     path_text, inode, mode, size, mtime = got
                     t = mode[:1]
-                    if path_text.endswith(" (deleted)") or t not in ("d", "r") or path_text.endswith("(Volume Label Entry)"):
+                    if B.gone_name(path_text) or t not in ("d", "r") or path_text.endswith("(Volume Label Entry)"):
                         continue
                     entries += 1
                     live["entries"] = entries

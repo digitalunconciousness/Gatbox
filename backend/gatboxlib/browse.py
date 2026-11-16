@@ -273,6 +273,18 @@ def _file_inode(text):
 
 # --- folders ---------------------------------------------------------------------------------------------------------------
 
+GONE_CAP = 20_000                                       # deleted entries held for one folder (kept apart, so they never crowd out live ones)
+
+
+def gone_name(name):
+    """(name without the marker, reused) when fls marked this entry deleted, else None. "(deleted-realloc)" is a deleted name
+    whose inode a newer file now holds: reading that inode gives the newer file, never the deleted one."""
+    for mark, reused in ((" (deleted-realloc)", True), (" (deleted)", False)):
+        if name.endswith(mark):
+            return name[:-len(mark)], reused
+    return None
+
+
 def parse_body(line):
     """One line of fls -m: (name, inode, mode string, size, mtime), or None. The name may itself contain a pipe, so the
     nine fixed fields are cut off from the right."""
@@ -283,26 +295,32 @@ def parse_body(line):
         return None
 
 
-def _entries(path, start, inode):
-    """All live entries of one folder, up to the cap: [dict]. Deleted, virtual and label entries are left out."""
+def _entries(path, start, inode, fat=False):
+    """All entries of one folder, up to the caps: (live [dict], how many are deleted, capped, deleted [dict]). Virtual and
+    label entries are left out. A deleted entry carries "deleted": True (and "reused": True when its inode now holds another
+    file); the listing shows them only when asked. On FAT a deleted short name loses its first letter (the drive writes a marker
+    over it, and sleuthkit shows "_"): such an entry carries "name_cut": True."""
     argv = ["fls", "-m", "/", "-o", str(start), path] + ([inode] if inode else [])
     rc, out, err = run(argv, 60)
     if rc != 0 and not out:
         raise Err(415, "this folder could not be read" + (f": {err.strip().splitlines()[0][:120]}" if err.strip() else ""))
-    entries, hidden, capped = [], 0, False
+    entries, gone, hidden, capped = [], [], 0, False
     for raw in out.decode("utf-8", "replace").splitlines():
         p = parse_body(raw)
         if p is None:
             continue
         name, ino, mode, size, mtime = p
         t = mode[:1]
-        if name.endswith(" (deleted)"):
+        dead = gone_name(name)
+        if dead:
             hidden += 1
-            continue
+            name = dead[0]
         if t in ("V", "v") or name.endswith("(Volume Label Entry)") or t not in ("d", "r", "l"):
             continue
-        if len(entries) >= FOLDER_CAP:
-            capped = True
+        if len(gone if dead else entries) >= (GONE_CAP if dead else FOLDER_CAP):
+            capped = capped or not dead
+            if dead:
+                continue
             break
         target = None
         if t == "l" and " -> " in name:
@@ -311,14 +329,23 @@ def _entries(path, start, inode):
              "mtime": mtime if 631152000 <= mtime <= 4102444800 else None}
         if target:
             e["target"] = target[:200]
-        entries.append(e)
-    return entries, hidden, capped
+        if dead:
+            e["deleted"] = True
+            if dead[1]:
+                e["reused"] = True
+            if fat and name.startswith("_"):
+                e["name_cut"] = True
+            gone.append(e)
+        else:
+            entries.append(e)
+    return entries, hidden, capped, gone
 
 
-def ls(rel, start, dir_inode=None, sort="name", order="asc", kind="all", page=0, per_page=PER_PAGE, at=None):
+def ls(rel, start, dir_inode=None, sort="name", order="asc", kind="all", page=0, per_page=PER_PAGE, at=None, deleted=False):
     """One page of a folder. The folder is named by its inode (None is the root), and every entry carries its own, so a
     client walks down by inode and never builds a path. `at` is an entry's inode: the page that holds it is returned
-    (SHOW IN FOLDER from a search result), whatever `page` said."""
+    (SHOW IN FOLDER from a search result), whatever `page` said. Deleted entries are listed only with `deleted` set; they are
+    marked, and sorted in with the rest."""
     path, side = image(rel)
     v = _volume(rel, start)
     ino = _inode(dir_inode)
@@ -327,9 +354,10 @@ def ls(rel, start, dir_inode=None, sort="name", order="asc", kind="all", page=0,
     key = (path, v["start"], ino)
     hit = _dirs.fetch(key)
     if hit is None:
-        hit = _entries(path, v["start"], ino)
+        hit = _entries(path, v["start"], ino, fat=(v["fs"].get("type") or "").upper() in ("FAT12", "FAT16", "FAT32"))
         _dirs.put(key, (time.time(), hit))
-    entries, hidden, capped = hit
+    entries, hidden, capped, gone = hit
+    entries = entries + gone if deleted else entries
     want = {"all": None, "photos": "photo", "documents": "document"}[kind]
     shown = [e for e in entries if e["kind"] == "folder" or want is None or e["kind"] == want]
     rev = order == "desc"
@@ -354,7 +382,8 @@ def ls(rel, start, dir_inode=None, sort="name", order="asc", kind="all", page=0,
     pages = max(1, -(-len(ordered) // per_page))
     page = min(page, pages - 1)
     return {"image": rel, "start": v["start"], "dir": ino, "total": len(ordered), "page": page, "pages": pages,
-            "entries": ordered[page * per_page:(page + 1) * per_page], "capped": capped, "deleted_hidden": hidden, "at": found}
+            "entries": ordered[page * per_page:(page + 1) * per_page], "capped": capped, "deleted_hidden": 0 if deleted else hidden,
+            "deleted_shown": bool(deleted), "deleted_total": hidden, "at": found}
 
 
 # --- what is on a volume (counted by a background pass) ---------------------------------------------------------------------
@@ -433,9 +462,11 @@ def _count_pass(st, path, start, timeout=3600):
                 if got is None:
                     continue
                 name, _, mode, size, mtime = got
+                if name.endswith("(Volume Label Entry)"):
+                    continue                                        # FAT's label is stored as a file entry; it is not one
                 c["entries"] += 1
                 st["entries"] = c["entries"]
-                if name.endswith(" (deleted)"):
+                if gone_name(name):
                     c["deleted"] += 1
                     continue
                 t = mode[:1]

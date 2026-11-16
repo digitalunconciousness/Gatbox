@@ -165,9 +165,10 @@ phone. `gatboxlib/browse.py` is the logic. It is read-only and sends nothing to 
 index and name search) is built on top (`gatboxlib/browseindex.py`: a disposable SQLite and FTS5 index in `_browse/` on the store, one volume
 per pass, searchable only when whole, standing still for a disk job). F3 (text search inside documents) is built on top: `gatboxlib/browsetext.py` reads the documents (text, HTML, PDF, Office, OpenDocument,
 ePub, and the old Office formats through catdoc) and the index's text phase reads them out of the image one at a time, on its own when the
-estimate is short; F4a (photo thumbnails, a grid under PHOTOS, PREV and NEXT through a folder's photos) is built; the rest of F4 (deleted files, HEIC, OCR,
-duplicates, copy out, a phone) waits for the owner's answers in `docs/plans/2026-11-15-drive-browser-f4.md`; spec `docs/plans/2026-11-15-drive-browser.md`,
-progress in BRINGUP.md.
+estimate is short; F4a (photo thumbnails, a grid under PHOTOS, PREV and NEXT through a folder's photos) and F4b (a DELETED toggle: deleted entries shown dashed
+and tagged, with a warning that what comes back may be incomplete or another file's data, and never indexed) are built. The owner's answers on F4 (2026-11-15):
+possible duplicates and COPY TO THE STORE are next; HEIC is skipped, OCR waits for a drive of scans, and there is no phone (FILES stays on the Pi's own screen);
+`docs/plans/2026-11-15-drive-browser-f4.md`; spec `docs/plans/2026-11-15-drive-browser.md`, progress in BRINGUP.md.
 A READ for no machine no longer queues for the archive (nothing drains that queue yet).
 
 **Disk imaging (phase D2), built 2026-11-03, installed on the Pi 2026-11-14.** Hard disks, CF and SD cards on the

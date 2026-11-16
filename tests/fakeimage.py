@@ -14,6 +14,7 @@ import time
 
 MiB = 1 << 20
 TOOLS = ("fls", "mmls", "fsstat", "icat", "mke2fs", "mkfs.fat", "mcopy")
+DELETE_TOOLS = ("mdel", "mdeltree", "debugfs")
 
 
 def missing():
@@ -75,6 +76,56 @@ def fat_image(path, tree_dirs, label="WIDGETFAT", mib=96):
                    env=dict(os.environ, MTOOLS_SKIP_CHECK="1"))
     mbr(path, [(2048, 180000, 0x0C, True)])
     return {"fat": 2048}
+
+
+def fat_delete(path, start_sector, files=(), trees=()):
+    """Delete from a FAT32 volume the way the drive's own system does: the directory entry is marked free and the data stays until
+    something is written over it. `files` and `trees` are paths inside the volume."""
+    img, env = f"{path}@@{start_sector * 512}", dict(os.environ, MTOOLS_SKIP_CHECK="1")
+    for f in files:
+        subprocess.run(["mdel", "-i", img, f"::/{f}"], check=True, env=env)
+    for t in trees:
+        subprocess.run(["mdeltree", "-i", img, f"::/{t}"], check=True, env=env)
+
+
+def fat_overwrite_deleted(path, start_sector, inode, nbytes=4096):
+    """Write random bytes over the first `nbytes` of a deleted file's data, in place, as a later write would. Returns them."""
+    out = subprocess.run(["istat", "-o", str(start_sector), path, str(inode)], capture_output=True, text=True, check=True).stdout
+    first = int(out.split("Sectors:")[1].split()[0])
+    data = os.urandom(nbytes)
+    with open(path, "r+b") as f:
+        f.seek((start_sector + first) * 512)                       # istat's sectors count from the start of the volume
+        f.write(data)
+    return data
+
+
+def fat_add(path, start_sector, local_file, dest):
+    """Write one more file into a FAT32 volume (it takes the first free clusters, which may be a deleted file's)."""
+    subprocess.run(["mcopy", "-i", f"{path}@@{start_sector * 512}", local_file, f"::/{dest}"], check=True,
+                   env=dict(os.environ, MTOOLS_SKIP_CHECK="1"))
+
+
+def ext4_whole(path, tree, mib=64):
+    """An ext4 volume with no partition table (the whole image is the volume), holding `tree`."""
+    with open(path, "wb") as f:
+        f.truncate(mib * MiB)
+    subprocess.run(["mke2fs", "-q", "-F", "-t", "ext4", "-d", tree, path], check=True)
+
+
+def ext4_delete(path, name, clear=False, offset_sectors=0):
+    """debugfs `rm`: the inode is marked free and its extents are kept, so the content can still be read. With `clear`, the inode is
+    zeroed too, which is what a real ext4 does when it deletes: then nothing can be read back. `offset_sectors` is where the volume
+    starts inside the image. Returns the inode number."""
+    ino = None
+    img = f"{path}?offset={offset_sectors * 512}" if offset_sectors else path
+    out = subprocess.run(["debugfs", "-R", f"stat \"{name}\"", img], capture_output=True, text=True, check=True).stdout
+    for line in out.splitlines():
+        if line.startswith("Inode:"):
+            ino = int(line.split()[1])
+    subprocess.run(["debugfs", "-w", "-R", f"rm \"{name}\"", img], check=True, capture_output=True)
+    if clear:
+        subprocess.run(["debugfs", "-w", "-R", f"clri <{ino}>", img], check=True, capture_output=True)
+    return ino
 
 
 def put_in_store(store, machine, label, image, extra=None):

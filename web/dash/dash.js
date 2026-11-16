@@ -2244,7 +2244,7 @@
   const snapW = px => [800, 1200, 1600, 2400].find(w => w >= px) || 2400;
   function openViewer(slug, doc, page) {
     if (!doc) return toast("That document isn't on the Pi yet", "warn");
-    Object.assign(V, {slug, doc, page: Math.max(1, Math.min(page || 1, doc.pages || 1)), z: 1, tx: 0, ty: 0, w: 0, url: null, titles: null});
+    Object.assign(V, {slug, doc, page: Math.max(1, Math.min(page || 1, doc.pages || 1)), z: 1, tx: 0, ty: 0, w: 0, url: null, titles: null, notes: null});
     $("#vw-search").classList.remove("hide");
     $("#vw-title").textContent = doc.title;
     const a = $("#vw-pdf");
@@ -2259,7 +2259,8 @@
   // opts.titles: a name for each page (a folder's photos are the pages, and the title follows the photo); opts.start: the page to open on
   function openFileViewer(title, pages, urlFn, opts) {
     const o = opts || {};
-    Object.assign(V, {slug: null, doc: {title, pages}, page: o.start || 1, z: 1, tx: 0, ty: 0, w: 0, url: urlFn, titles: o.titles || null});
+    Object.assign(V, {slug: null, doc: {title, pages}, page: o.start || 1, z: 1, tx: 0, ty: 0, w: 0, url: urlFn, titles: o.titles || null,
+                      notes: o.notes || null});
     $("#vw-title").textContent = o.titles ? o.titles[V.page - 1] : title;
     $("#vw-pdf").classList.add("hide");
     $("#vw-search").classList.add("hide");
@@ -2272,6 +2273,9 @@
     const w = snapW(st.clientWidth * (window.devicePixelRatio || 1) * V.z);
     $("#vw-page").textContent = `${V.page} / ${V.doc.pages}`;
     if (V.titles) $("#vw-title").textContent = V.titles[V.page - 1];
+    const note = V.notes ? V.notes[Math.min(V.page, V.notes.length) - 1] : "";           // a deleted file's warning follows its page
+    $("#vw-note").textContent = note || "";
+    $("#vw-note").classList.toggle("hide", !note);
     $("#vw-prev").disabled = V.page <= 1; $("#vw-next").disabled = V.page >= V.doc.pages;
     if (w > V.w || img.dataset.page !== String(V.page)) {
       V.w = Math.max(w, img.dataset.page === String(V.page) ? V.w : 0);
@@ -2864,7 +2868,7 @@
   const K = {st: null, sig: null, images: null, imgSig: null, list: null, cap: null, listFor: undefined, mode: "read",
              src: null, media: null, machine: null, machineName: null, label: null, image: null, target: null,
              ackFor: null, holding: false, pending: false, expT: null, info: false, swap: null, rec: null,
-             fb: {view: "images", img: null, label: "", vols: null, vol: null, volName: "", path: [], sort: "name", order: "asc", kind: "all",
+             fb: {view: "images", img: null, label: "", vols: null, vol: null, volName: "", path: [], sort: "name", order: "asc", kind: "all", deleted: false,
                   page: 0, ls: null, file: null, info: null, text: null, err: null, busy: null, stats: {}, poll: null,
                   index: null, ixPoll: null, q: "", scope: "names", skind: "all", syear: null, spage: 0, sres: null, from: null, at: null, hit: null, hitRow: null}};
   const GB = n => n >= 1e12 ? (n / 1e12).toFixed(2) + " TB" : n >= 1e9 ? (n / 1e9).toFixed(1) + " GB"
@@ -3420,6 +3424,11 @@
                          .map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
   const fbDir = () => FB.path.length ? FB.path[FB.path.length - 1].inode : null;
   const FB_TAG = {folder: ["FOLDER", "cy"], photo: ["PHOTO", "ok"], document: ["DOCUMENT", "warn"], link: ["LINK", "mut"]};
+  // A deleted entry is read from space the drive has marked free: its name may be all that is true. Said wherever one is shown.
+  const FB_GONE = "DELETED. Read from space the drive has marked free: it may be incomplete, damaged, or another file's data.";
+  const FB_REUSED = "Deleted, and its space now holds another file: only the name is left.";
+  const FB_EMPTY = "Nothing to read back: this deleted file was empty, or the drive cleared it when it was deleted.";
+  const fbInGone = () => FB.path.some(p => p.deleted);
   const num = n => (n || 0).toLocaleString("en-US");
   const fbDur = s => s < 90 ? `${Math.max(1, Math.round(s))} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`;
   async function fbGo(promise, what) {
@@ -3438,7 +3447,7 @@
   }
   async function fbOpenVolume(v) {
     clearTimeout(FB.poll);
-    Object.assign(FB, {view: "folder", vol: v.start, path: [], sort: "name", order: "asc", kind: "all", page: 0, ls: null, file: null,
+    Object.assign(FB, {view: "folder", vol: v.start, path: [], sort: "name", order: "asc", kind: "all", deleted: false, page: 0, ls: null, file: null,
                        from: null, hit: null, volName: v.fs ? v.fs.type + (v.fs.label ? ` '${v.fs.label}'` : "") : v.desc});
     await fbLoad();
   }
@@ -3446,7 +3455,7 @@
     const at = FB.at;                                                // SHOW IN FOLDER: the page that holds this entry
     FB.at = null;
     const r = await fbGo(api("GET", "/api/browse/ls?" + fbQ({image: FB.img, vol: FB.vol, dir: fbDir(), sort: FB.sort, order: FB.order,
-                                                            kind: FB.kind, page: FB.page, at})), "reading the folder…");
+                                                            kind: FB.kind, page: FB.page, at, deleted: FB.deleted ? 1 : ""})), "reading the folder…");
     if (r) { FB.ls = r; FB.page = r.page; }
     FB.hit = at && r && r.at ? r.at : null;
     renderDisk();
@@ -3521,12 +3530,12 @@
     } else if (info.kind === "photo" || info.kind === "pdf") {
       FB.view = back; FB.file = null;                                // closing the viewer lands on the folder (or the results)
       // a photo in a folder: PREV and NEXT step through the folder's photos (this page of it), and the title follows
-      const set = info.kind === "photo" && back === "folder" && FB.ls ? FB.ls.entries.filter(x => x.kind === "photo") : [];
+      const set = info.kind === "photo" && back === "folder" && FB.ls ? FB.ls.entries.filter(x => x.kind === "photo" && !x.reused) : [];
       const at = set.findIndex(x => x.inode === e.inode), img = FB.img, vol = FB.vol;
       if (set.length > 1 && at >= 0)
         openFileViewer(e.name, set.length, (page, w) => "/api/browse/preview?" + fbQ({image: img, vol, inode: set[page - 1].inode, size: set[page - 1].size, w}),
-                       {titles: set.map(x => x.name), start: at + 1});
-      else openFileViewer(e.name, info.pages || 1, (page, w) => "/api/browse/preview?" + fbQ(Object.assign({page, w}, q)));
+                       {titles: set.map(x => x.name), notes: set.map(x => x.deleted ? FB_GONE : ""), start: at + 1});
+      else openFileViewer(e.name, info.pages || 1, (page, w) => "/api/browse/preview?" + fbQ(Object.assign({page, w}, q)), {notes: [e.deleted ? FB_GONE : ""]});
     }
     renderDisk();
   }
@@ -3770,21 +3779,36 @@
     c.appendChild(add(el("div", "dk-sortkind"), s1, s2));                  // sort and kind side by side: a row of the 600 px is worth keeping
     const L = FB.ls;
     if (!L) return;
-    c.appendChild(el("div", "mut", `${num(L.total)} item${L.total === 1 ? "" : "s"}` + (L.pages > 1 ? ` · page ${L.page + 1} of ${L.pages}` : "")
-                                    + (L.deleted_hidden ? ` · ${num(L.deleted_hidden)} deleted not shown` : "")));
+    // the count, and the DELETED toggle beside it
+    const gb = el("button", FB.deleted ? "on" : null, "DELETED");
+    gb.setAttribute("aria-pressed", FB.deleted ? "true" : "false");
+    gb.addEventListener("click", () => { FB.deleted = !FB.deleted; FB.page = 0; fbLoad(); });
+    c.appendChild(add(el("div", "dk-count"),
+      el("span", "mut", `${num(L.total)} item${L.total === 1 ? "" : "s"}` + (L.pages > 1 ? ` · page ${L.page + 1} of ${L.pages}` : "")
+                        + (L.deleted_hidden ? ` · ${num(L.deleted_hidden)} deleted not shown`
+                           : FB.deleted ? (L.deleted_total ? ` · ${num(L.deleted_total)} deleted, dashed` : " · nothing deleted in this folder") : "")), gb));
+    if (fbInGone()) c.appendChild(el("div", "warn dk-gonenote", "This folder was deleted. " + FB_GONE.replace(/^DELETED\. /, "")));
     if (L.capped) c.appendChild(el("div", "warn", "Only the first 100,000 entries of this folder are listed."));
     if (!L.entries.length) c.appendChild(el("div", "mut dk-none", "Nothing here."));
     // with the PHOTOS filter on, the photos are a grid of thumbnails (made once, kept on the store) and the folders stay rows above it
     const grid = FB.kind === "photos" ? L.entries.filter(x => x.kind === "photo") : [];
     for (const e of L.entries) {
       if (grid.length && e.kind === "photo") continue;
-      const r = el("button", "row dk-frow" + (FB.hit && e.inode === FB.hit ? " hit" : "")), tag = FB_TAG[e.kind];
+      const r = el("button", "row dk-frow" + (FB.hit && e.inode === FB.hit ? " hit" : "") + (e.deleted ? " gone" : "")), tag = FB_TAG[e.kind];
       if (FB.hit && e.inode === FB.hit) requestAnimationFrame(() => r.scrollIntoView({block: "center"}));
-      const meta = e.kind === "folder" ? (e.mtime ? stamp(e.mtime) : "folder") : e.kind === "link" ? `points to ${e.target || "?"}`
+      const meta = e.reused ? "its space now holds another file: only the name is left"
+                 : e.name_cut ? "FAT keeps no first letter for a deleted short name: the _ stands for it"
+                 : e.kind === "folder" ? (e.mtime ? stamp(e.mtime) : "folder") : e.kind === "link" ? `points to ${e.target || "?"}`
                  : `${GB(e.size)}${e.mtime ? " · " + stamp(e.mtime) : ""}`;
-      add(r, add(el("div", "dk-fn"), el("b", null, e.name), tag ? el("span", "tag " + tag[1], tag[0]) : null), el("div", "mut", meta));
+      add(r, add(el("div", "dk-fn"), el("b", null, e.name), tag ? el("span", "tag " + tag[1], tag[0]) : null,
+                 e.deleted ? el("span", "tag bad", e.reused ? "DELETED, NAME ONLY" : "DELETED") : null), el("div", "mut", meta));
       r.addEventListener("click", () => {
-        if (e.kind === "folder") { FB.path.push({name: e.name, inode: e.inode}); FB.page = 0; fbLoad(); }
+        if (e.reused) toast(FB_REUSED, "warn", 6000);
+        else if (e.kind === "folder") {
+          FB.path.push({name: e.name, inode: e.inode, deleted: !!e.deleted});
+          if (e.deleted) FB.deleted = true;                              // what is inside a deleted folder is deleted too: show it
+          FB.page = 0; fbLoad();
+        }
         else if (e.kind === "link") toast(`A link: it points to ${e.target || "somewhere else"}`, "warn", 5000);
         else fbOpenFile(e);
       });
@@ -3793,13 +3817,13 @@
     if (grid.length) {
       const g = el("div", "dk-grid");
       for (const e of grid) {
-        const cell = el("button", "dk-cell" + (FB.hit && e.inode === FB.hit ? " hit" : "")), img = el("img");
+        const cell = el("button", "dk-cell" + (FB.hit && e.inode === FB.hit ? " hit" : "") + (e.deleted ? " gone" : "")), img = el("img");
         img.loading = "lazy";
         img.alt = "";
         img.addEventListener("error", () => img.remove());               // a photo that cannot be drawn, or a disk job: the name is still there
-        img.src = "/api/browse/thumb?" + fbQ({image: FB.img, vol: FB.vol, inode: e.inode, size: e.size});
-        add(cell, img, el("div", "dk-cn", e.name));
-        cell.addEventListener("click", () => fbOpenFile(e));
+        if (!e.reused) img.src = "/api/browse/thumb?" + fbQ({image: FB.img, vol: FB.vol, inode: e.inode, size: e.size});   // a reused inode would draw another file's picture
+        add(cell, img, el("div", "dk-cn", e.name), e.deleted ? el("span", "tag bad", e.reused ? "NAME ONLY" : "DELETED") : null);
+        cell.addEventListener("click", () => e.reused ? toast(FB_REUSED, "warn", 6000) : fbOpenFile(e));
         if (FB.hit && e.inode === FB.hit) requestAnimationFrame(() => cell.scrollIntoView({block: "center"}));
         g.appendChild(cell);
       }
@@ -3821,6 +3845,7 @@
     if (fromSearch && FB.hitRow) top.appendChild(fbBack("SHOW IN FOLDER", () => fbShow(FB.hitRow)));
     c.appendChild(top);
     add(c, el("h2", null, e.name || "file"), el("div", "mut", `${GB(e.size)}${e.mtime ? " · modified " + stamp(e.mtime) : ""}`));
+    if (e.deleted) c.appendChild(el("div", "warn dk-gonenote", FB_GONE));
     const i = FB.info;
     if (!i) return;
     if (i.kind === "text" && FB.text) {
@@ -3829,7 +3854,7 @@
     } else if (i.kind === "text") {
       c.appendChild(el("div", "mut", "Reading the text…"));
     } else {
-      c.appendChild(el("div", "mut", i.message || "no preview for this kind of file"));
+      c.appendChild(el("div", "mut", e.deleted && !e.size ? FB_EMPTY : i.message || "no preview for this kind of file"));
     }
   }
 

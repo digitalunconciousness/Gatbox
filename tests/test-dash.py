@@ -305,9 +305,23 @@ def setup():
                GATBOX_MANUALS=f"{T}/manuals", GATBOX_LIBRARY=f"{T}/lib/library.sqlite", GATBOX_MAME_TITLES=f"{T}/mame-titles.json",
                GATBOX_MANUALS_SPOOL=f"{T}/mspool", GATBOX_SYSFS=FD.sys, GATBOX_DEV=FD.dev, GATBOX_MOUNTINFO=FD.mountinfo, GATBOX_UDEV=FD.udev,
                GATBOX_DISKS=FD.store, GATBOX_DISK_SPOOL=f"{T}/dspool", GATBOX_BROWSE_SOCK=f"{T}/browse.sock")
+    # A stand-in fls in front of the real one: it adds one line a drive cannot be made to give here, an entry whose inode another file
+    # now holds ("deleted-realloc"), to a folder listing while the file `ghost` is beside it. The browser scrubs its environment, so
+    # the stand-in is steered by that file and not by a variable.
+    fstub = f"{T}/flsbin"
+    os.makedirs(fstub)
+    open(f"{fstub}/fls", "w").write(
+        "#!/bin/sh\n"
+        "here=$(dirname \"$0\")\n"
+        f"{shutil.which('fls')} \"$@\"\n"
+        "rc=$?\n"
+        "case \" $* \" in *\" -r \"*) ;; *) [ -e \"$here/ghost\" ] && printf '%s\\n' "
+        "'0|/ghost.png (deleted-realloc)|99999|r/rrw-r--r--|0|0|2048|1794786586|1794786586|1794786586|1794786586';; esac\n"
+        "exit $rc\n")
+    os.chmod(f"{fstub}/fls", 0o755)
     # the drive browser's service (FILES), over the same fake store, on its own socket (systemd would start it on demand)
     procs["browse"] = subprocess.Popen([sys.executable, os.path.join(REPO, "backend/gatbox-browse"), "--socket", f"{T}/browse.sock", "--idle", "3000"],
-                                       env=dict(os.environ, GATBOX_LIB=os.path.join(REPO, "backend"), GATBOX_DISKS=FD.store,
+                                       env=dict(os.environ, PATH=f"{fstub}:" + os.environ["PATH"], GATBOX_LIB=os.path.join(REPO, "backend"), GATBOX_DISKS=FD.store,
                                                 GATBOX_MOUNTINFO=FD.mountinfo, GATBOX_BROWSE_DIR=f"{FD.store}/_browse",
                                                 GATBOX_DISK_SPOOL=f"{T}/dspool"), stderr=subprocess.DEVNULL, start_new_session=True)
     subprocess.run([sys.executable, os.path.join(REPO, "tools/gatbox-mame-roms"), "--titles", f"{T}/mame-titles.json"], check=True,
@@ -1598,10 +1612,18 @@ def main():
             ftree = f"{T}/ftree"
             os.makedirs(ftree)
             fakeimage.sample_tree(ftree, many=230)
+            # three files that are deleted in the image (F4b): a photo and a text file that read back, and a photo the drive cleared
+            from PIL import Image as _Img
+            _Img.new("RGB", (240, 160), (30, 160, 60)).save(f"{ftree}/Photos/2019/old.png")
+            open(f"{ftree}/Docs/old-notes.txt", "w").write("Widget Wars deleted notes\n" * 40)
+            _Img.effect_noise((300, 200), 60).convert("RGB").save(f"{ftree}/Docs/lost.jpg", "JPEG", quality=85)
             fimg = f"{T}/fimg.img"
             fakeimage.ext4_image(fimg, ftree)
+            fakeimage.ext4_delete(fimg, "/Photos/2019/old.png", offset_sectors=2048)
+            fakeimage.ext4_delete(fimg, "/Docs/old-notes.txt", offset_sectors=2048)
+            fakeimage.ext4_delete(fimg, "/Docs/lost.jpg", clear=True, offset_sectors=2048)
             frel = fakeimage.put_in_store(FD.store, "gauntlet-legends", "BROWSE-EXT", fimg)
-            nfiles = sum(1 for d, _, fs in os.walk(ftree) for f in fs if not os.path.islink(os.path.join(d, f)))
+            nfiles = sum(1 for d, _, fs in os.walk(ftree) for f in fs if not os.path.islink(os.path.join(d, f))) - 3     # the three deleted ones are not files
 
             def fb_row(name):
                 return f"[...document.querySelectorAll('#dk-body .dk-frow')].find(b => b.querySelector('b').textContent === {json.dumps(name)})"
@@ -1696,6 +1718,40 @@ def main():
                   settles(c, "document.querySelector('#vw-title').textContent === 'red.png' && document.querySelector('#vw-page').textContent === '2 / 2' && document.querySelector('#vw-img').complete", 40))
             q("document.querySelector('#vw-close').click()")
             check("CLOSE: the grid again", settles(c, f"{imgs_js}.length === 2", 15))
+            # F4b: a deleted photo in the grid, and the warning that follows it through the viewer
+            tog = "document.querySelector('#dk-body .dk-count button')"
+            check("DELETED is off to begin with: two photos, the line says one deleted is not shown, the toggle is a finger tall and not pressed",
+                  "1 deleted not shown" in text("#dk-body") and q(f"{tog}.getBoundingClientRect().height") >= 55.5 and q(f"{tog}.getAttribute('aria-pressed')") == "false" and q(f"{tog}.textContent") == "DELETED")
+            q(tog + ".click()")
+            check("DELETED: the deleted photo joins the grid, dashed and tagged in words, the live ones carry no tag, the toggle shows it is on",
+                  settles(c, "document.querySelectorAll('#dk-body .dk-cell').length === 3", 15)
+                  and q("[...document.querySelectorAll('#dk-body .dk-cell.gone .dk-cn')].map(n => n.textContent)") == ["old.png"]
+                  and q("[...document.querySelectorAll('#dk-body .dk-cell.gone .tag')].map(t => t.textContent)") == ["DELETED"]
+                  and q("document.querySelectorAll('#dk-body .dk-cell:not(.gone) .tag').length") == 0
+                  and q(f"{tog}.getAttribute('aria-pressed')") == "true" and "1 deleted, dashed" in text("#dk-body")
+                  and q("getComputedStyle(document.querySelector('#dk-body .dk-cell.gone')).borderStyle") == "dashed")
+            check("... its thumbnail is really drawn (the deleted file's data was still there), and nothing is under 14 px",
+                  settles(c, "[...document.querySelectorAll('#dk-body .dk-cell.gone img')].every(i => i.complete && i.naturalWidth > 0)", 40) and not q(BOX_SMALL))
+            shot("27b-files-deleted-grid")
+            q("[...document.querySelectorAll('#dk-body .dk-cell')].find(b => b.querySelector('.dk-cn').textContent === 'IMG_0001.jpg').click()")
+            note = "document.querySelector('#vw-note')"
+            check("a live photo in a folder that also shows deleted ones: the viewer has no warning, and it is one of three",
+                  settles(c, "!document.querySelector('#viewer').classList.contains('hide') && document.querySelector('#vw-img').complete && document.querySelector('#vw-page').textContent === '1 / 3'", 40)
+                  and q(f"{note}.classList.contains('hide')"))
+            q("document.querySelector('#vw-next').click()")
+            check("NEXT to the deleted photo: the title follows, and the warning is shown, in words, above the photo",
+                  settles(c, "document.querySelector('#vw-title').textContent === 'old.png' && document.querySelector('#vw-img').complete", 40)
+                  and not q(f"{note}.classList.contains('hide')") and q(f"{note}.textContent").startswith("DELETED.") and "another file's data" in q(f"{note}.textContent")
+                  and q(f"parseFloat(getComputedStyle({note}).fontSize)") >= 14 and not q(BOX_SMALL))
+            shot("27c-files-deleted-viewer")
+            q("document.querySelector('#vw-next').click()")
+            check("NEXT again to a live photo: the warning goes away with it",
+                  settles(c, "document.querySelector('#vw-title').textContent === 'red.png'", 40) and q(f"{note}.classList.contains('hide')"))
+            q("document.querySelector('#vw-close').click()")
+            q(tog + ".click()")
+            check("DELETED off again: the two live photos only, and the line says one is not shown",
+                  settles(c, "document.querySelectorAll('#dk-body .dk-cell').length === 2 && document.querySelectorAll('#dk-body .dk-cell.gone').length === 0", 15)
+                  and "1 deleted not shown" in text("#dk-body"))
             fb_btn("ALL", 15, exact=True)
             fb_wait_row("red.png")
             q("[...document.querySelectorAll('#dk-body .dk-crumbs button')][2].click()")      # the volume's crumb: the root again
@@ -1712,6 +1768,58 @@ def main():
             check("a text file: its text, in a block, with its encoding", dk_has("Widget Wars cabinet notes", 30) and "UTF-8" in text("#dk-body"))
             shot("25e-files-text")
             fb_btn("BACK TO THE FOLDER", 15)
+            # F4b: deleted files in a folder of documents
+            fb_wait_row("notes.txt")
+            check("Docs, DELETED off: no deleted file is a row, and the line says two are not shown",
+                  q("!(" + fb_row("old-notes.txt") + ") && !(" + fb_row("lost.jpg") + ")") and "2 deleted not shown" in text("#dk-body"))
+            fb_btn("DELETED", 15, exact=True)
+            check("DELETED on: both are rows, dashed, each tagged DELETED in words beside its kind, sorted in with the live ones",
+                  fb_wait_row("old-notes.txt") and fb_wait_row("lost.jpg")
+                  and q(fb_row("old-notes.txt") + ".classList.contains('gone')") and q(fb_row("lost.jpg") + ".classList.contains('gone')")
+                  and "DELETED" in q(fb_row("old-notes.txt") + ".textContent") and "DELETED" in q(fb_row("lost.jpg") + ".textContent")
+                  and not q(fb_row("notes.txt") + ".classList.contains('gone')") and "DELETED" not in q(fb_row("notes.txt") + ".textContent")
+                  and q("[...document.querySelectorAll('#dk-body .dk-frow b')].map(b => b.textContent)") == ["budget.xlsx", "lost.jpg", "manual.pdf", "notes.txt", "old-notes.txt"])
+            fb_tap("old-notes.txt")
+            check("a deleted text file: the warning first, then what could be read back, and the same BACK",
+                  dk_has("Widget Wars deleted notes", 30) and "DELETED. Read from space the drive has marked free" in text("#dk-body .dk-gonenote")
+                  and "another file's data" in text("#dk-body .dk-gonenote") and not q(BOX_SMALL))
+            shot("27d-files-deleted-text")
+            fb_btn("BACK TO THE FOLDER", 15)
+            fb_tap("lost.jpg")
+            check("a deleted photo the drive cleared (size 0): the warning, and a plain sentence that nothing is left, not a blank page",
+                  dk_has("Nothing to read back", 30) and "DELETED. Read from space" in text("#dk-body .dk-gonenote"))
+            fb_btn("BACK TO THE FOLDER", 15)
+            fb_btn("DELETED", 15, exact=True)
+            check("DELETED off again: the folder is as it was", settles(c, "!(" + fb_row("old-notes.txt") + ") && !(" + fb_row("lost.jpg") + ")", 15)
+                  and "2 deleted not shown" in text("#dk-body"))
+            # an entry whose inode another file now holds: its name only, never read, never drawn
+            open(f"{T}/flsbin/ghost", "w").close()
+            q("[...document.querySelectorAll('#dk-body .dk-crumbs button')][2].click()")           # the volume's crumb: the root again
+            fb_wait_row("empty")
+            fb_tap("empty")
+            check("a folder whose only entry is deleted and reused: nothing without DELETED, and the line says one is not shown",
+                  settles(c, "document.querySelector('#dk-body .dk-none') !== null", 15) and "1 deleted not shown" in text("#dk-body"))
+            fb_btn("DELETED", 15, exact=True)
+            check("DELETED: the row is tagged DELETED, NAME ONLY, and says in words that only the name is left",
+                  fb_wait_row("ghost.png") and "DELETED, NAME ONLY" in q(fb_row("ghost.png") + ".textContent")
+                  and "only the name is left" in q(fb_row("ghost.png") + ".textContent"))
+            fb_tap("ghost.png")
+            check("tapping it opens nothing: a notice says why, and the folder stays",
+                  settles(c, "!document.querySelector('#toast').classList.contains('hide') && document.querySelector('#toast').textContent.includes('only the name is left')", 10)
+                  and q("document.querySelector('#viewer').classList.contains('hide')") and "empty" in text("#dk-body .dk-crumbs") and q("!!(" + fb_row("ghost.png") + ")"))
+            fb_btn("PHOTOS", 15, exact=True)
+            check("in the grid: a cell with the name and NAME ONLY, and no thumbnail is asked for (it would draw the other file's picture)",
+                  settles(c, "document.querySelectorAll('#dk-body .dk-cell').length === 1", 15)
+                  and "NAME ONLY" in text("#dk-body .dk-cell") and q("[...document.querySelectorAll('#dk-body .dk-cell img')].every(i => !i.getAttribute('src'))"))
+            q("document.querySelector('#dk-body .dk-cell').click()")
+            check("... and tapping the cell opens no viewer", q("document.querySelector('#viewer').classList.contains('hide')"))
+            os.remove(f"{T}/flsbin/ghost")
+            fb_btn("ALL", 15, exact=True)
+            fb_btn("DELETED", 15, exact=True)
+            q("[...document.querySelectorAll('#dk-body .dk-crumbs button')][2].click()")
+            fb_wait_row("Docs")
+            fb_tap("Docs")
+            fb_wait_row("manual.pdf")
             fb_tap("budget.xlsx")
             check("a file with no preview says so, in words", dk_has("no preview for this kind of file", 30))
             fb_btn("BACK TO THE FOLDER", 15)

@@ -2883,7 +2883,26 @@
                 : n >= 1e6 ? Math.round(n / 1e6) + " MB" : (n || 0).toLocaleString("en-US") + " bytes";
   const exact = n => (n || 0).toLocaleString("en-US") + " bytes";
   const base = p => String(p || "").split("/").pop();
-  const driveName = i => `${(i || {}).vendor || ""} ${(i || {}).model || ""}`.trim() || "a drive with no name";
+  // A card on the dock's IDE side reaches us with each pair of bytes in its INQUIRY swapped, the order ATA's IDENTIFY words come in
+  // (SAMSUNG CF/ATA reads ASSMNU G FCA/AT: BRINGUP, Task 0). Shown the right way round only when the vendor, swapped back, is a maker
+  // listed here; anything else stays as the bridge said it. Display only: sameDrive() and every record keep the raw strings.
+  const MAKERS = new Set(["SAMSUNG", "SANDISK", "TRANSCEND", "KINGSTON", "LEXAR", "HITACHI", "TOSHIBA", "MICRON", "APACER", "PNY",
+                          "PRETEC", "VIKING", "DELKIN", "CENTON", "ADATA", "PATRIOT", "SILICON"]);
+  const unswap = s => {
+    s = String(s || "");
+    if (s.length % 2) s += " ";                      // sysfs trims the field's trailing pad, which can leave an odd length
+    let o = "";
+    for (let k = 0; k < s.length; k += 2) o += s[k + 1] + s[k];
+    return o.trim();
+  };
+  const swappedName = i => {
+    const v = (i || {}).vendor || "", m = (i || {}).model || "";
+    return v && MAKERS.has(unswap(v).toUpperCase()) ? {raw: `${v} ${m}`.trim(), vendor: unswap(v), model: unswap(m)} : null;
+  };
+  const driveName = i => {
+    const s = swappedName(i);
+    return s ? `${s.vendor} ${s.model}`.trim() : `${(i || {}).vendor || ""} ${(i || {}).model || ""}`.trim() || "a drive with no name";
+  };
   const sameDrive = (a, b) => ["vendor", "model", "bytes", "logical", "serial"].every(k => (a || {})[k] === (b || {})[k]);
   const stamp = t => {
     if (!t) return "";
@@ -3258,8 +3277,9 @@
   // so health and the HPA's real size are not read. What udev did not keep is "not reported", never a guess.
   const SATA_GBPS = {1: "1.5", 2: "3.0", 3: "6.0"};
   function driveInfoRows(d) {
-    const i = d.identity, n = d.info || {}, rows = [];
+    const i = d.identity, n = d.info || {}, rows = [], sw = swappedName(i);
     const feat = (n.features || []).map(f => f.name + (f.enabled === null ? "" : f.enabled ? " (on)" : " (off)")).join(", ");
+    if (sw) rows.push(["Reported as", `${sw.raw}: the dock hands over each pair of bytes swapped, so the name above is that, turned back`]);
     rows.push(["Serial", i.serial || "none the drive reported"], ["Firmware", n.firmware || "not reported"],
               ["Size", `${exact(i.bytes)} (${(n.sectors || 0).toLocaleString("en-US")} × 512)`],
               ["Sector size", `${i.logical} logical, ${n.physical ? n.physical + " physical" : "physical not reported"}`],

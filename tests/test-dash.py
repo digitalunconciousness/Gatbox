@@ -1542,6 +1542,26 @@ def main():
         small = q(BOX_SMALL)
         check("DRIVE INFO on the 7\": no text under 14 px", not small)
         shot("23j-disk-drive-info")
+        # A CF card on the dock's IDE side arrives with each pair of bytes in its INQUIRY swapped (the Pi, 2026-11-16: ASSMNU G / FCA/AT for
+        # SAMSUNG / CF/ATA). Shown turned back when the vendor is a known maker; display only, so the raw name is on the DRIVE INFO card.
+        FD.usb_disk("sdl", 4 * MiB, "ASSMNU G", "FCA/AT", port=12, devnum="8:176", data=os.urandom(4 * MiB), rotational=False)
+        FD.usb_disk("sdm", 4 * MiB, "QXZW", "YV", port=13, devnum="8:192", data=os.urandom(4 * MiB), rotational=False)
+        FD.usb_disk("sdn", 4 * MiB, "ASSMNU G", "BAC", port=14, devnum="8:208", data=os.urandom(4 * MiB), rotational=False)   # "AB C", whose trimmed pair-swap is odd
+        check("DRIVE INFO: a CF card whose INQUIRY came swapped is named the right way round (SAMSUNG CF/ATA), and says what the dock reported",
+              settles(c, "[...document.querySelectorAll('#dk-body .dk-infocard')].some(c => c.textContent.startsWith('sdl · SAMSUNG CF/ATA'))", 20)
+              and "Reported as" in text("#dk-body") and "ASSMNU G FCA/AT" in text("#dk-body"))
+        check("... a name whose swapped form has an odd length once its pad is trimmed (BAC for AB C) is turned back whole",
+              settles(c, "[...document.querySelectorAll('#dk-body .dk-infocard')].some(c => c.textContent.startsWith('sdn · SAMSUNG AB C'))", 20))
+        check("... a swapped-looking name whose vendor is no known maker stays as the bridge said it, and the real ones are left alone",
+              q("[...document.querySelectorAll('#dk-body .dk-infocard')].some(c => c.textContent.startsWith('sdm · QXZW YV'))")
+              and q("[...document.querySelectorAll('#dk-body .dk-infocard')].some(c => c.textContent.startsWith('sda · WIDGET WIDGETDRIVE 1000'))")
+              and q("[...document.querySelectorAll('#dk-body .dk-infocard')].filter(c => c.textContent.includes('Reported as')).length") == 2)
+        check("... the drive tiles use the same name, never the swapped one",
+              q("[...document.querySelectorAll('#dk-body .dk-drives button')].some(b => b.textContent.includes('SAMSUNG CF/ATA'))")
+              and not q("[...document.querySelectorAll('#dk-body .dk-drives button')].some(b => b.textContent.includes('ASSMNU'))"))
+        FD.unplug("sdl")
+        FD.unplug("sdm")
+        FD.unplug("sdn")
         dk_tap("HIDE DRIVE INFO")
         check("HIDE DRIVE INFO: the cards go", settles(c, "!document.querySelector('#dk-body .dk-infocard')", 5))
         # the CF adapter's power (procedure §2)

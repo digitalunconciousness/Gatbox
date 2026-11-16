@@ -212,7 +212,7 @@ beside `hub.conf`, routing by roster, per-hub state under `/var/lib/gatbox-sync/
 `model_key`, the capability-gated JOB card and `phase`. Design: `docs/plans/2026-10-13-phase8-multi-hub.md`.
 A second hub is live in `hubs.d`; one session each went to its own hub only.
 
-**Phase B (the library on the deck), built 2026-11-03 on `phase-b-library`; on the Pi, seeded, since 2026-11-14 (`library.sqlite` is there), except the manuals job (FIND A MANUAL: the `gatbox-fetch` user, its spool and units), which no bootstrap run installed until 2026-11-16, when it was wired in and is not installed yet:** one SQLite file of games,
+**Phase B (the library on the deck), built 2026-11-03 on `phase-b-library`; on the Pi, seeded, since 2026-11-14 (`library.sqlite` is there). Its manuals job (FIND A MANUAL: the `gatbox-fetch` user, its spool and units) was wired into the bootstrap on 2026-11-16 and installed that day, on the owner's word (she found a manual with it):** one SQLite file of games,
 documents, MAME sets, ROM lists, ROM images and rail limits (`backend/gatboxlib/library.py`, format and vectors in
 `docs/contract/library-v1/`), seeded from the roster and manuals by `gatbox-library seed --plan|--apply` (the plan is
 read by the owner first). The logger never opens it: gatbox-web exports the confirmed limits to `library-specs.json`.
@@ -220,7 +220,7 @@ LIBRARY replaces MANUALS on the 7" (games, MISSING, ADD/EDIT, title search over 
 FIND A MANUAL through a spool job). An unseeded deck behaves as before. Spec `docs/plans/2026-11-03-phase-b-library.md`;
 the manuals job's install diff is in BRINGUP.md and in the PR that wired it into the bootstrap.
 
-**Phase D (the archive), D1 to D7 built 2026-11-04 on `phase-d-archive` (stacked on `phase-b-library`), not installed:**
+**Phase D (the archive), D1 to D7 built 2026-11-04 on `phase-d-archive` (stacked on `phase-b-library`). The deck's side of D3 is installed (`/etc/gatbox/archive.conf` is on the Pi, 2026-11-16); whether an archive is set up is not known (the file is made empty, and only root reads it); the ROM-list job for games added after the seed (`gatbox-mame-roms.path`) is not installed and not in the bootstrap:**
 `archive/` is a stdlib server in its own Debian 13 container (the deck's own `library.py` plus a content-addressed file
 store, `backend/gatboxlib/filestore.py`), reached through a Cloudflare tunnel with Access in front, with phone pages for
 her partner (games, manuals and a PDF viewer, limits that arrive unconfirmed, facts, upload, add and edit). `gatbox-sync` syncs

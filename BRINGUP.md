@@ -842,7 +842,9 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4
-  - [ ] Task 4 ⏸ (built 2026-11-14, **not installed**: the owner reads this diff first, hard rule 5, then runs the bootstrap):
+  - [x] Task 4 (built 2026-11-14 and **installed on the Pi that day**: the owner ran the bootstrap. Seen again 2026-11-16: the Pi's unit list has
+        `gatbox-disk.path` enabled and `gatbox-disk.service`, `systemctl status gatbox-disk.service` showed the job running, and its status file said
+        RESTORE). The diff was:
         the user `gatbox-disk` (its own group is the devices' group) and the group `gatbox-disk-queue` (sysusers); the spool
         `/var/spool/gatbox-disk` 2770 and the store's bare mountpoint (tmpfiles; its mode and owner are `-` so a mounted drive's
         root is never reset); `/etc/gatbox/disks.conf` created empty; the udev rule `98-gatbox-disk.rules` (whole disks with
@@ -874,7 +876,8 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         change. `test-disk.sh`: 160 (the whole bar captured in-process, monotonic, with the ranges above); each of 7 breakages fails a test.
         **Not on real media yet:** the bar's proportions are a guess from bytes (a write to an old IDE disk may take longer than its
         read-backs); the first real WRITE shows how far off.
-  - [ ] The store drive ⏸ (the owner runs it, at the Pi): `sudo bash docs/plans/2026-11-02-disk-imaging-store.sh /dev/sdX` ERASES
+  - [x] The store drive (**done by 2026-11-15**: the 4 TB drive is the image store, mounted at `/srv/gatbox/disks`; READs, a WRITE and a RESTORE
+        have used it, and `/etc/gatbox/disks.conf` is in the owner's listing of 2026-11-16). `sudo bash docs/plans/2026-11-02-disk-imaging-store.sh /dev/sdX` ERASES
         the drive it names, makes one GPT ext4 partition (`-m 0`, `largefile4`), puts the marker and the queue group on its
         root and writes its UUID to `/etc/gatbox/disks.conf`; then the bootstrap writes and starts the mount unit. It refuses a
         non-`/dev/sdX` name, anything not behind USB, a mounted drive, anything under 1 TB (the 80 GB donor is not the store), a
@@ -998,8 +1001,9 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         30a–30d); each guard broken on purpose fails a test. The real archive.org's search and item listing were read
         once to confirm the shapes; no download was made from here. The unit files `backend/gatbox-manuals.path` and
         `.service` are in the repo marked NOT INSTALLED: the bootstrap doesn't touch them yet
-  - [x] ⏸ Install diff for FIND A MANUAL: **made 2026-11-16** (the owner: "a find a manual button would be great"), in the bootstrap, **not installed**;
-        she reads it in the PR (hard rule 5) and runs the bootstrap. Items 1 to 4 below are exactly what was added (plus the manifest lines for the two
+  - [x] ⏸ Install diff for FIND A MANUAL: **made 2026-11-16** (the owner: "a find a manual button would be great"), in the bootstrap; **installed the same day,
+        on the owner's word** (after the PR merged she reported finding a manual with it; no unit list from after the install is on record).
+        She read it in the PR (hard rule 5) and ran the bootstrap. Items 1 to 4 below are exactly what was added (plus the manifest lines for the two
         units, `svc gatbox-manuals.path`, and the `--check` lines for the user, the spool and the enable); item 5 was already in. The Pi's unit list on
         2026-11-16 showed none of it (no `gatbox-manuals.*` unit, no `gatbox-fetch` user), while `library.sqlite` was there, seeded 2026-11-14.
         `test-bootstrap.sh`: 160; 9 breakages of the wiring each fail a test. One review, in this order:
@@ -1028,7 +1032,9 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         group-writable whatever the umask (`_share`, and a 0644 file its owner opens again is mended), and tmpfiles gets
         `z /srv/gatbox/library/library.sqlite* 0664 - gatbox-manuals -`, which mends the files that exist now when the bootstrap
         next runs (and at each boot). **System config: the owner reads that one line before running the bootstrap (hard rule 5).**
-  - [ ] ⏸ Owner: review the seed plan after B2; see the install diff before anything is installed
+  - [x] Owner: the seed is applied. `library.sqlite` is on the Pi (2,093,056 bytes, written 2026-11-14, in the owner's listing of 2026-11-16), so
+        `gatbox-library seed --apply` ran after the install. Ticked from that file, not from memory (the owner, 2026-11-16: "I don't know what
+        pause steps I actually ran"); whether the plan was read first is not recorded.
 - **Phase D, the archive (branch `phase-d-archive`, stacked on `phase-b-library`, from 2026-11-04):** spec
   `docs/plans/2026-11-04-phase-d-archive.md`, approved by the owner ("OK as written"; it covers the code and the push,
   merging, installing and everything on Proxmox and Cloudflare stay hers). Repo-only: nothing installed on the deck
@@ -1073,13 +1079,18 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         logger's export drops it at once. `status.json` has a `library` block (pending, conflicts, `identical` by a
         revision-free content digest). `test-libsync.sh` 48, `test-sync-library.sh` 39 (real archive, real gatbox-web,
         real gatbox-sync), `test-library.sh` 61, `test-sync.sh` 137 unchanged; 22 of 22 guards broken on purpose fail a test (four first went uncaught and got tests)
-  - [ ] ⏸ Owner: the D3 install diff (system config, rule 5; nothing is applied until she says). In `bootstrap/gatbox-bootstrap.sh`'s
+  - [x] Owner: the D3 install diff is **installed**: `/etc/gatbox/archive.conf` is on the Pi (the owner's `sudo ls /etc/gatbox`, 2026-11-16:
+        `archive.conf  disks.conf  hub.conf  hubs.d`), and only this diff's tmpfiles line creates that file, so a bootstrap run has applied it;
+        `gatbox-sync.timer` is enabled in the same day's unit list. The diff was (system config, rule 5). In `bootstrap/gatbox-bootstrap.sh`'s
         MANIFEST: `gatboxlib/filestore.py`, `gatboxlib/libsync.py`, `gatboxweb/libsync_api.py` (gatbox-web restarts when it
         installs them). In `bootstrap/files/tmpfiles-gatbox.conf`: `f /etc/gatbox/archive.conf 0600 root root -` (empty, like
         hub.conf, because a missing credential file fails the unit). In `backend/gatbox-sync.service`:
         `ConditionFileNotEmpty=|/etc/gatbox/archive.conf` (the job also runs when only an archive is set up) and
         `LoadCredential=archive:/etc/gatbox/archive.conf`. `bash bootstrap/gatbox-bootstrap.sh --check` lists exactly these
-  - [ ] ⏸ Owner: run `archive/RUNBOOK.md` when D3 is shown and she wants it
+  - [ ] ⏸ Owner: run `archive/RUNBOOK.md` when D3 is shown and she wants it. **Not known, 2026-11-16:** `archive.conf` is there, but the bootstrap makes
+        it empty and only root can read it, so its presence says nothing about an archive. On the Pi,
+        `sudo test -s /etc/gatbox/archive.conf && echo SET || echo EMPTY` says which (it prints one word and nothing from the file); with SET, the
+        7″'s SYSTEM tile says when the library last synced.
   - [x] D4, on the 7" and the rest of the deck's side (built 2026-11-04, not installed). **LIBRARY → CONFLICTS**: each conflict
         the sync kept (`state/library/conflicts.json`) as BEFORE / THIS DECK / THE ARCHIVE, the fields that differ lit and each
         side's change named in words too (CHANGED), a removal said as one (THE ARCHIVE REMOVED IT), the deck side as the library
@@ -1095,7 +1106,9 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         within a day) and `gatbox-mame-roms --job` answers from MAME's driver list, hashes only, no network; gatbox-web makes
         the game's `rom_list` (create-only). `test-library-web.sh` 121, `test-libsync.sh` 50, `test-sync-library.sh` 42,
         `test-mame.sh` 37, `test-dash.sh` 164 (needs matplotlib: run here in a venv; screenshots 31a-31f, 32a-32b); 15 of 15 guards broken on purpose fail a test (one first went uncaught and got a stricter test)
-  - [ ] ⏸ Owner: the D4 install diff (shown first; the two new units are in the repo marked NOT INSTALLED). 1.
+  - [ ] ⏸ Owner: the D4 install diff. **Not installed, 2026-11-16:** the Pi's unit list has no `gatbox-mame-roms` unit, and no bootstrap run can
+        install one yet: steps 1 to 4 below are not in the bootstrap (the same gap FIND A MANUAL had until 2026-11-16). Say the word and they
+        are wired in as one diff to read. (Shown first; the two new units are in the repo marked NOT INSTALLED.) 1.
         `bootstrap/files/sysusers-gatbox.conf`: `g gatbox-mame -` (the chip-list spool's group). 2. `bootstrap/files/tmpfiles-gatbox.conf`:
         `d /var/spool/gatbox-mame 2770 root gatbox-mame -`. 3. `gatbox-web.service`: `SupplementaryGroups=gatbox-mame` and
         `ReadWritePaths=-/var/spool/gatbox-mame` (it writes a request and reads the answer, nothing else). 4. New units

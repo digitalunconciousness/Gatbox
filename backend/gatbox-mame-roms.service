@@ -1,5 +1,4 @@
-# NOT INSTALLED YET: this is the repo copy for review. The bootstrap doesn't install it until the owner has seen the diff
-# (BRINGUP.md, phase D4) and said yes.
+# Installed by gatbox-bootstrap.sh (phase D4: ROM lists for games added to the library after the seed).
 [Unit]
 Description=GATBOX chip-list job (the library's games added after the seed; gatbox-mame-roms.path starts it)
 

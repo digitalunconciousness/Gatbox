@@ -1179,9 +1179,10 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         within a day) and `gatbox-mame-roms --job` answers from MAME's driver list, hashes only, no network; gatbox-web makes
         the game's `rom_list` (create-only). `test-library-web.sh` 121, `test-libsync.sh` 50, `test-sync-library.sh` 42,
         `test-mame.sh` 37, `test-dash.sh` 164 (needs matplotlib: run here in a venv; screenshots 31a-31f, 32a-32b); 15 of 15 guards broken on purpose fail a test (one first went uncaught and got a stricter test)
-  - [ ] ⏸ Owner: the D4 install diff. **Not installed, 2026-11-16:** the Pi's unit list has no `gatbox-mame-roms` unit, and no bootstrap run can
-        install one yet: steps 1 to 4 below are not in the bootstrap (the same gap FIND A MANUAL had until 2026-11-16). Say the word and they
-        are wired in as one diff to read. (Shown first; the two new units are in the repo marked NOT INSTALLED.) 1.
+  - [ ] ⏸ Owner: the D4 install diff. **Wired into the bootstrap 2026-11-16** (the owner: "wire in the ROM-list job"), not installed:
+        read the PR, then run the bootstrap. Items 1 to 4 below are now in it, plus the manifest lines for the two units,
+        `svc gatbox-mame-roms.path`, and the `--check` lines for the group, the spool and the enable; the units lost their NOT INSTALLED
+        header. `test-bootstrap.sh`: 172. Before that the unit list on the Pi had no `gatbox-mame-roms` unit. 1.
         `bootstrap/files/sysusers-gatbox.conf`: `g gatbox-mame -` (the chip-list spool's group). 2. `bootstrap/files/tmpfiles-gatbox.conf`:
         `d /var/spool/gatbox-mame 2770 root gatbox-mame -`. 3. `gatbox-web.service`: `SupplementaryGroups=gatbox-mame` and
         `ReadWritePaths=-/var/spool/gatbox-mame` (it writes a request and reads the answer, nothing else). 4. New units

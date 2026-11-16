@@ -42,6 +42,23 @@ MANIFEST = "_export.json"
 RECENT = 8
 
 
+_umask_lock = threading.Lock()
+
+
+def mkdir_shared(path):
+    """A new folder the owner's group can use: mode 0775, and its group and setgid bit come from its parent (the unit makes _exports
+    2775, so every folder made in it is setgid and in the spool's group). Done with the umask, not with a chmod: the browser's unit has
+    RestrictSUIDSGID=yes, which refuses any chmod that names the setgid bit, and a copy made with `chmod 2775` left every folder 0700
+    and unreadable to the owner (seen on the Pi, 2026-11-15; outside the sandbox nothing refuses it). The umask is process-wide; it is
+    cleared for this one mkdir, and everything else this service creates is inside _browse (0700) or its private /tmp."""
+    with _umask_lock:
+        old = os.umask(0)
+        try:
+            os.mkdir(path, 0o775)
+        finally:
+            os.umask(old)
+
+
 class Cancelled(Exception):
     pass
 
@@ -230,10 +247,12 @@ class Exporter:
 
     @staticmethod
     def _chmod(path, mode):
+        """Set a file's mode, and stop the copy when it cannot be set: a copy the owner cannot read is not a copy (this used to be
+        swallowed, which hid the setgid failure the unit's RestrictSUIDSGID caused)."""
         try:
             os.chmod(path, mode)
-        except OSError:
-            pass
+        except OSError as e:
+            raise Fatal(f"could not set the permissions on a copied file ({e.strerror}): the copy is not usable") from None
 
     def _make_dest(self, job):
         base = f"{time.strftime('%Y%m%d-%H%M%S')}_{safe_name(job['label'])}_{job['name']}"[:120].rstrip(". ")
@@ -243,10 +262,9 @@ class Exporter:
             if os.path.exists(os.path.join(EXPORTS, name)):
                 continue
             try:
-                os.mkdir(dest, 0o775)
+                mkdir_shared(dest)
             except FileExistsError:
                 continue
-            self._chmod(dest, 0o2775)
             return dest
         raise Fatal("could not find a free name for this copy")
 
@@ -301,8 +319,7 @@ class Exporter:
             pkey = "/".join(parts[:-1])
             name = unique(taken.setdefault(pkey, set()), safe_name(parts[-1]))
             path = os.path.join(parent, name)
-            os.mkdir(path, 0o775)
-            self._chmod(path, 0o2775)
+            mkdir_shared(path)
             dirmap[key] = path
             taken.setdefault(key, set())
             return path

@@ -676,7 +676,7 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           `test-browse.sh`: 63 (invented ext4, FAT32 and swap behind DOS tables; every limit; hung tools killed; paths out of the
           store; the daemon over a real socket), `test-bootstrap.sh`: 142 (the units pass `systemd-analyze verify`), `test-disk.sh`: 142,
           `test-dash.sh`: 255, with the whole FILES flow in headless Chromium at 1024x600. Screenshots 25a to 25g (in a test run's folder).
-    - [ ] F1 install ⏸ (the owner reads this diff first, hard rule 5, then runs the bootstrap): sysusers `u gatbox-browse`;
+    - [x] F1 install ⏸ **done** (the owner ran the bootstrap from main, 16341a0, at the Pi on 2026-11-15; see "Installed on the Pi" below). It was: (the owner reads this diff first, hard rule 5, then runs the bootstrap): sysusers `u gatbox-browse`;
           `gatbox-browse.socket` and `gatbox-browse.service` (units, in the MANIFEST and `svc`); `gatbox-web.service` gains
           `SupplementaryGroups=gatbox-browse`; `/usr/local/bin/gatbox-browse` and `gatboxlib/browse.py`; `--check` names the new
           socket. Nothing in udev, `/boot` or `/etc/gatbox`. **The unit's sandbox has not run on a real Pi**, only
@@ -759,6 +759,21 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           job with its own user after all, say so. Your reading of hard rule 6 (2026-11-15) is recorded in CLAUDE.md, in the rule's own list of decisions.
           `test-browse-copy.sh`: 38, `test-browse.sh`: 87, `test-bootstrap.sh`: 148, `test-dash.sh`: 326. **Not on a real drive yet:** a large folder, and copy speed
           from an image over USB (F3's rates apply: 6 to 11 MB/s for big files). Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
+    - [x] Installed on the Pi, 2026-11-15 (the owner, from main 16341a0; the output was pasted into the session). The run changed **10 files, all the
+          drive browser's**: `gatbox-browse.service`, `gatbox-browse`, `browse.py`, `browseindex.py`, `browsecopy.py`, gatbox-web's `server.py` and
+          `browse.py`, and the dashboard's `index.html`, `dash.css` and `dash.js`. So F1 to F3b were already installed, and nothing else was pending:
+          the library, hub-sending and archive-sync files (Phases B, C and D) were already current. The logger was left running (up to date);
+          `gatbox-web` and `gatbox-disk.path` restarted; `gatbox-browse.socket` is listening; `/run/gatbox-browse` is `root:root` 0755; `_browse` is
+          `gatbox-browse:gatbox-browse` 0700 and `_exports` is `gatbox-browse:gatbox-disk-queue` 2775, as the unit makes them. The service ran under its
+          sandbox (the journal shows its requests) and a first COPY TO THE STORE completed. **Open from that run:** `dmesg` shows
+          `usb 1-2: reset high-speed USB device` at 5786 s, 5847 s and 7140 s of uptime, not yet placed against what was being done.
+    - [x] F4d fix found by that run (2026-11-15): the finished copy's folder was **unreadable to the owner** (`Permission denied`). The unit has
+          `RestrictSUIDSGID=yes`, which refuses any chmod that names the setgid bit; the copy asked for `chmod 2775` on each folder it made and
+          swallowed the refusal, leaving the folders 0700 (the service's umask is 0077). Outside the sandbox nothing refuses it, so no test saw it.
+          Now the folders are made with the umask cleared for that one `mkdir` (0775; the setgid bit and the group come from `_exports`, which is
+          2775), and a file whose mode cannot be set stops the copy with a sentence instead of being ignored. `test-browse-copy.sh`: 41, with the
+          sandbox's refusal emulated; 3 breakages fail a test (a fourth is equivalent). A copy made before the fix is 0700 and needs `sudo` to read
+          or delete, once.
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4

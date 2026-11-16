@@ -1084,6 +1084,7 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("GET", r"/api/browse/preview", _browse("/preview")),
     ("GET", r"/api/browse/thumb", _browse("/thumb")),
     ("GET", r"/api/browse/search", _browse("/search")),
+    ("GET", r"/api/browse/duplicates", _browse("/duplicates")),
     ("GET", r"/api/browse/locate", _browse("/locate")),
     ("GET", r"/api/browse/index", _browse("/index")),
     ("POST", r"/api/browse/index", _browse_post("/index")),

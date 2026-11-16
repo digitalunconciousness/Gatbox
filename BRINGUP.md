@@ -736,7 +736,15 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           FAT keeps no first letter for a deleted short name (`a.txt` comes back as `_.txt`) and the row says so. Also fixed: the volume
           label entry on FAT was counted as a file by COUNT WHAT'S ON IT. `test-browse-deleted.sh`: 32. No system config. **Not on a real
           drive yet:** a real NTFS volume and a card from a camera, where recovery is most likely to work.
-    - [ ] F4c (possible duplicates from names and sizes) and F4d (COPY TO THE STORE) are next. Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
+    - [x] F4c built, 2026-11-15, **not installed**: possible duplicates from the name index alone (`browseindex.duplicates`, `/api/browse/duplicates`;
+          DUPLICATES on ALL IMAGES). Files with the same name (capitals ignored) and exactly the same size, across every image whose names are
+          indexed, the groups wasting the most space first, with where each copy is (a tap is SHOW IN FOLDER). Nothing is read from an image and
+          nothing is hashed, so the screen says "possible": two different files can match, and a copy under another name is not found. Files under 4 KB are left out, and there
+          is a minimum-size chooser (4 KB, 1 MB, 10 MB up) and a kind chooser. A comparison that takes over 30 s is stopped in words, and a disk job holds it back.
+          Nothing here can delete anything. `test-browse-duplicates.sh`: 32, `test-dash.sh`: 311. No system config, no schema change (no re-index). Hashing the candidates on a tap is
+          not built (the note's §5 step 2). Also fixed: a stale answer to an earlier tap could overwrite a newer one in the search and the folder list (the new
+          screen showed it as a flaky check); the three now ignore a response a newer request has replaced.
+    - [ ] F4d (COPY TO THE STORE) is next. Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4

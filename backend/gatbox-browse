@@ -12,7 +12,7 @@ store's current mounts. Run by hand (tests), it makes its own socket at --socket
 
     gatbox-browse [--socket PATH] [--idle SECONDS] [--exit-when-store-missing]
 
-Routes (GET, JSON unless noted): /volumes /ls /stats /info /text, /preview (image/jpeg), /search /locate /index, /ping. The one
+Routes (GET, JSON unless noted): /volumes /ls /stats /info /text, /preview and /thumb (image/jpeg), /search /duplicates /locate /index, /ping. The one
 POST is /index (start, stop or remove an image's name index). An error is {"error": "a sentence for the screen"} with an
 HTTP code. It stays running while an index pass or a count has work to do.
 """
@@ -62,6 +62,10 @@ def route_search(q):
     return X.search(q1(q, "q"), q1(q, "kind") or "all", q1(q, "year"), q1(q, "min"), q1(q, "max"), q1(q, "page") or 0, scope=q1(q, "in") or "names")
 
 
+def route_duplicates(q):
+    return X.duplicates(q1(q, "min"), q1(q, "kind") or "all", q1(q, "page") or 0)
+
+
 def route_locate(q):
     return X.locate(q1(q, "id"))
 
@@ -103,7 +107,7 @@ def route_thumb(q):
 
 
 ROUTES = {"/thumb": route_thumb, "/volumes": route_volumes, "/ls": route_ls, "/stats": route_stats, "/info": route_info, "/text": route_text,
-          "/preview": route_preview, "/search": route_search, "/locate": route_locate, "/index": route_index,
+          "/preview": route_preview, "/search": route_search, "/duplicates": route_duplicates, "/locate": route_locate, "/index": route_index,
           "/ping": lambda q: {"ok": True}}
 POSTS = {"/index": post_index}
 

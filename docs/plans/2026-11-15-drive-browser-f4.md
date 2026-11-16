@@ -117,6 +117,12 @@ background, standing still for a disk job. The screen must never offer to delete
 (2) a hash pass on the candidates only, on a tap. Worth doing once she has two overlapping drives (it would be most useful for
 her photo and document drives); not before.
 
+**Built as F4c (2026-11-15), step 1 only.** `browseindex.duplicates`: the same name (capitals ignored, ASCII only: SQLite's `lower()`) and exactly the
+same size among every volume whose names are indexed, files of 4 KB or more (smaller ones are mostly the same icon or empty setting), the groups
+with the most space in extra copies first, up to 1,000 groups, 20 to a page, 12 places listed for a group. One scan of the index grouped by name and
+size, with no new database index and so no re-index: stopped after 30 seconds, in words, if the index is very large. It says "possible" because
+nothing is read: the test has two different files with the same name and size, and they are offered. Step 2 (hashing the candidates on a tap) is not built.
+
 ## 6. Copying files out
 
 **What it is.** Getting a file from an image to somewhere else: a USB stick, her phone, another machine.

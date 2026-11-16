@@ -102,6 +102,9 @@
   waits). F4b is built: a DELETED toggle on the folder view. On images where files were really deleted, a deleted FAT file reads back
   byte for byte, until something is written over its space; a cleared ext4 inode reads back empty; FAT keeps no first letter for a deleted
   short name. So a deleted row is dashed and tagged in words, and opening one says it may be incomplete or another file's data.
+- F4c is built: DUPLICATES on ALL IMAGES lists files with the same name and exactly the same size across the indexed images, the most wasted
+  space first, from the name index alone. Nothing is read, so it says "possible": two different files can match, and a copy under another name
+  is not found. The test image has a pair like that on purpose.
 - Not done: a first READ from the 7″ and any WRITE on real media; the hidden-area question; the cab-side checks in
   the procedure's 5.4 are the owner's. Task 3 (the MAME check on an image) still waits on a `chdman` output. The deck
   does not record the device letter, the two hash passes with their times, or a write's time and speed, so those lines of

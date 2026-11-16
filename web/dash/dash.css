@@ -448,6 +448,11 @@ html.box .vw-top button{min-height:56px;min-width:64px}
 button.dk-frow.hit{border-color:var(--mag);box-shadow:0 0 10px rgba(255,46,159,.35) inset}
 .dk-snip{margin:2px 0;color:var(--text)}
 .dk-snip .hl{color:var(--cyan)}
+/* FILES: possible duplicates (F4c): a group's name, then each place it is */
+.dk-gh{margin:14px 0 2px}
+.dk-gh b{font:600 17px/1.2 var(--disp);overflow-wrap:anywhere}
+button.dk-mem,.dk-mem{margin-left:14px}
+button.dk-mem{width:calc(100% - 14px)}
 /* FILES: thumbnails under the PHOTOS filter (F4) */
 .dk-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:8px 0}
 button.dk-cell{display:flex;flex-direction:column;align-items:stretch;padding:6px;min-height:150px;text-align:left}

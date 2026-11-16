@@ -1617,6 +1617,13 @@ def main():
             _Img.new("RGB", (240, 160), (30, 160, 60)).save(f"{ftree}/Photos/2019/old.png")
             open(f"{ftree}/Docs/old-notes.txt", "w").write("Widget Wars deleted notes\n" * 40)
             _Img.effect_noise((300, 200), 60).convert("RGB").save(f"{ftree}/Docs/lost.jpg", "JPEG", quality=85)
+            # files that may be copies of each other (F4c), under names no other check looks for: a photo twice (the same bytes), and a
+            # 2 MB file twice (the same name and size, different bytes: possible, not certain)
+            os.makedirs(f"{ftree}/Copies/Sub")
+            _Img.effect_noise((320, 240), 60).convert("RGB").save(f"{ftree}/Copies/zeta.jpg", "JPEG", quality=85)
+            shutil.copy(f"{ftree}/Copies/zeta.jpg", f"{ftree}/Copies/Sub/zeta.jpg")
+            open(f"{ftree}/Copies/zeta.dat", "wb").write(os.urandom(2 * MiB))
+            open(f"{ftree}/Copies/Sub/zeta.dat", "wb").write(os.urandom(2 * MiB))
             fimg = f"{T}/fimg.img"
             fakeimage.ext4_image(fimg, ftree)
             fakeimage.ext4_delete(fimg, "/Photos/2019/old.png", offset_sectors=2048)
@@ -1915,6 +1922,45 @@ def main():
                   settles(c, "!document.querySelector('#viewer').classList.contains('hide') && document.querySelector('#vw-img').complete && document.querySelector('#vw-img').naturalWidth > 0", 40))
             q("document.querySelector('#vw-close').click()")
             check("... the results, not the folder", dk_has("FIND: IMG", 15) and q("!!document.querySelector('#dk-body .dk-hit')"))
+            fb_btn("ALL IMAGES", 15, exact=True)
+            # F4c: possible duplicates, from the names in the index (this image is indexed here; two others in the store are not)
+            check("ALL IMAGES has a DUPLICATES button beside SEARCH", q("[...document.querySelectorAll('#dk-body .btnrow button')].map(b => b.textContent)").count("DUPLICATES") == 1)
+            fb_btn("DUPLICATES", 15, exact=True)
+            check("DUPLICATES: it says what it is, in words: the same name and size, nothing read, so only POSSIBLE, and that nothing here deletes",
+                  dk_has("Possible duplicates", 25) and "only possible duplicates" in text("#dk-body") and "Nothing is read to compare them" in text("#dk-body")
+                  and "a copy under another name is not found" in text("#dk-body") and "Nothing here can delete anything" in text("#dk-body"))
+            fb_btn("4 KB UP", 15, exact=True)
+            gh = "[...document.querySelectorAll('#dk-body .dk-gh b')].map(b => b.textContent)"
+            check("4 KB UP: the two groups, each with its name, tag, how many copies, the size of each and the space the extras take",
+                  settles(c, f"{gh}.length === 2", 20) and sorted(q(gh)) == ["zeta.dat", "zeta.jpg"]
+                  and "2 copies" in text("#dk-body .dk-gh") and "extra" in text("#dk-body .dk-gh"))
+            check("... the line says how many groups, how much is in the extra copies, and that only 1 of 3 images was compared and why the others were not",
+                  "2 groups" in text("#dk-body") and "in extra copies" in text("#dk-body") and "compared 1 of 3 images" in text("#dk-body")
+                  and "INDEX it on ALL IMAGES" in text("#dk-body"))
+            check("... each group lists where its copies are (path, image, volume), and a big file and a photo are not mixed up",
+                  sorted(q("[...document.querySelectorAll('#dk-body .dk-mem .dk-path')].map(p => p.textContent)")) == ["Copies/Sub/zeta.dat", "Copies/Sub/zeta.jpg", "Copies/zeta.dat", "Copies/zeta.jpg"]
+                  and "BROWSE-EXT" in text("#dk-body .dk-mem"))
+            check("... on the 7\": no text under 14 px, a place is as tall as a finger, nothing wider than the screen, and each filter label is on one line",
+                  not q(BOX_SMALL) and q("[...document.querySelectorAll('#dk-body button.dk-mem')].every(b => b.getBoundingClientRect().height >= 55.5)")
+                  and q("document.querySelector('#dk-body').scrollWidth <= document.querySelector('#dk-body').clientWidth + 1")
+                  and q("""[...document.querySelectorAll('#dk-body .seg button')].every(x => { const g = document.createRange(); g.selectNodeContents(x); return g.getClientRects().length === 1; })"""))
+            shot("28a-files-duplicates")
+            fb_btn("PHOTOS", 15, exact=True)
+            check("PHOTOS: only the photo's group", settles(c, f"{gh}.length === 1 && {gh}[0] === 'zeta.jpg'", 20))
+            fb_btn("OTHER", 15, exact=True)
+            check("OTHER: only the big file's group", settles(c, f"{gh}.length === 1 && {gh}[0] === 'zeta.dat'", 20))
+            fb_btn("DOCS", 15, exact=True)
+            check("DOCS: no groups, said plainly", settles(c, f"{gh}.length === 0 && document.querySelector('#dk-body').textContent.includes('No groups')", 20))
+            fb_btn("ALL", 15, exact=True)
+            check("ALL again: both groups are back", settles(c, f"{gh}.length === 2", 20))
+            fb_btn("10 MB UP", 15, exact=True)
+            check("10 MB UP: nothing is that big, and it says so", settles(c, f"{gh}.length === 0 && document.querySelector('#dk-body').textContent.includes('No groups')", 20))
+            fb_btn("1 MB UP", 15, exact=True)
+            check("1 MB UP: the 2 MB file only (the photo is far under 1 MB)", settles(c, f"{gh}.length === 1 && {gh}[0] === 'zeta.dat'", 20))
+            q("[...document.querySelectorAll('#dk-body button.dk-mem')].find(b => b.querySelector('.dk-path').textContent === 'Copies/Sub/zeta.dat').click()")
+            check("a place is a SHOW IN FOLDER: the folder it is in (Copies / Sub), on the page that holds it, with the row marked",
+                  settles(c, "!![...document.querySelectorAll('#dk-body .dk-frow.hit')].find(b => b.querySelector('b').textContent === 'zeta.dat')", 25)
+                  and "Copies" in text("#dk-body .dk-crumbs") and "Sub" in text("#dk-body .dk-crumbs"))
             fb_btn("ALL IMAGES", 15, exact=True)
             q("document.querySelector('#dk-body button.dk-idx').click()")
             check("tap to remove: this image's names and its text are gone (the first row, not just any: the others were never indexed)",

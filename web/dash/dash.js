@@ -2870,7 +2870,7 @@
              ackFor: null, holding: false, pending: false, expT: null, info: false, swap: null, rec: null,
              fb: {view: "images", img: null, label: "", vols: null, vol: null, volName: "", path: [], sort: "name", order: "asc", kind: "all", deleted: false,
                   page: 0, ls: null, file: null, info: null, text: null, err: null, busy: null, stats: {}, poll: null,
-                  index: null, ixPoll: null, q: "", scope: "names", skind: "all", syear: null, spage: 0, sres: null, from: null, at: null, hit: null, hitRow: null}};
+                  index: null, ixPoll: null, dmin: 1048576, dkind: "all", dpage: 0, dres: null, q: "", scope: "names", skind: "all", syear: null, spage: 0, sres: null, from: null, at: null, hit: null, hitRow: null}};
   const GB = n => n >= 1e12 ? (n / 1e12).toFixed(2) + " TB" : n >= 1e9 ? (n / 1e9).toFixed(1) + " GB"
                 : n >= 1e6 ? Math.round(n / 1e6) + " MB" : (n || 0).toLocaleString("en-US") + " bytes";
   const exact = n => (n || 0).toLocaleString("en-US") + " bytes";
@@ -3454,8 +3454,10 @@
   async function fbLoad() {
     const at = FB.at;                                                // SHOW IN FOLDER: the page that holds this entry
     FB.at = null;
+    const seq = FB.lseq = (FB.lseq || 0) + 1;
     const r = await fbGo(api("GET", "/api/browse/ls?" + fbQ({image: FB.img, vol: FB.vol, dir: fbDir(), sort: FB.sort, order: FB.order,
                                                             kind: FB.kind, page: FB.page, at, deleted: FB.deleted ? 1 : ""})), "reading the folder…");
+    if (seq !== FB.lseq) return;                                     // a newer look at a folder was asked for while this one was away
     if (r) { FB.ls = r; FB.page = r.page; }
     FB.hit = at && r && r.at ? r.at : null;
     renderDisk();
@@ -3487,9 +3489,20 @@
   }
   async function fbSearch() {
     if (!FB.q) { FB.sres = null; renderDisk(); return; }
+    const seq = FB.sseq = (FB.sseq || 0) + 1;
     const r = await fbGo(api("GET", "/api/browse/search?" + fbQ({q: FB.q, kind: FB.scope === "text" ? "all" : FB.skind, year: FB.syear, page: FB.spage,
                                                                  in: FB.scope === "text" ? "text" : ""})), "searching…");
+    if (seq !== FB.sseq) return;                                       // a newer search was asked for while this one was away: that one answers
     if (r) { FB.sres = r; FB.spage = r.page; }
+    renderDisk();
+  }
+  // POSSIBLE DUPLICATES (F4c): the same name and exactly the same size, from the name index alone. Nothing is read from an image.
+  async function fbDups() {
+    Object.assign(FB, {view: "dups", err: null, from: null});
+    const seq = FB.dseq = (FB.dseq || 0) + 1;
+    const r = await fbGo(api("GET", "/api/browse/duplicates?" + fbQ({min: FB.dmin, kind: FB.dkind, page: FB.dpage})), "comparing the names and sizes…");
+    if (seq !== FB.dseq) return;                                       // a newer look was asked for while this one was away: that one answers
+    if (r) { FB.dres = r; FB.dpage = r.page; }
     renderDisk();
   }
   // a result: its file opens as it does from a folder; a folder result opens that folder
@@ -3561,6 +3574,7 @@
     else if (FB.view === "folder") fbFolder(c);
     else if (FB.view === "file") fbFileView(c);
     else if (FB.view === "search") fbSearchView(c);
+    else if (FB.view === "dups") fbDupsView(c);
     else fbImageList(c);
     return c;
   }
@@ -3603,6 +3617,9 @@
     const bar = el("div", "btnrow"), sb = el("button", "primary", "SEARCH");
     sb.addEventListener("click", fbSearchOpen);
     bar.appendChild(sb);
+    const db = el("button", null, "DUPLICATES");
+    db.addEventListener("click", () => { FB.dpage = 0; fbDups(); });
+    bar.appendChild(db);
     if (states.some(s => s === "none" || s === "error" || s === "partial")) {
       const b = el("button", null, "INDEX ALL");
       b.addEventListener("click", () => fbIndexDo("all"));
@@ -3624,6 +3641,54 @@
           el("div", "mut", `${x.machine} · ${GB(x.bytes)} · ${stamp(x.started)}${x.source ? " · from " + x.source : ""}`));
       r.addEventListener("click", () => fbOpenImage(x));
       add(row, r, fbIdxCell(x), fbTextCell(x));
+      c.appendChild(row);
+    }
+  }
+  function fbDupsView(c) {
+    c.appendChild(add(el("div", "btnrow"), fbBack("ALL IMAGES", fbImages)));
+    c.appendChild(el("h2", null, "Possible duplicates"));
+    c.appendChild(el("div", "mut", "The same name and exactly the same size, in every image that has been indexed. Nothing is read to compare them, so these are only "
+                                   + "possible duplicates: two different files can match, and a copy under another name is not found. Nothing here can delete anything."));
+    const sizes = el("div", "seg"), kinds = el("div", "seg");
+    for (const [n, t] of [[4096, "4 KB UP"], [1048576, "1 MB UP"], [10485760, "10 MB UP"]]) {
+      const b = el("button", FB.dmin === n ? "on" : null, t);
+      b.addEventListener("click", () => { FB.dmin = n; FB.dpage = 0; fbDups(); });
+      sizes.appendChild(b);
+    }
+    for (const [k, t] of [["all", "ALL"], ["photos", "PHOTOS"], ["documents", "DOCS"], ["other", "OTHER"]]) {
+      const b = el("button", FB.dkind === k ? "on" : null, t);
+      b.addEventListener("click", () => { FB.dkind = k; FB.dpage = 0; fbDups(); });
+      kinds.appendChild(b);
+    }
+    c.appendChild(sizes);
+    c.appendChild(kinds);
+    const R = FB.dres;
+    if (!R) return;
+    const cv = R.coverage;
+    c.appendChild(el("div", cv.indexed < cv.images ? "warn" : "mut",
+      `${R.total ? num(R.total) + (R.capped ? "+" : "") : "No"} group${R.total === 1 ? "" : "s"}` + (R.total ? ` · about ${GB(R.waste)} in extra copies` : "")
+      + (R.pages > 1 ? ` · page ${R.page + 1} of ${R.pages}` : "")
+      + ` · compared ${cv.indexed} of ${cv.images} image${cv.images === 1 ? "" : "s"}`
+      + (cv.indexed < cv.images ? ". One that is not indexed is not compared: INDEX it on ALL IMAGES." : ".")));
+    for (const g of R.groups) {
+      const tag = FB_TAG[(g.members[0] || {}).kind];
+      c.appendChild(add(el("div", "dk-gh"), add(el("div", "dk-fn"), el("b", null, g.name), tag ? el("span", "tag " + tag[1], tag[0]) : null),
+                        el("div", "mut", `${g.count} copies · ${GB(g.size)} each · ${GB(g.waste)} extra`)));
+      for (const m of g.members) {
+        const r = el("button", "row dk-frow dk-mem");
+        add(r, el("div", "dk-path", m.path), el("div", "mut", `${m.label} · ${m.volume}${m.mtime ? " · " + stamp(m.mtime) : ""}`));
+        if (m.image) r.addEventListener("click", () => fbShow(m));
+        else { r.disabled = true; r.appendChild(el("div", "warn", "this image is not in the store any more")); }
+        c.appendChild(r);
+      }
+      if (g.more) c.appendChild(el("div", "mut dk-mem", `and ${num(g.more)} more not listed`));
+    }
+    if (R.pages > 1) {
+      const row = el("div", "btnrow"), prev = el("button", null, "◀ PREV"), next = el("button", null, "NEXT ▶");
+      prev.disabled = R.page <= 0; next.disabled = R.page >= R.pages - 1;
+      prev.addEventListener("click", () => { FB.dpage = R.page - 1; fbDups(); });
+      next.addEventListener("click", () => { FB.dpage = R.page + 1; fbDups(); });
+      add(row, prev, next);
       c.appendChild(row);
     }
   }

@@ -166,13 +166,13 @@ M0–M7 done 2026-09-29 (the first real burn from the 7″ that evening); M8 on 
 **Drive browser (FILES on the DISK tab), F1 to F4d built 2026-11-15 and installed on the Pi the same day (main a692799; the unit's sandbox ran, `systemd-analyze security` 0.8 SAFE).** Look inside a stored disk image on the 7" only:
 volumes, folders by inode, counts by kind, photos, PDF pages and text, with nothing mounted. `backend/gatbox-browse` is a
 socket-activated stdlib service (its own user, no network, no devices, the store read-only except its own `_browse` and `_exports` folders, idle exit) that runs sleuthkit
-(`mmls`, `fsstat`, `fls`, `icat`), Pillow and `pdftoppm`; gatbox-web forwards the loopback routes `/api/browse/*` (GETs, and two POSTs: start or stop an image's index, and COPY TO THE STORE) and refuses a
+(`mmls`, `fsstat`, `fls`, `icat`), Pillow and `pdftoppm`; gatbox-web forwards the loopback routes `/api/browse/*` (GETs, and three POSTs: start or stop an image's index, COPY TO THE STORE, and COMPARE, which reads and writes nothing) and refuses a
 phone. `gatboxlib/browse.py` is the logic. It sends nothing to a drive and never changes an image; its one write is a copy into the store's `_exports` folder (F4d, below), so hard rule 6 is unchanged. F2 (an
 index and name search) is built on top (`gatboxlib/browseindex.py`: a disposable SQLite and FTS5 index in `_browse/` on the store, one volume
 per pass, searchable only when whole, standing still for a disk job). F3 (text search inside documents) is built on top: `gatboxlib/browsetext.py` reads the documents (text, HTML, PDF, Office, OpenDocument,
 ePub, and the old Office formats through catdoc) and the index's text phase reads them out of the image one at a time, on its own when the
 estimate is short; F4a (photo thumbnails, a grid under PHOTOS, PREV and NEXT through a folder's photos) and F4b (a DELETED toggle: deleted entries shown dashed
-and tagged, with a warning that what comes back may be incomplete or another file's data, and never indexed) and F4c (possible duplicates from names and sizes, nothing read) and F4d (COPY TO THE STORE: a file or a folder out of an image into `<store>/_exports/<time>_<image>_<name>/`, a new
+and tagged, with a warning that what comes back may be incomplete or another file's data, and never indexed) and F4c (possible duplicates from names and sizes, nothing read; COMPARE then reads one group's copies and checks their SHA-1, writing nothing) and F4d (COPY TO THE STORE: a file or a folder out of an image into `<store>/_exports/<time>_<image>_<name>/`, a new
 folder each time, every file read back from the store and its SHA-1 listed in `_export.json`; it runs inside gatbox-browse, so the system change is two lines in that unit) are built.
 Camera raws (a Nikon NEF, 2026-11-16, not installed): the picture embedded in the file is drawn (`gatboxlib/rawpreview.py`), not tried on a real camera's file yet.
 The owner's answers on F4 (2026-11-15): HEIC is skipped, OCR waits for a drive of scans, and there is no phone (FILES stays on the Pi's own screen);

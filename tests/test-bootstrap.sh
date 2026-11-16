@@ -278,6 +278,8 @@ check "... the exports folder is made by the same line, group-writable by the sp
     'grep -q "install -d -o gatbox-browse -g gatbox-disk-queue -m 2775 /srv/gatbox/disks/_exports" "$BRS" && grep -q "^backend/gatboxlib/browsecopy.py " "$BOOT"'
 check "the camera-raw preview reader is in the manifest: the browser imports it for a NEF, and a missing file would make every photo's thumbnail fail" \
     'grep -q "^backend/gatboxlib/rawpreview.py " "$BOOT"'
+check "the COMPARE module is in the manifest: gatbox-browse imports it at start, and a missing file would stop the whole drive browser, not only COMPARE" \
+    'grep -q "^backend/gatboxlib/browsehash.py " "$BOOT"'
 check "the bootstrap enables and starts the socket, and --check lists it and the user" \
     'grep -q "^svc gatbox-browse.socket" "$BOOT" && grep -q "gatbox-browse.socket; do" "$BOOT" && grep -q "create     user gatbox-browse" "$BOOT"'
 if command -v systemd-analyze >/dev/null 2>&1; then

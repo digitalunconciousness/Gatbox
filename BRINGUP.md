@@ -771,6 +771,19 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           Nothing here can delete anything. `test-browse-duplicates.sh`: 32, `test-dash.sh`: 311. No system config, no schema change (no re-index). Hashing the candidates on a tap is
           not built (the note's §5 step 2). Also fixed: a stale answer to an earlier tap could overwrite a newer one in the search and the folder list (the new
           screen showed it as a flaky check); the three now ignore a response a newer request has replaced.
+    - [x] COMPARE built, 2026-11-16 (the owner approved "hashing the possible duplicates on a tap"), **not installed**: a COMPARE button on each possible
+          duplicate group reads **every copy of that group in full** out of its image (`icat`, the read COPY uses), hashes it (SHA-1) as it goes and says
+          what it found: THE SAME FILE (one SHA-1 for all), NOT THE SAME (each row says which set it belongs to, A, B...), or that some copies could not be read
+          and nothing is proven for them. `gatboxlib/browsehash.py`, run inside `gatbox-browse` (`/hash`, GET for the state and POST to start, stop or dismiss;
+          gatbox-web's `/api/browse/hash`, the Pi's own screen only). **It writes nothing:** no file, no cache, no list; the answer is in the service's memory
+          and on the screen. What keeps it small: one group at a time (at most 12 copies, at most 2 GB read in all, held both on the sizes the screen sends and
+          on what is actually read, so a wrong size cannot get past it); it stands still while a disk job is queued or running, refuses to start while a copy
+          to the store is running, gives up on a read that stalls for 3 minutes, stops when asked, and a file the image will not give up is reported as failed
+          while the rest is still compared. The duplicates screen's wording is changed to match ("Nothing is read to list them... COMPARE reads one group's
+          copies and checks them"). The bootstrap's manifest gains the module (`browsehash.py`, one line; no unit, user or permission changes: the browser's
+          sandbox already allows reading the store and running `icat`). `test-browse-hash.sh`: 28 (new), `test-browse.sh`: 94 (was 88: the route through gatbox-web,
+          the extra key dropped, 403 from a phone), `test-bootstrap.sh`: 162 (was 161: the module is in the manifest), `test-dash.sh`: 339 (was 333: COMPARE's button, its refusal while a disk job is queued, the same-file answer, the 7″ size check, the not-the-same answer with its sets, and OK). **Not seen on the Pi,** and the speed is a guess: about a minute for the 2 GB limit
+          at USB 2 speed from the store. The service exits when idle, so an answer is not kept across a restart: the screen keeps what it was told.
     - [x] F4d built, 2026-11-15, **not installed**: COPY TO THE STORE. A file (COPY TO THE STORE in the file view, or COPY in the photo and PDF viewer) or a folder
           (COPY FOLDER) from an image into `/srv/gatbox/disks/_exports/<time>_<image>_<name>/`: a new folder each time, made as `.partial` and renamed when whole,
           so nothing already there is ever overwritten or mixed with. The screen asks first, then shows how far it is, then where it ended up. Every file is read

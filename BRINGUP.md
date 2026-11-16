@@ -988,7 +988,11 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         30a–30d); each guard broken on purpose fails a test. The real archive.org's search and item listing were read
         once to confirm the shapes; no download was made from here. The unit files `backend/gatbox-manuals.path` and
         `.service` are in the repo marked NOT INSTALLED: the bootstrap doesn't touch them yet
-  - [ ] ⏸ Install diff, shown first (not made yet; nothing here is installed). One review, in this order:
+  - [x] ⏸ Install diff for FIND A MANUAL: **made 2026-11-16** (the owner: "a find a manual button would be great"), in the bootstrap, **not installed**;
+        she reads it in the PR (hard rule 5) and runs the bootstrap. Items 1 to 4 below are exactly what was added (plus the manifest lines for the two
+        units, `svc gatbox-manuals.path`, and the `--check` lines for the user, the spool and the enable); item 5 was already in. The Pi's unit list on
+        2026-11-16 showed none of it (no `gatbox-manuals.*` unit, no `gatbox-fetch` user), while `library.sqlite` was there, seeded 2026-11-14.
+        `test-bootstrap.sh`: 160; 9 breakages of the wiring each fail a test. One review, in this order:
         1. `bootstrap/files/sysusers-gatbox.conf`: `u gatbox-fetch - "GATBOX manuals job" /nonexistent /usr/sbin/nologin`
            and `m gatbox-fetch gatbox-manuals` (the manuals folder is group gatbox-manuals, setgid)
         2. `bootstrap/files/tmpfiles-gatbox.conf`: `d /var/spool/gatbox-manuals 2770 gatbox-fetch gatbox-fetch -` (the

@@ -871,7 +871,7 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         `EARLIER COPIES (n)`, appears whenever there is at least one, and opens a list, newest first: the item's name, when it finished, how many files and
         how big, its folder under `_exports`, and "N files could not be read" when some failed; a `.partial` folder (a copy that was stopped or cut off) is
         listed as UNFINISHED COPY with a dashed border, saying what is in it is partial. Read only: nothing in the list opens, deletes or moves a copy, and
-        it says they are on the store, so the drive goes to another computer to use them. `test-dash.sh`: 333 + the EARLIER COPIES checks (see the PR).
+        it says they are on the store, so the drive goes to another computer to use them. `test-dash.sh`: 338 (was 333: the button with its count, the list with each copy's name, size and folder, the cut-off copy, the 7″ size check, and HIDE).
         **Not seen on the Pi.** The list stops at eight because `recent()` does; older copies are on the store.
   - [x] WRITE shows where it is (2026-11-16, her "Recommended"): the same gap as READ, plus a wrong number. The bar sat at 5% for the whole
         write, the first read-back was drawn at 85% and the second at **100% while it was still reading**. Now the image's own checksum

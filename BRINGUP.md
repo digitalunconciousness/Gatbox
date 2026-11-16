@@ -635,6 +635,16 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       - A CF card on the IDE side: the INQUIRY is the card's own model with its bytes swapped (`ASSMNU G` / `FCA/AT` for
         `SAMSUNG` / `CF/ATA`), there is no serial, and the card is reported removable, so `ata_id` does not run and the identity is
         that INQUIRY. The empty dock is `XinTop XT-U33502` with `Media removed`.
+        - **Shown the right way round on the 7″** (built 2026-11-16, approved with the other small items, **not installed**): `driveName()` in `dash.js`, which every
+          tile, status line and swap step uses, turns the pairs back **only when the swapped-back vendor is one of a short list of makers**
+          (`MAKERS`: SAMSUNG, SANDISK, TRANSCEND, KINGSTON, LEXAR, and a few more); a vendor that is not on the list, and every drive that
+          passed its own IDENTIFY (no vendor at all), stays as the bridge said it. Display only: `sameDrive()`, the sidecars, `writes.jsonl` and
+          the refusal texts keep the raw strings, so no image or proof changes. DRIVE INFO's card gains a "Reported as" row with the raw name,
+          only for a turned-back one. A name whose swapped form is odd in length once its pad is trimmed (`BAC` for `AB C`) is padded back to even first.
+          `test-dash.sh`: 337 (was 333): a swapped CF card is named SAMSUNG CF/ATA on its card and its tile, the odd-length one is turned back whole,
+          a swapped-looking name from no known maker and the plain drives are left alone, and exactly the two turned-back cards say "Reported as".
+          **Not seen on the Pi,** and the list is a list of names I know, not the card's: a card from a maker that is not on it keeps
+          its swapped name until the maker is added.
       - `power/level is deprecated` (2026-11-14) was a read: `udevadm info -a` reads every attribute; it prints once per boot.
       - On 2026-11-05/06 the dock ran SuperSpeed on `4-1`; since then it has been on `1-2`: another socket, not a fallback.
       - First WRITE from the 7" on real media, 2026-11-15: a 65 MB card image onto the WD800JD, armed on the screen, read back
@@ -874,17 +884,6 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         change. `test-disk.sh`: 160 (the whole bar captured in-process, monotonic, with the ranges above); each of 7 breakages fails a test.
         **Not on real media yet:** the bar's proportions are a guess from bytes (a write to an old IDE disk may take longer than its
         read-backs); the first real WRITE shows how far off.
-  - [x] A CF card's name is shown the right way round (2026-11-16, approved with the other small items): on the dock's IDE side the card's INQUIRY
-        arrives with each pair of bytes swapped (`ASSMNU G` / `FCA/AT` for `SAMSUNG` / `CF/ATA`, Task 0). `driveName()` in `dash.js`, which every
-        tile, status line and swap step uses, turns the pairs back **only when the swapped-back vendor is one of a short list of makers**
-        (`MAKERS`: SAMSUNG, SANDISK, TRANSCEND, KINGSTON, LEXAR, and a few more); a vendor that is not on the list, and every drive that
-        passed its own IDENTIFY (no vendor at all), stays as the bridge said it. Display only: `sameDrive()`, the sidecars, `writes.jsonl` and
-        the refusal texts keep the raw strings, so no image or proof changes. DRIVE INFO's card gains a "Reported as" row with the raw name,
-        only for a turned-back one. A name whose swapped form is odd in length once its pad is trimmed (`BAC` for `AB C`) is padded back to even first.
-        `test-dash.sh`: 337 (was 333): a swapped CF card is named SAMSUNG CF/ATA on its card and its tile, the odd-length one is turned back whole,
-        a swapped-looking name from no known maker and the plain drives are left alone, and exactly the two turned-back cards say "Reported as".
-        **Not seen on the Pi,** and the list is a list of names I know, not the card's: a card from a maker that is not on it keeps
-        its swapped name until the maker is added.
   - [ ] The store drive ⏸ (the owner runs it, at the Pi): `sudo bash docs/plans/2026-11-02-disk-imaging-store.sh /dev/sdX` ERASES
         the drive it names, makes one GPT ext4 partition (`-m 0`, `largefile4`), puts the marker and the queue group on its
         root and writes its UUID to `/etc/gatbox/disks.conf`; then the bootstrap writes and starts the mount unit. It refuses a

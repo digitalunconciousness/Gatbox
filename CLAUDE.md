@@ -180,11 +180,13 @@ USB dock or a reader: READ into the image store, TARGET CHECK, WRITE from the 7�
 it), the swap checklist. Spec: `docs/plans/2026-11-02-disk-imaging.md`; progress: BRINGUP.md. `gatbox-disk` (a CLI
 and the job), `gatboxlib/disks.py` and gatbox-web's `/api/disk` + the DISK tab; the units, the udev rule, the sysusers and
 tmpfiles entries and the store's mount unit install with the bootstrap. The 4 TB drive is the image store and is mounted;
-as of 2026-11-15 one real READ has been run from the 7″ (the 80 GB donor drive) and no WRITE has been run on real media. The DISK tab also has DRIVE INFO (what udev kept
+as of 2026-11-15 the 7″ has run a real READ of the 80 GB donor drive, a READ of a 65 MB CF card, and the first WRITE (that card's image onto the donor, read back twice and verified). The DISK tab also has DRIVE INFO (what udev kept
 from the drive's own IDENTIFY, plus sysfs), SWAP (the procedure's steps, ticking themselves from the live drive list), RECORDS
 (the bench procedure's job record) and the CF adapter's +5 V warning. None of them sends anything to a drive. **This dock's
 bridge hangs on SMART and native-max commands and resets the USB device** (`hdparm -N`, smartd's SMART ENABLE: the Pi,
-2026-11-14), so nothing here asks a drive behind it for them; `hdparm -I` works. The store's UUID is site config in
+2026-11-14), so nothing here asks a drive behind it for them; `hdparm -I` works. **A CF-to-IDE adapter on the dock needs one +5 V
+supply:** with the dock's barrel plug in and a second feed on the adapter, only 1 of 6 power-ups came back right (the mechanism is
+not measured; BRINGUP Task 0, 2026-11-15). The store's UUID is site config in
 `/etc/gatbox/disks.conf` (git-ignored territory, like `hub.conf`). Facts about the dock and the store (USB IDs, serials, what
 the bridge passes through) come from Task 0's output, never from a guess.
 `hdparm` and `smartmontools` are installed by the bootstrap, with smartd disabled and hdparm's own udev rule masked

@@ -120,3 +120,9 @@
   tests could not: the copy's folders were 0700 and unreadable to her, because the unit's `RestrictSUIDSGID=yes` refuses the `chmod 2775` the copy asked
   for and the copy swallowed the refusal. Fixed (the folders are made with the umask cleared, and a refused mode now stops the copy) and installed in
   a second run (3 files). The three `usb 1-2` resets in `dmesg` were the dock's, from the night before.
+- **Later that night, at the bench:** a new COPY's folder listed with a plain `ls -l` (the mode fix held). A CF card went on the dock through a
+  CF-to-IDE adapter fed from a USB charger, and the dock stopped coming back after a power cycle. A diagnosis on the Pi (recorded in BRINGUP,
+  Task 0) found the cause in the supplies: with the dock's barrel plug and the adapter's own feed both in, 1 of 6 power-ups came back right;
+  with one supply, every cycle did. No reboot is needed to clear it: pull the barrel plug, the USB cable and the feed. The desktop also mounted
+  the card's partition on every plug-in, because the udev rule covered the disk and not its partitions (fixed in its own PR, not installed). The
+  first WRITE from the 7″ ran: the card's image onto the 80 GB donor, armed on the screen, read back twice and verified.

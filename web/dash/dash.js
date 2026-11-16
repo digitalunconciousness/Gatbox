@@ -2878,7 +2878,7 @@
              ackFor: null, holding: false, pending: false, expT: null, info: false, swap: null, rec: null,
              fb: {view: "images", img: null, label: "", vols: null, vol: null, volName: "", path: [], sort: "name", order: "asc", kind: "all", deleted: false,
                   page: 0, ls: null, file: null, info: null, text: null, err: null, busy: null, stats: {}, poll: null,
-                  index: null, ixPoll: null, earlier: false, dmin: 1048576, dkind: "all", dpage: 0, dres: null, exp: null, expPoll: null, ask: null, q: "", scope: "names", skind: "all", syear: null, spage: 0, sres: null, from: null, at: null, hit: null, hitRow: null}};
+                  index: null, ixPoll: null, dmin: 1048576, dkind: "all", dpage: 0, dres: null, exp: null, expPoll: null, ask: null, q: "", scope: "names", skind: "all", syear: null, spage: 0, sres: null, from: null, at: null, hit: null, hitRow: null}};
   const GB = n => n >= 1e12 ? (n / 1e12).toFixed(2) + " TB" : n >= 1e9 ? (n / 1e9).toFixed(1) + " GB"
                 : n >= 1e6 ? Math.round(n / 1e6) + " MB" : (n || 0).toLocaleString("en-US") + " bytes";
   const exact = n => (n || 0).toLocaleString("en-US") + " bytes";
@@ -3591,6 +3591,7 @@
   }
   // EARLIER COPIES: what is already in the store's _exports folder, newest first (the `recent` the copy's status carries: the latest eight).
   // Read only: nothing here deletes a copy or opens one. A ".partial" folder is a copy that was stopped or cut off.
+  // FB.earlier (the list is open) is not in FB's literal on purpose: it starts undefined, which reads as closed.
   function fbEarlier(c) {
     const r = (FB.exp || {}).recent || [];
     if (!r.length) return;

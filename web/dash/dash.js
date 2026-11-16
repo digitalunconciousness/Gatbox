@@ -3289,7 +3289,9 @@
     add(c, el("h3", null, maybe ? "A CF card in a CF-to-IDE adapter? +5 V ONLY" : "CF ADAPTER: +5 V ONLY"),
         el("div", null, "The adapter's 4-pin header takes +5 V only: red is +5 V, black is ground. The yellow +12 V wire must never reach the card. "
                         + "Molex and floppy plugs run in opposite order, so wire by colour. Meter the plug before the card goes in: about 5.0 V. "
-                        + "These adapters don't take a card hot, so the dock is off while it goes in."));
+                        + "These adapters don't take a card hot, so the dock is off while it goes in. "
+                        + "Power it from the dock's own Molex (live with the barrel plug in) and nothing else: "
+                        + "with a separate +5 V feed beside the dock's power, 5 of 6 power-ups went wrong."));
     return c;
   }
 

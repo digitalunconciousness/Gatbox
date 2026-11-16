@@ -1521,7 +1521,7 @@ def main():
         c.wait("document.querySelector('#dk-body .dk-cf')", 5)
         check("READ with CF picked: +5 V ONLY, red and black, the yellow +12 V never reaches the card, meter the plug first",
               all(s in text("#dk-body .dk-cf") for s in ("+5 V ONLY", "red is +5 V", "black is ground", "yellow +12 V wire must never reach the card",
-                                                          "Meter the plug", "don't take a card hot")))
+                                                          "Meter the plug", "don't take a card hot", "dock's own Molex", "nothing else")))
         check("the CF warning on the 7\": no text under 14 px", not q(BOX_SMALL))
         shot("23k-disk-cf-warning")
         q("[...document.querySelectorAll('#dk-body .seg button')].find(b => b.textContent === 'HDD').click()")

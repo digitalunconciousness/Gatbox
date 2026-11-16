@@ -262,6 +262,10 @@ class Work:
         self._ticked = now
         self._publish(self.current, detail, round(progress, 4))
 
+    def _pass(self, what, size, lo, hi):
+        """A tick for hashed_read: LO to HI of the bar over one pass of SIZE bytes."""
+        return lambda done: self.tick(f"{what}: {gb(done)} of {gb(size)}", lo + (hi - lo) * done / size)
+
 
 class Read(Work):
     """EXPECT: the identity the dashboard showed when the drive was picked. The job refuses a different drive."""
@@ -374,10 +378,6 @@ class Read(Work):
                 return d
         raise Stop(f"the drive this read started on isn't plugged in ({describe(ident)})",
                    "plug it back into the dock and wait for it to show in gatbox-disk list")
-
-    def _pass(self, what, size, lo, hi):
-        """A tick for hashed_read: LO to HI of the bar over one pass of SIZE bytes."""
-        return lambda done: self.tick(f"{what}: {gb(done)} of {gb(size)}", lo + (hi - lo) * done / size)
 
     def _ddrescue(self, opts, node, part, mapf, size=0, retry=False):
         """Run ddrescue and say where it is while it runs: the first pass from the bytes it has read (plus what an earlier,
@@ -719,7 +719,7 @@ class Write(Work):
             # bytes are hashed once, before the target is touched: a damaged image is refused, not written and then
             # found out by the read-back.
             self.step("image", "reading the image once to check it against its checksum", progress=0.01)
-            if hashed_read(img, size) != c["sha1"]:
+            if hashed_read(img, size, on_progress=self._pass("the image against its checksum", size, 0.01, 0.05)) != c["sha1"]:
                 raise Stop("the image in the store doesn't match its own checksum",
                            "it was damaged after it was stored: nothing was written. Read the original drive again")
             self.info["target"] = d["identity"]
@@ -758,10 +758,16 @@ class Write(Work):
                                     raise Stop("the drive stopped taking data", "it is partly written now: try another one")
                                 off += n
                             done += len(piece)
+                            self.tick(f"{gb(done)} of {gb(size)} written to {d['name']}", 0.05 + 0.55 * done / size)
                     os.fsync(fd)
+                # The bar: the image's own check 1% to 5%, the write 5% to 60%, then the two read-backs share 60% to 97% equally. A
+                # VERIFY ONLY has no write, so its two read-backs share 5% to 97%.
+                first = 0.05 if verify_only else 0.60
+                span = (0.97 - first) / 2
                 for n in (1, 2):
-                    self.step("verify", f"read-back {n} of 2, exactly {size:,} bytes, past the cache", progress=0.7 + 0.15 * n)
-                    got = hashed_read(d["node"], size)
+                    lo = first + span * (n - 1)
+                    self.step("verify", f"read-back {n} of 2, exactly {size:,} bytes, past the cache", progress=round(lo, 4))
+                    got = hashed_read(d["node"], size, on_progress=self._pass(f"read-back {n} of 2", size, lo, lo + span))
                     if got != c["sha1"]:
                         raise Stop(f"verify {n} doesn't match the image (SHA-1 {got[:12]}…)",
                                    "the drive didn't take the image: try another one")

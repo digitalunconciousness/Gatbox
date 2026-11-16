@@ -777,7 +777,7 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
   - [x] READ shows where it is (2026-11-15, found on the Pi: the 7″ sat at 5% for the whole ddrescue pass and at 80% for the whole
         hash). `gatbox-disk` ticks the status file at most every 5 s: bytes ddrescue has read (`/proc/PID/io`) for a first pass,
         bytes hashed for a hash or a card's second read, as a line under the bar. `test-disk.sh`: 149, `test-dash.sh`: 229. **Not
-        done:** WRITE has the same gap, and the duplicate check does not look across machine folders (owner's call).
+        done then:** WRITE had the same gap, and the duplicate check did not look across machine folders: both are the next two entries.
   - [x] READ's duplicate check looks at the whole store (2026-11-16, her "Recommended" on the Pi session's finding: it looked only in the
         machine's own folder, so the same drive read under another machine, or under none, was stored twice, 40 GB each). `Read.stored_copy`
         searches every machine folder for the same SHA-1 (only a sidecar with its `.img` inside the store counts; the machine's own folder
@@ -786,6 +786,14 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         image first read as `unassigned` and later read for a machine stays unassigned and unqueued (there is no way yet to assign it).
         The job's status carries `stored.machine` and the 7″ says "already stored under unassigned". `test-disk.sh`: 155, `test-dash.sh`: 327;
         each of 7 breakages fails a test. No system config; the tool installs with the bootstrap.
+  - [x] WRITE shows where it is (2026-11-16, her "Recommended"): the same gap as READ, plus a wrong number. The bar sat at 5% for the whole
+        write, the first read-back was drawn at 85% and the second at **100% while it was still reading**. Now the image's own checksum
+        pass ticks 1% to 5%, the write 5% to 60% ("12.3 GB of 80.0 GB written to sda"), and the two read-backs share 60% to 97% equally
+        ("read-back 1 of 2: ..."); a VERIFY ONLY has no write, so its read-backs share 5% to 97%; 100% only when verified. Ticks are the
+        same at most one status write every 5 s as READ's. The 7″'s progress card already shows the detail line for any job, so no screen
+        change. `test-disk.sh`: 160 (the whole bar captured in-process, monotonic, with the ranges above); each of 7 breakages fails a test.
+        **Not on real media yet:** the bar's proportions are a guess from bytes (a write to an old IDE disk may take longer than its
+        read-backs); the first real WRITE shows how far off.
   - [ ] The store drive ⏸ (the owner runs it, at the Pi): `sudo bash docs/plans/2026-11-02-disk-imaging-store.sh /dev/sdX` ERASES
         the drive it names, makes one GPT ext4 partition (`-m 0`, `largefile4`), puts the marker and the queue group on its
         root and writes its UUID to `/etc/gatbox/disks.conf`; then the bootstrap writes and starts the mount unit. It refuses a

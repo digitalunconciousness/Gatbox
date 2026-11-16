@@ -503,7 +503,7 @@ def main():
           and json.loads(open(f"{STORE}/writes.jsonl").readlines()[-1])["written"] is False)
     c = g.check(image, "sdg", say=quiet)
     real_read = g.hashed_read
-    g.hashed_read = lambda path, length, sha256=False: "0" * 40 if path.endswith("/sdg") else real_read(path, length, sha256)
+    g.hashed_read = lambda path, length, sha256=False, on_progress=None: "0" * 40 if path.endswith("/sdg") else real_read(path, length, sha256, on_progress)
     try:
         g.Write(c, armed=arm(), realm="widget-hub", say=quiet).go()
         mismatch = False
@@ -607,6 +607,42 @@ def main():
         except g.Stop as s:
             return what.lower() in s.what.lower()
         return False
+
+    # the bar through a WRITE (2026-11-15, from the Pi's READ: it sat at 5% through the whole step, and the WRITE path had the same
+    # gap: 5% for the write, then the first read-back at 85% and the second at 100% while it was still reading)
+    blank_target()
+    c = g.check(image, "sdg", say=quiet)
+    pub, real_pub = [], g.Work._publish
+    g.Work._publish = lambda self, name, detail, progress: (pub.append((name, progress, detail)), real_pub(self, name, detail, progress))[1]
+    real_chunk, real_tickS, g.CHUNK, g.TICK_S = g.CHUNK, g.TICK_S, 512 * 1024, 0
+    try:
+        g.Write(c, armed=arm(), say=quiet).go()
+        wpub = list(pub)
+        del pub[:]
+        c2 = g.check(image, "sdg", say=quiet)
+        g.Write(c2, armed=arm(), say=quiet).go(verify_only=True)
+        vpub = list(pub)
+    finally:
+        g.Work._publish, g.CHUNK, g.TICK_S = real_pub, real_chunk, real_tickS
+
+    def within(pubs, step, lo, hi, text=""):
+        got = [p for st, p, d in pubs if st == step and text in d and p is not None]
+        return len(got) >= 2 and all(lo <= p <= hi for p in got)
+    n = len(src)
+    check("WRITE: while the image's own checksum is checked the bar moves (1% to 5%), and says what it is doing",
+          within(wpub, "image", 0.01, 0.05, "against its checksum") and any("of" in d and "against its checksum" in d for st, p, d in wpub))
+    check("... while it is written the bar moves from 5% to 60%, with how much has gone to the drive",
+          within(wpub, "write", 0.05, 0.60, "written to sdg") and max(p for st, p, d in wpub if st == "write") > 0.5)
+    check("... the two read-backs share 60% to 97% equally (60 to 78.5, then 78.5 to 97), each saying which it is",
+          within(wpub, "verify", 0.60, 0.785, "read-back 1 of 2") and within(wpub, "verify", 0.785, 0.97, "read-back 2 of 2")
+          and max(p for st, p, d in wpub if "read-back 1 of 2" in d) <= 0.785 < max(p for st, p, d in wpub if "read-back 2 of 2" in d))
+    check("... the bar never goes backwards, and is not at 100% until it is verified (it was at 100% during the second read-back)",
+          [p for st, p, d in wpub] == sorted(p for st, p, d in wpub) and max(p for st, p, d in wpub if st != "verified") < 1.0
+          and wpub[-1][0] == "verified" and wpub[-1][1] == 1.0)
+    check("a VERIFY ONLY has no write, so its two read-backs share 5% to 97% (5 to 51, then 51 to 97)",
+          not any(st == "write" for st, p, d in vpub) and within(vpub, "verify", 0.05, 0.51, "read-back 1 of 2") and within(vpub, "verify", 0.51, 0.97, "read-back 2 of 2")
+          and [p for st, p, d in vpub] == sorted(p for st, p, d in vpub) and max(p for st, p, d in vpub if st != "verified") < 1.0)
+    blank_target()
 
     # a damaged image: the bytes in the store no longer hash to the sidecar's SHA-1, and nothing said so until after
     blank_target()

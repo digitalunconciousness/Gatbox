@@ -148,6 +148,23 @@ def main():
 
     print("a file:")
     check("before anything: idle, and no exports folder is made by looking", C.EXP.status()["state"] == "idle" and not os.path.exists(C.EXPORTS))
+    # What the unit gives it (ExecStartPre makes _exports 2775), and what its sandbox refuses: RestrictSUIDSGID=yes denies any chmod that names
+    # the setgid bit. A copy once relied on `chmod 2775` for its folders, which worked here and left every folder 0700 on the Pi.
+    os.umask(0o077)                                                        # the unit's UMask=0077: what the service runs with
+    os.makedirs(C.EXPORTS)
+    os.chmod(C.EXPORTS, 0o2775)
+    probe = f"{C.EXPORTS}/.probe"
+    os.mkdir(probe, 0o775)
+    inherits = bool(os.stat(probe).st_mode & stat.S_ISGID)                 # a file system that does not pass the setgid bit down cannot show it
+    os.rmdir(probe)
+    real_chmod = os.chmod
+
+    def sandbox_chmod(path, mode, *a, **k):
+        if mode & 0o6000:
+            raise PermissionError(1, "Operation not permitted")
+        return real_chmod(path, mode, *a, **k)
+    os.chmod = sandbox_chmod
+    want_dir = 0o2775 if inherits else 0o775
     job(entry=dino["keep.txt"])
     check("it finishes", wait())
     st = C.EXP.status()
@@ -161,8 +178,10 @@ def main():
           m["image"]["sha1"] == ext_sha1 and m["image"]["label"] == "ext" and m["volume"]["fs"] == "Ext4" and m["item"]["kind"] == "file"
           and m["files"][0]["path"] == "keep.txt" and m["files"][0]["sha1"] == sha(f) and m["files"][0]["size"] == 5 and m["verified"] is True
           and m["recovered"] is False and m["failed"] == [] and m["files"][0]["deleted"] is False)
-    check("readable and writable by the group that shares the spool (0664), the folder setgid and group-writable (2775), the time of the file kept",
-          stat.S_IMODE(os.stat(f).st_mode) == 0o664 and stat.S_IMODE(os.stat(f"{C.EXPORTS}/{d[0]}").st_mode) == 0o2775 and os.stat(f).st_mtime > 631152000)
+    check("readable and writable by the group that shares the spool (0664), the time of the file kept",
+          stat.S_IMODE(os.stat(f).st_mode) == 0o664 and os.stat(f).st_mtime > 631152000)
+    check("the copy's folder is 0775 and takes the setgid bit from _exports (2775), with the sandbox refusing every chmod that names it: anyone can list it, the group can write (it was 0700)",
+          stat.S_IMODE(os.stat(f"{C.EXPORTS}/{d[0]}").st_mode) == want_dir)
     check("recent copies lists it, with its file count and size", C.EXP.status()["recent"][0]["dir"] == d[0] and C.EXP.status()["recent"][0]["files"] == 1)
     C.EXP.request({"action": "dismiss"})
     check("dismiss clears the finished state", C.EXP.status()["state"] == "idle")
@@ -190,7 +209,8 @@ def main():
     check("the list has every file with its SHA-1, the link is skipped and said so, the folders are counted",
           len(m["files"]) == 9 and all(r["sha1"] == sha(f"{dest}/{r['path']}") for r in m["files"]) and m["skipped"] == [{"path": "link", "why": "a link"}]
           and m["folders"] == 2 and m["bytes"] == sum(r["size"] for r in m["files"]) and m["recovered"] is False)
-    check("the folder's own sub-folders have the group-writable mode too", stat.S_IMODE(os.stat(f"{dest}/Sub").st_mode) == 0o2775)
+    check("the folder's own sub-folders have the same mode, however deep", stat.S_IMODE(os.stat(f"{dest}/Sub").st_mode) == want_dir
+          and stat.S_IMODE(os.stat(f"{dest}/Sub/Deep").st_mode) == want_dir)
 
     print("deleted files:")
     job(entry=dino["gone.txt"], deleted=True)
@@ -378,6 +398,24 @@ def main():
     check("stop: it stops, says where what was copied so far is, and the half-written file is removed",
           st["state"] == "stopped" and where and os.path.isdir(f"{C.EXPORTS}/{where.group(1)}") and not os.path.exists(f"{C.EXPORTS}/{where.group(1)}/big.bin"))
     C.EXP.request({"action": "dismiss"})
+
+    # a file whose mode cannot be set stops the copy, loudly: it used to be swallowed, which hid the failure above
+    def refuse_all(path, mode, *a, **k):
+        raise PermissionError(1, "Operation not permitted")
+    os.chmod = refuse_all
+    job(entry=dino["keep.txt"])
+    wait()
+    st = C.EXP.status()
+    check("a copy whose files cannot be given their mode stops with a sentence, and finishes nothing",
+          st["state"] == "error" and "could not set the permissions" in st["error"])
+    os.chmod = sandbox_chmod
+    C.EXP.request({"action": "dismiss"})
+    os.chmod = real_chmod
+
+    again = os.umask(0o077)
+    os.umask(again)
+    check("the umask is put back after every folder made (it is process-wide, and the service runs with 0077)", again == 0o077)
+    print(f"  note  the setgid bit {'was' if inherits else 'was NOT'} passed down by this file system, so the folder checks {'include' if inherits else 'leave out'} it")
 
     print("names:")
     check("safe_name: separators, control characters, '.' and '..', trailing dots and spaces",

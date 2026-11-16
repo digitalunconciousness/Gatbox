@@ -175,13 +175,14 @@ def retry_request(body):
 
 
 def check_request(body):
-    """POST /api/disk/check {image, device, identity}: the TARGET CHECK."""
+    """POST /api/disk/check {image, device, identity, restore?}: the TARGET CHECK. restore is the owner's deliberate way to put an
+    image back on the drive it came from (2026-11-16); the job decides whether the drive and the image qualify."""
     body = _obj(body)
     _store()
     path, img = _image(body.get("image"))
     d = _disk(body.get("device"), body.get("identity"))
     return _queue({"op": "check", "image": path, "device": d["name"], "identity": d["identity"],
-                   "machine": img.get("machine"), "realm": img.get("realm")})
+                   "machine": img.get("machine"), "realm": img.get("realm"), "restore": body.get("restore") is True})
 
 
 def write_request(body, local):
@@ -371,7 +372,8 @@ def record(rel):
     wrows = []
     for w in mine:
         ok = w.get("state") == "verified"
-        wrows.append(_row("Write" + (" (verify only)" if w.get("verify_only") else ""),
+        wrows.append(_row("Write" + (" (verify only)" if w.get("verify_only") else "")
+                          + (" (restore: back on the drive it came from)" if w.get("restore") else ""),
                           "verified: read back twice, both equal the image" if ok
                           else "stopped" + (f": {w['error']}" if w.get("error") else "") + (", part of the image was written" if w.get("written") else ", nothing was written"),
                           w.get("epoch"), ok))

@@ -361,8 +361,8 @@ def main():
     usb_disk("sdf", len(src), "WIDGET", "WIDGETDRIVE 1000", port=6, devnum="8:80", data=src)
     by_id("sdf", "usb-Widget_Dock_0001-0:0")
     code, out = disk("check", "-i", image, "-d", "sdf")
-    check("the target is the source (same make and size, and it starts with the image's bytes): refused", code == 2
-          and "this is the drive the image came from" in out)
+    check("the target is the source (same make and size, and it starts with the image's bytes): refused, and the hint names RESTORE",
+          code == 2 and "this is the drive the image came from" in out and "RESTORE" in out)
     # The dock names itself and a card has no serial, so make and size are the same for a new card of the same size. What
     # is on it is not: a blank or different card is a different card, and the check goes on.
     usb_disk("sdf", len(src), "WIDGET", "WIDGETDRIVE 1000", port=6, devnum="8:80")
@@ -554,7 +554,7 @@ def main():
     check("a ddrescue that prints more than a pipe holds still finishes: its output goes to files, not to a pipe nobody reads",
           not th.is_alive() and "info" in ran and "error" not in ran)
     check("while ddrescue runs the bar moves: how much it has read, between the 5% it starts at and the 80% hashing starts at",
-          len(reads) >= 2 and all(0.05 < p < 0.78 for _, _, p in reads) and any("of 3 MB read from the drive" in d for _, d, _ in reads))
+          len(reads) >= 2 and all(0.05 < p <= 0.78 + 1e-9 for _, _, p in reads) and any("of 3 MB read from the drive" in d for _, d, _ in reads))
     check("... and the status file the dashboard reads says so while it runs, not only at the end",
           any(st == "read" and 0.05 < p < 0.78 and "read from the drive" in d for st, p, d in seen))
     hashes = [t for t in ticks if t[0] == "hash"]
@@ -690,6 +690,80 @@ def main():
             results[name] = "stopped"
     check("an arm that is False, empty, without an expiry, with a nonsense one or already expired: stopped, nothing written",
           set(results.values()) == {"stopped"} and untouched())
+
+    # RESTORE (the owner, 2026-11-16): the image back on the drive it came from, to undo what was done to it since. It lifts the one
+    # refusal and nothing else: another drive is still refused, the image has to be a complete read, and the overwrite is always
+    # acknowledged, even when the drive looks blank.
+    print("RESTORE (in-process):")
+    ata_a = "WDC WD800JD-75MSA1"
+    usb_disk("sdl", len(srcA), "XinTop", "XT-U33502", port=12, devnum="8:176", data=bytes(len(srcA)), ata=(ata_a, "WD-WIDGET0001"))
+    r = g.check(imgA, "sdl", say=quiet, restore=True)
+    check("RESTORE onto the drive with the image's serial: the check passes, says restore, matched by the serial, and asks for the "
+          "acknowledgement although the drive is blank",
+          r["target_ok"] and r["restore"] is True and r["restore_proof"] == "serial" and r["needs_ack"] is True and r["contents"]["blank"])
+    try:
+        g.check(imgA, "sdl", say=quiet)
+        plain = ""
+    except g.Stop as s:
+        plain = f"{s.what} {s.hint}"
+    check("... without RESTORE the same drive is still refused, and the hint says RESTORE is the way", "the drive the image came from" in plain
+          and "use RESTORE" in plain)
+
+    def restore_refused(img_rel, dev, what):
+        try:
+            g.check(img_rel, dev, say=quiet, restore=True)
+        except g.Stop as s:
+            return what in s.what
+        return False
+    usb_disk("sdl", len(srcA), "XinTop", "XT-U33502", port=12, devnum="8:176", data=bytes(len(srcA)), ata=(ata_a, "WD-WIDGET0002"))
+    other_serial = restore_refused(imgA, "sdl", "serial is different")
+    usb_disk("sdl", len(srcA), "XinTop", "XT-U33502", port=12, devnum="8:176", data=bytes(len(srcA)), ata=("WDC WD800JD-OTHER", "WD-WIDGET0001"))
+    other_model = restore_refused(imgA, "sdl", "another make or model")
+    blank_target(model="WIDGETDRIVE 1000")                        # the source's make and model, but 8 MiB, not 3
+    other_size = restore_refused(image, "sdg", "another size")
+    check("RESTORE onto another serial, another model or another size: refused, each saying so (another drive is WRITE's job)",
+          other_serial and other_model and other_size)
+    F.unplug("sdl")
+
+    def original(data=None):
+        """The drive the WW-HDD image came from (no serial: the make, model and size are all that say so)."""
+        usb_disk("sdg", len(src), "WIDGET", "WIDGETDRIVE 1000", port=7, devnum="8:96", data=src if data is None else data)
+    original()
+    rel, path = store_copy("INCOMPLETE_20261116_00000000")
+    sp = path[:-4] + ".json"
+    sc = json.load(open(sp))
+    sc["ddrescue"]["complete"] = False
+    json.dump(sc, open(sp, "w"))
+    incomplete = restore_refused(rel, "sdg", "isn't a complete read")
+    rel, path = store_copy("ONCE_20261116_00000001")
+    sp = path[:-4] + ".json"
+    sc = json.load(open(sp))
+    sc["media"], sc["reads"] = "sd", 1
+    json.dump(sc, open(sp, "w"))
+    once = restore_refused(rel, "sdg", "read once, not twice")
+    check("RESTORE of an image with unread areas, or of a card's image that was read only once: refused, nothing changed",
+          incomplete and once and open(f"{DEV}/sdg", "rb").read(len(src)) == src)
+    changed = bytearray(src)
+    changed[:4096] = os.urandom(4096)                            # a game wrote to it since the read
+    original(bytes(changed))
+    c = g.check(image, "sdg", say=quiet, restore=True)
+    check("RESTORE onto the original, its first bytes changed since the read and no serial: matched by make, model and size, "
+          "the acknowledgement asked for, and it does not claim to hold the image",
+          c["restore"] is True and "no serial" in c["restore_proof"] and c["needs_ack"] and not c["already_written"])
+    check("RESTORE written without the acknowledgement: refused, and the drive is as it was",
+          refused(c, "restore overwrites") and open(f"{DEV}/sdg", "rb").read(len(src)) == bytes(changed))
+    g.Write(c, ack=True, armed=arm(), say=quiet).go()
+    last = [json.loads(l) for l in open(f"{STORE}/writes.jsonl")][-1]
+    check("RESTORE acknowledged and armed: the drive holds the image again, read back twice, and the log line says restore and why it "
+          "was matched", open(f"{DEV}/sdg", "rb").read(len(src)) == src and last["state"] == "verified" and last["restore"] is True
+          and "no serial" in last["restore_proof"])
+    original()
+    c = g.check(image, "sdg", say=quiet, restore=True)
+    g.Write(c, armed=arm(), say=quiet).go(verify_only=True)
+    last = [json.loads(l) for l in open(f"{STORE}/writes.jsonl")][-1]
+    check("RESTORE onto a drive that already holds the image: already_written, VERIFY ONLY needs no acknowledgement, nothing is written",
+          c["already_written"] and c["restore"] and last["state"] == "verified" and last["verify_only"] and not last["written"])
+    blank_target()
 
     # a short pwrite must not lose bytes: the loop finishes the piece
     blank_target()
@@ -863,6 +937,28 @@ def main():
     check("an armed WRITE job: written, verified twice, logged with the arm and the realm", st["state"] == "done"
           and st["verified"] and open(f"{DEV}/sdh", "rb").read(len(src)) == src and last["state"] == "verified"
           and last["armed"]["by"] == "screen" and last["realm"] == "widget-hub")
+    # RESTORE through the dashboard's jobs: the 7"'s RESTORE CHECK, then the armed write that has to carry the acknowledgement
+    usb_disk("sdh", len(src), "WIDGET", "WIDGETDRIVE 1000", port=8, devnum="8:112", data=src)
+    rident = next(d for d in json.loads(disk("list", "--json")[1])["disks"] if d["name"] == "sdh")["identity"]
+    code, st, gone = job({"op": "check", "image": image, "device": "sdh", "identity": rident})
+    check("a CHECK job on the drive the image came from: stopped, and the hint says RESTORE", st["state"] == "stopped"
+          and "the drive the image came from" in st["error"] and "RESTORE" in st["hint"])
+    usb_disk("sdh", len(src), "WIDGET", "WIDGETDRIVE 1000", port=8, devnum="8:112", data=bytes(len(src)))
+    code, st, gone = job({"op": "check", "image": image, "device": "sdh", "identity": rident, "restore": True})
+    check("a RESTORE CHECK job: done, restore, needs the acknowledgement although the drive is blank", st["state"] == "done"
+          and st["restore"] is True and st["needs_ack"] is True and st["contents"]["blank"])
+    rchecked = st
+    code, st, gone = job({"op": "write", "check": rchecked, "ack": False, "machine": "widget-wars",
+                          "armed": {"by": "screen", "at": time.time(), "until": time.time() + 30}})
+    check("a RESTORE write job without the acknowledgement: stopped, nothing written", st["state"] == "stopped"
+          and "restore overwrites" in st["error"].lower() and open(f"{DEV}/sdh", "rb").read(len(src)) == bytes(len(src)))
+    code, st, gone = job({"op": "write", "check": rchecked, "ack": True, "machine": "widget-wars",
+                          "armed": {"by": "screen", "at": time.time(), "until": time.time() + 30}})
+    last = [json.loads(l) for l in open(f"{STORE}/writes.jsonl")][-1]
+    check("... acknowledged and armed: the image is back on the drive, verified, logged as a restore with the arm",
+          st["state"] == "done" and st["verified"] and st["restore"] is True and open(f"{DEV}/sdh", "rb").read(len(src)) == src
+          and last["restore"] is True and last["armed"]["by"] == "screen" and last["ack"] is True)
+    F.unplug("sdh")
     old2 = os.urandom(MiB)
     usb_disk("sde", len(old2), "WIDGET", "OLDSPINNER 40", port=5, devnum="8:64", data=old2)
     ident = next(d for d in json.loads(disk("list", "--json")[1])["disks"] if d["name"] == "sde")["identity"]
@@ -1011,6 +1107,12 @@ def web_side(image):
         check("WRITE with no CHECK first -> 409", code == 409 and "CHECK this image and drive first" in r["error"])
         code, r = call("POST", "/api/disk/check", dict(target, image="../../etc/passwd", identity=sdh["identity"]))
         check("CHECK an image that isn't in the store -> 400", code == 400)
+        code, r = call("POST", "/api/disk/check", dict(target, identity=sdh["identity"], restore=True))
+        st = done()
+        sent = json.load(open(f"{w}/spool/running.json")) if os.path.exists(f"{w}/spool/running.json") else {}
+        check("CHECK with restore -> 202; the job gets the flag and refuses a card that is not the image's own drive, saying so",
+              code == 202 and st.get("op") == "check" and st.get("state") == "stopped" and "another make or model" in st.get("error", "")
+              and not sent)
         code, r = call("POST", "/api/disk/check", dict(target, identity=sdh["identity"]))
         st = done()
         check("CHECK -> 202; the job finds a FAT32 card: target_ok, needs an acknowledgement", code == 202

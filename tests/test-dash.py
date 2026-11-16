@@ -1949,7 +1949,27 @@ def main():
             m3 = json.load(open(f"{exports}/{done3[0]}/_export.json"))
             check("... the copy is the deleted file's bytes, and its list says recovered, on the file and on the copy",
                   open(f"{exports}/{done3[0]}/old-notes.txt", "rb").read() == b"Widget Wars deleted notes\n" * 40 and m3["recovered"] is True and m3["files"][0]["deleted"] is True)
+            os.makedirs(f"{exports}/20260101-000000_STALE_halfway.partial")            # a copy that was cut off, for the list below
             fb_btn("OK", 15, exact=True)
+            earlier = ".dk-earlier"
+            check("EARLIER COPIES: with copies on the store there is a button that counts them (three finished, one cut off), and the list is closed",
+                  settles(c, f"!!document.querySelector('{earlier}') && document.querySelector('{earlier}').textContent.includes('EARLIER COPIES (4)')", 15)
+                  and not q("!!document.querySelector('.dk-eplist')"))
+            fb_btn("EARLIER COPIES (4)", 15, exact=True)
+            check("... tapped: every copy has its name, its file count and size, and its folder under _exports; the copies are listed newest first",
+                  settles(c, "!!document.querySelector('.dk-eplist')", 10)
+                  and all(s_ in text(earlier) for s_ in ('old-notes.txt', 'Docs', 'notes.txt', '3 files', '1 file', f"_exports/{done[0]}", f"_exports/{done2[0]}", f"_exports/{done3[0]}"))
+                  and text(earlier).index("old-notes.txt") < text(earlier).index("Docs") < text(earlier).index("_exports/" + done[0]))
+            check("... the cut-off copy says so, and that what is in it is partial; nothing in the list can delete or open a copy",
+                  "UNFINISHED COPY" in text(earlier) and "20260101-000000_STALE_halfway.partial" in text(earlier) and "partial" in text(earlier)
+                  and not q("[...document.querySelectorAll('.dk-earlier button')].some(b => /DELETE|REMOVE|OPEN/i.test(b.textContent))"))
+            check("... on the 7\": no text under 14 px, and the button is a finger tall", not q(BOX_SMALL)
+                  and q("document.querySelector('.dk-earlier button').getBoundingClientRect().height") >= 55.5)
+            shot("29c-files-earlier-copies")
+            fb_btn("HIDE EARLIER COPIES", 15, exact=True)
+            check("HIDE EARLIER COPIES: the list closes and the button counts again", settles(c, "!document.querySelector('.dk-eplist')", 10)
+                  and "EARLIER COPIES (4)" in text(earlier))
+            os.rmdir(f"{exports}/20260101-000000_STALE_halfway.partial")
             fb_btn("BACK TO THE FOLDER", 15)
             fb_btn("DELETED", 15, exact=True)
             # a disk job holds it back: the question is asked, the answer is a notice, and nothing is made

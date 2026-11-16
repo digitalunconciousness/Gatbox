@@ -866,6 +866,13 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         image first read as `unassigned` and later read for a machine stays unassigned and unqueued (there is no way yet to assign it).
         The job's status carries `stored.machine` and the 7″ says "already stored under unassigned". `test-disk.sh`: 155, `test-dash.sh`: 327;
         each of 7 breakages fails a test. No system config; the tool installs with the bootstrap.
+  - [x] EARLIER COPIES on the FILES card (2026-11-16, approved with the other small items), **not installed**: COPY TO THE STORE's status has always carried
+        the latest eight copies in the store's `_exports` folder (`recent`), and nothing on the 7″ showed them once the strip was dismissed. A button,
+        `EARLIER COPIES (n)`, appears whenever there is at least one, and opens a list, newest first: the item's name, when it finished, how many files and
+        how big, its folder under `_exports`, and "N files could not be read" when some failed; a `.partial` folder (a copy that was stopped or cut off) is
+        listed as UNFINISHED COPY with a dashed border, saying what is in it is partial. Read only: nothing in the list opens, deletes or moves a copy, and
+        it says they are on the store, so the drive goes to another computer to use them. `test-dash.sh`: 333 + the EARLIER COPIES checks (see the PR).
+        **Not seen on the Pi.** The list stops at eight because `recent()` does; older copies are on the store.
   - [x] WRITE shows where it is (2026-11-16, her "Recommended"): the same gap as READ, plus a wrong number. The bar sat at 5% for the whole
         write, the first read-back was drawn at 85% and the second at **100% while it was still reading**. Now the image's own checksum
         pass ticks 1% to 5%, the write 5% to 60% ("12.3 GB of 80.0 GB written to sda"), and the two read-backs share 60% to 97% equally

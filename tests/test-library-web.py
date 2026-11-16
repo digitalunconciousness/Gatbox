@@ -542,6 +542,28 @@ def main():
               call("POST", "/api/library/games/widget-wars/machines", {"slug": "ws-9"}, base=B.replace("127.0.0.1", lan))[0] == 403
               and call("DELETE", "/api/library/games/widget-wars/machines/ws-9", base=B.replace("127.0.0.1", lan))[0] == 403)
 
+    print("a hub's machine (the owner, 2026-11-16: a hub's Time Crisis 2 with no model could not be given its game):")
+    sd = f"{T}/sync"
+    os.makedirs(sd, exist_ok=True)
+    json.dump({"at": time.time(), "ok": True, "hubs": [{"name": "default", "label": "ALPHA", "capabilities": []}]}, open(f"{sd}/status.json", "w"))
+    json.dump({"name": "default", "label": "ALPHA", "capabilities": []}, open(f"{sd}/hub.json", "w"))
+    json.dump({"machines": [{"slug": "s-0005-widget-wars-2", "name": "Widget Wars 2", "status": "In shop"}]}, open(f"{sd}/roster.json", "w"))
+    c, r = call("GET", "/api/manuals/s-0005-widget-wars-2")
+    check("before: the hub's machine names no model this Pi has, so it has no manuals (the line the owner saw)", c == 404 and "model_key" in r["error"])
+    c, g = call("POST", "/api/library/games/widget-wars/machines", {"slug": "s-0005-widget-wars-2"})
+    check("linking the hub's machine to a game on this Pi: 200, and the game lists it BY ITS NAME, not its slug",
+          c == 200 and {"slug": "s-0005-widget-wars-2", "name": "Widget Wars 2"} in g["machines"])
+    check("... and it reads the game's manuals and limits at once", get("/api/manuals/s-0005-widget-wars-2")["docs"] == get("/api/manuals/widget-wars")["docs"]
+          and get("/api/manuals/widget-wars")["docs"])
+    check("... the game the 7\" finds for it is that game", any(x["key"] == "widget-wars" and any(m["slug"] == "s-0005-widget-wars-2" for m in x["machines"])
+                                                           for x in get("/api/library")["games"]))
+    c, _ = call("DELETE", "/api/library/games/widget-wars/machines/s-0005-widget-wars-2")
+    check("UNLINK: it is the hub's machine with no model again", c == 200 and call("GET", "/api/manuals/s-0005-widget-wars-2")[0] == 404)
+    check("a slug that is on no roster at all, this Pi's or a hub's: still 404",
+          call("POST", "/api/library/games/widget-wars/machines", {"slug": "s-9999-nowhere"})[0] == 404)
+    for f_ in ("status.json", "hub.json", "roster.json"):
+        os.remove(f"{sd}/{f_}")
+
     print("FIND A MANUAL (a request, the job, the library):")
     st0 = get("/api/library/manual")
     check("before the service is installed (no spool): the status says so and every request is 503",

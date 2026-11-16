@@ -1153,6 +1153,14 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         logger's export drops it at once. `status.json` has a `library` block (pending, conflicts, `identical` by a
         revision-free content digest). `test-libsync.sh` 48, `test-sync-library.sh` 39 (real archive, real gatbox-web,
         real gatbox-sync), `test-library.sh` 61, `test-sync.sh` 137 unchanged; 22 of 22 guards broken on purpose fail a test (four first went uncaught and got tests)
+  - [x] **A hub's machine can be given its game on the Pi; the game page lists its drive images** (the owner, 2026-11-16, on the 7″: FIND GAME
+        (MAME) for her hub's Time Crisis 2 found Time Crisis II "already in the library", and USE IT FOR refused it: "isn't a machine on this Pi's
+        roster (a hub's machine is linked in its app)", so the game never opened; and "No disk image." on California Speed's page). Built, **not
+        installed**: `POST /api/library/games/<key>/machines` now takes a machine a hub lists too. The link is the deck's own (the library's
+        `slug_keys`, which never leave the Pi): the hub is not told, and for that machine it wins over any model the hub names. The game lists
+        a hub's machine by its name. The game page gains **Drive images**: every image in the store read for one of the game's machines,
+        or "the image store isn't plugged in"; on the Pi's own screen a tap opens it in DISK → FILES. `test-library-web.sh`: 127 (was 121),
+        `test-dash.sh`: 366 (was 364), `test-web-api.sh`: 185.
   - [x] Owner: the D3 install diff is **installed**: `/etc/gatbox/archive.conf` is on the Pi (the owner's `sudo ls /etc/gatbox`, 2026-11-16:
         `archive.conf  disks.conf  hub.conf  hubs.d`), and only this diff's tmpfiles line creates that file, so a bootstrap run has applied it;
         `gatbox-sync.timer` is enabled in the same day's unit list. The diff was (system config, rule 5). In `bootstrap/gatbox-bootstrap.sh`'s

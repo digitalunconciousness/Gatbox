@@ -371,6 +371,39 @@ def main():
     check("a disk job running: a thumbnail that has to be made is refused (409) and nothing is read; one already made is still given",
           _code(lambda: B.thumb(E, 2048, jpg["inode"], jpg["size"])) == 409 and len(runs) == n2 and B.thumb(E, 2048, other["inode"], other["size"])[0])
     os.remove(os.path.join(spool_dir, "request.json"))
+    # A write in its read-back reads only the target drive: the store is idle, so a thumbnail may be made (the Pi, 2026-11-16: an 80 GB restore
+    # spent about 80 of its 150 minutes there, and the grid waited all that time). Anything else running keeps the rule.
+    def job(run_op="write", run_id="j1", st_op="write", state="running", step="verify", st_job="j1"):
+        open(os.path.join(spool_dir, "running.json"), "w").write(json.dumps({"op": run_op, "id": run_id}))
+        open(os.path.join(spool_dir, "status.json"), "w").write(json.dumps({"op": st_op, "job": st_job, "state": state, "step": step}))
+
+    def made():
+        """Forget this photo's thumbnail (if there is one), ask for it, and say whether it was made."""
+        try:
+            os.remove(B._thumb_paths(B.image(E)[1], 2048, jpg["inode"])[1])
+        except FileNotFoundError:
+            pass
+        return _code(lambda: B.thumb(E, 2048, jpg["inode"], jpg["size"])) is None
+    job()
+    check("a write in its read-back: the store is idle, so a thumbnail that has to be made is made", made())
+    results = {}
+    for what, kw in (("a write still writing", dict(step="write")), ("a write checking its image", dict(step="image")),
+                     ("a read, in any step", dict(run_op="read", st_op="read")), ("a status file from another job", dict(st_job="j0")),
+                     ("a write that is not running any more", dict(state="done")), ("a status file for a check", dict(st_op="check"))):
+        job(**kw)
+        results[what] = not made()
+    check("anything else running keeps the rule (409): " + ", ".join(results), all(results.values()))
+    job()
+    open(os.path.join(spool_dir, "request.json"), "w").write("{}")
+    queued = _code(lambda: B.thumb(E, 2048, jpg["inode"], jpg["size"]))
+    check("a write in its read-back with another request queued behind it: busy (409)", queued in (409, None) and B.disk_busy(store=True))
+    os.remove(os.path.join(spool_dir, "request.json"))
+    open(os.path.join(spool_dir, "status.json"), "w").write("not json")
+    check("a status file that is not JSON: busy, never an exception", B.disk_busy(store=True) and B.disk_busy())
+    for n in ("running.json", "status.json"):
+        os.remove(os.path.join(spool_dir, n))
+    check("the other passes (the index, a copy) still wait for any job, a read-back included: disk_busy() without store=True is unchanged",
+          (job() or True) and B.disk_busy() and not os.remove(os.path.join(spool_dir, "running.json")) and not B.disk_busy())
     old_cap = B.THUMB_CAP
     side_e = B.image(E)[1]
     jpg_path, red_path = (B._thumb_paths(side_e, 2048, e["inode"])[1] for e in (jpg, red))

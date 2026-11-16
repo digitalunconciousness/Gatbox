@@ -107,9 +107,31 @@ def run(argv, timeout, cap=None, stdout=None):
     return rc, (n if stdout else b"".join(out)), err
 
 
-def disk_busy():
-    """A disk job is queued or running (gatbox-disk's spool). Background passes wait for it: imaging has priority."""
-    return any(os.path.exists(os.path.join(DISK_SPOOL, n)) for n in ("request.json", "running.json"))
+def _spool_json(name):
+    try:
+        with open(os.path.join(DISK_SPOOL, name), encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def disk_busy(store=False):
+    """A disk job is queued or running (gatbox-disk's spool). Background passes wait for it: imaging has priority.
+
+    store=True asks whether the job is using the image store, which is what a thumbnail competes for. A WRITE in its read-back reads
+    only the target drive, so the store is idle then: an 80 GB restore spent about 80 of its 150 minutes there (the Pi, 2026-11-16),
+    and thumbnails waited all that time. The exception is narrow: the job running is a write, the status file is that same job's
+    (matching id), and its step is the read-back; a queued request, or any other step or job, is busy."""
+    if os.path.exists(os.path.join(DISK_SPOOL, "request.json")):
+        return True
+    if not os.path.exists(os.path.join(DISK_SPOOL, "running.json")):
+        return False
+    if store:
+        run, st = _spool_json("running.json"), _spool_json("status.json")
+        if (isinstance(run, dict) and isinstance(st, dict) and run.get("op") == "write" and st.get("op") == "write"
+                and st.get("state") == "running" and st.get("step") == "verify" and run.get("id") and st.get("job") == run.get("id")):
+            return False
+    return True
 
 
 def kind_of(name, folder=False):
@@ -812,7 +834,7 @@ def thumb(rel, start, inode, size=None):
         raise Err(_num(code, 415), msg or "no thumbnail for this file")          # said once: the same answer, with nothing read
     except OSError:
         pass
-    if disk_busy():
+    if disk_busy(store=True):
         raise Err(409, "a disk job is running: thumbnails wait for it")
     with _thumb_lock:
         try:

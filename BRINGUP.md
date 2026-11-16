@@ -639,6 +639,14 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       - On 2026-11-05/06 the dock ran SuperSpeed on `4-1`; since then it has been on `1-2`: another socket, not a fallback.
       - First WRITE from the 7" on real media, 2026-11-15: a 65 MB card image onto the WD800JD, armed on the screen, read back
         twice, verified, the 79,934,988,288 bytes beyond it untouched.
+      - **A RESTORE of the whole 80 GB drive, from the 7", 2026-11-16 (the first real RESTORE; the job's own status timestamps, USB 2, the dock
+        and the store on different root hubs):** the image checked against its checksum before the first byte: 32.7 min (40.8 MB/s); the write:
+        36.7 min (36.3 MB/s); read-back 1 started 69.4 min in and was at 11.0 GB of 80 after about 5 min (about 33 MB/s). So a WRITE or RESTORE of
+        this drive is four passes and about **2.5 hours** (the two read-backs' end is estimated from that speed), and the unit's `TimeoutStartSec=3h` leaves about half an hour of margin: a drive over
+        about 100 GB would be stopped by systemd before it finished (the plan sized 3 h for a 40 GB drive and guessed the speed). The job then
+        leaves a `running.json` behind (a SIGTERM skips its cleanup), which blocks the DISK tab and every thumbnail until it is removed. Not
+        fixed yet: the timeout is a unit change, so it comes to the owner as a diff first. Meanwhile gatbox-browse may make a thumbnail while a
+        WRITE is in its read-back (the store is idle then, about 80 of the 150 minutes); every other step and job keeps the rule.
     - Still to read: whether the dock's switch cuts its Molex; one `reset high-speed USB device` with `error -71` while a USB cable was
       being replugged (a contact, or the bridge on the Pi's USB power alone being marginal); the bridge on the cabinet's 12 V buck; the
       dock on another port, after the MEGA4 routing.

@@ -9,6 +9,7 @@ O_EXCL claim, a verify mismatch, an expired check), the rest through the CLI.
     python3 tests/test-disk.py
 """
 import errno
+import glob
 import hashlib
 import importlib.machinery
 import importlib.util
@@ -195,6 +196,44 @@ def main():
     check("a READ for no machine: stored, its sidecar says archive 'none', not for a machine, and nothing is added to the queue",
           code == 0 and side_u.get("archive") == {"state": "none", "why": "not for a machine"}
           and len(open(f"{STORE}/archive-queue.jsonl").read().splitlines()) == 1)
+    F.unplug("sdq")
+
+    print("the same bytes under another machine, or none (2026-11-15, from the Pi: the check looked only in the machine's own folder):")
+    fam_name = f"FAMILY-DISK_{day}_{hashlib.sha1(fam).hexdigest()[:8]}"
+    ww_before = files("widget-wars")
+    usb_disk("sdq", len(fam), "WIDGET", "FAMILYDRIVE 500", port=17, devnum="8:256", data=fam)
+    code, out = disk("read", "-d", "sdq", "-m", "widget-wars", "-l", "FAMILY-AGAIN", "--media", "hdd")
+    side_u = json.load(open(f"{STORE}/unassigned/{fam_name}.json"))
+    check("the same drive read again for a machine: it is already in the store, under 'unassigned', and says so; no second copy is made",
+          code == 0 and "ALREADY IN THE STORE" in out and f"unassigned/{fam_name}.img" in out and files("widget-wars") == ww_before
+          and files("unassigned").count(fam_name + ".img") == 1)
+    check("... the existing sidecar notes this read, with the machine it was for, and is still 'not for a machine' (nothing moved, nothing queued)",
+          [(r["label"], r.get("machine")) for r in side_u["also_read"]] == [("FAMILY-AGAIN", "widget-wars")]
+          and side_u["archive"] == {"state": "none", "why": "not for a machine"} and len(open(f"{STORE}/archive-queue.jsonl").read().splitlines()) == 1)
+    F.unplug("sdq")
+    usb_disk("sdq", len(src), "WIDGET", "WIDGETDRIVE 1000", port=17, devnum="8:256", data=src)
+    code, out = disk("read", "-d", "sdq", "-m", "unassigned", "-l", "WW-LATER", "--media", "hdd")
+    side_w = json.load(open(f"{STORE}/widget-wars/{img}.json"))
+    check("and the other way round: a machine's image read again for no machine is found in that machine's folder, and 'unassigned' gets nothing new",
+          code == 0 and "ALREADY IN THE STORE" in out and f"widget-wars/{img}.img" in out
+          and [r["label"] for r in side_w["also_read"]][-1] == "WW-LATER" and side_w["also_read"][-1]["machine"] == "unassigned"
+          and files("unassigned") == [fam_name + ".img", fam_name + ".json", fam_name + ".map"])
+    F.unplug("sdq")
+    # an image kept twice already (an older store: the check only looked in the machine's own folder): a read notes itself on the copy
+    # in its own folder, and a sidecar whose image is gone, or that is not JSON, is not an image in the store and never matches (they are named
+    # to sort before the real copy, so the search has to get past them)
+    for ext_ in (".img", ".json"):
+        os.link(f"{STORE}/unassigned/{fam_name}{ext_}", f"{STORE}/widget-wars/{fam_name}{ext_}")
+    open(f"{STORE}/widget-wars/0-orphan.json", "w").write(json.dumps({"sha1": hashlib.sha1(fam).hexdigest()}))
+    open(f"{STORE}/widget-wars/0-broken.json", "w").write("{not json")
+    open(f"{STORE}/widget-wars/0-broken.img", "w").close()                  # with an image, so the search does try to read it
+    usb_disk("sdq", len(fam), "WIDGET", "FAMILYDRIVE 500", port=17, devnum="8:256", data=fam)
+    code, out = disk("read", "-d", "sdq", "-m", "widget-wars", "-l", "FAMILY-THIRD", "--media", "hdd")
+    both = [os.path.basename(os.path.dirname(p)) for p in sorted(glob.glob(f"{STORE}/*/{fam_name}.json")) if "FAMILY-THIRD" in open(p).read()]
+    check("kept twice: the read is noted on the copy in the machine's own folder, an orphan sidecar and a broken one are ignored, nothing crashes",
+          code == 0 and "ALREADY IN THE STORE" in out and f"widget-wars/{fam_name}.img" in out and "0-orphan" not in out and both == ["widget-wars"])
+    for n_ in ("0-orphan.json", "0-broken.json", "0-broken.img", fam_name + ".img", fam_name + ".json"):
+        os.remove(f"{STORE}/widget-wars/{n_}")
     F.unplug("sdq")
 
     print("the drive's own identity (Task 0, 2026-11-06: the dock's INQUIRY names the dock):")
@@ -748,6 +787,14 @@ def main():
           and st["state"] == "done" and st["op"] == "read" and st["job"] == "job1" and st["stored"]["new"])
     check("... the realm and note gatbox-web sent are in the sidecar", side.get("realm") == "widget-hub"
           and side.get("note") == "from the 7\"")
+    # the same family drive again, through the dashboard's job: the status says which folder already holds the bytes (the screen's wording)
+    usb_disk("sdq", len(fam), "WIDGET", "FAMILYDRIVE 500", port=17, devnum="8:256", data=fam)
+    fident = next(d for d in json.loads(disk("list", "--json")[1])["disks"] if d["name"] == "sdq")["identity"]
+    code, st, gone = job({"op": "read", "device": "sdq", "identity": fident, "machine": "widget-wars", "label": "WW-FAMJOB", "media": "hdd"})
+    check("a READ job whose bytes are already stored under another machine: done, not new, and the status names the folder that holds them",
+          code == 0 and gone and st["state"] == "done" and st["stored"]["new"] is False and st["stored"]["machine"] == "unassigned"
+          and st["stored"]["path"].endswith(f"/unassigned/{fam_name}.img"))
+    F.unplug("sdq")
     other = dict(ident, model="SOMETHING ELSE")
     code, st, gone = job({"op": "read", "device": "sdb", "identity": other, "machine": "widget-wars", "label": "WW-JOB2",
                           "media": "sd"})

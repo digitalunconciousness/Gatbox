@@ -419,29 +419,45 @@ class Read(Work):
         done = min(size, have + got)
         self.tick(f"{gb(done)} of {gb(size)} read from the drive", 0.05 + 0.73 * done / size)
 
-    def store(self, folder, part, mapf, state):
-        """Name the image after its label, its read's date and its SHA-1; never store the same bytes twice."""
-        sha1 = self.info["sha1"]
-        day = time.strftime("%Y%m%d", time.localtime(self.info["started"]))
-        for side in glob.glob(os.path.join(folder, "*.json")):
-            if side.endswith(".read.json"):
+    def stored_copy(self, folder, sha1):
+        """(sidecar path, its contents) of an image in the store with these bytes, or None. Every machine's folder is searched, the
+        one this read is for first: the same drive read again under another machine, or under none, is still the same bytes, and a
+        second copy of a 40 GB image is not what anyone asked for. Only a sidecar with its .img inside the store counts, as in
+        disks.images() (a read still in progress, <label>.read.json, and a sidecar whose image is gone do not)."""
+        store = os.path.realpath(DISKS)
+        sides = sorted(glob.glob(os.path.join(store, "*", "*.json")), key=lambda p: (os.path.dirname(p) != folder, p))
+        for side in sides:
+            img = side[:-5] + ".img"
+            if side.endswith(".read.json") or not os.path.isfile(img) or not os.path.realpath(img).startswith(store + os.sep):
                 continue
             try:
                 with open(side) as f:
                     old = json.load(f)
             except (OSError, ValueError):
                 continue
-            if old.get("sha1") == sha1:
-                old.setdefault("also_read", []).append({"date": day, "label": self.label, "epoch": round(time.time(), 3)})
-                with open(side + ".tmp", "w") as f:
-                    json.dump(old, f, indent=1)
-                os.replace(side + ".tmp", side)
-                for p in (part, mapf, state):
-                    os.remove(p)
-                img = side[:-5] + ".img"
-                self.info["stored"] = {"path": img, "new": False}
-                self.step("store", "already in the store as " + os.path.basename(img), progress=1.0)
-                return
+            if isinstance(old, dict) and old.get("sha1") == sha1:
+                return side, old
+        return None
+
+    def store(self, folder, part, mapf, state):
+        """Name the image after its label, its read's date and its SHA-1; never store the same bytes twice, whichever machine's folder
+        they are in."""
+        sha1 = self.info["sha1"]
+        day = time.strftime("%Y%m%d", time.localtime(self.info["started"]))
+        hit = self.stored_copy(folder, sha1)
+        if hit:
+            side, old = hit
+            where = os.path.basename(os.path.dirname(side))
+            old.setdefault("also_read", []).append({"date": day, "label": self.label, "machine": self.machine, "epoch": round(time.time(), 3)})
+            with open(side + ".tmp", "w") as f:
+                json.dump(old, f, indent=1)
+            os.replace(side + ".tmp", side)
+            for p in (part, mapf, state):
+                os.remove(p)
+            img = side[:-5] + ".img"
+            self.info["stored"] = {"path": img, "new": False, "machine": where}
+            self.step("store", "already in the store as " + (os.path.basename(img) if where == self.machine else f"{where}/{os.path.basename(img)}"), progress=1.0)
+            return
         base = os.path.join(folder, f"{self.label}_{day}_{sha1[:8]}")
         if os.path.exists(base + ".img") or os.path.exists(base + ".json"):
             raise Stop(f"{base}.img already exists with different contents", "use another label")

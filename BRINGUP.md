@@ -778,6 +778,14 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         hash). `gatbox-disk` ticks the status file at most every 5 s: bytes ddrescue has read (`/proc/PID/io`) for a first pass,
         bytes hashed for a hash or a card's second read, as a line under the bar. `test-disk.sh`: 149, `test-dash.sh`: 229. **Not
         done:** WRITE has the same gap, and the duplicate check does not look across machine folders (owner's call).
+  - [x] READ's duplicate check looks at the whole store (2026-11-16, her "Recommended" on the Pi session's finding: it looked only in the
+        machine's own folder, so the same drive read under another machine, or under none, was stored twice, 40 GB each). `Read.stored_copy`
+        searches every machine folder for the same SHA-1 (only a sidecar with its `.img` inside the store counts; the machine's own folder
+        is tried first, so an older store that already holds two copies notes the read on the right one). The existing image **stays where
+        it is**: the read is noted on it (`also_read` now records the machine it was for), nothing is moved and nothing is queued, so an
+        image first read as `unassigned` and later read for a machine stays unassigned and unqueued (there is no way yet to assign it).
+        The job's status carries `stored.machine` and the 7″ says "already stored under unassigned". `test-disk.sh`: 155, `test-dash.sh`: 327;
+        each of 7 breakages fails a test. No system config; the tool installs with the bootstrap.
   - [ ] The store drive ⏸ (the owner runs it, at the Pi): `sudo bash docs/plans/2026-11-02-disk-imaging-store.sh /dev/sdX` ERASES
         the drive it names, makes one GPT ext4 partition (`-m 0`, `largefile4`), puts the marker and the queue group on its
         root and writes its UUID to `/etc/gatbox/disks.conf`; then the bootstrap writes and starts the mount unit. It refuses a

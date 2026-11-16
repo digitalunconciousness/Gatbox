@@ -1395,6 +1395,21 @@ def main():
               and "WW-OLD" in text("#dk-body"))
         os.remove(f"{T}/dk-bad")
         os.remove(f"{T}/dk-heal")
+        # A READ whose bytes are already stored under ANOTHER machine's folder says where they are. The status file is rewritten to that
+        # (what gatbox-disk writes then: tests/test-disk.py), the card is read, and the real one is put back.
+        st_file = f"{T}/dspool/status.json"
+        keep = open(st_file).read()
+        stj = json.loads(keep)
+        with open(st_file + ".tmp", "w") as f:
+            json.dump(dict(stj, stored={"path": f"{FD.store}/unassigned/" + os.path.basename(stj["stored"]["path"]), "new": False, "machine": "unassigned"}), f)
+        os.replace(st_file + ".tmp", st_file)
+        check("a READ whose bytes are already under another machine's folder: ALREADY IN THE STORE, and the card says it is stored under unassigned and stays there",
+              dk_has("ALREADY IN THE STORE", 15) and "stored under unassigned" in text("#dk-body") and "which stays there" in text("#dk-body")
+              and "Queued for the archive" not in text("#dk-body"))
+        with open(st_file + ".tmp", "w") as f:
+            f.write(keep)
+        os.replace(st_file + ".tmp", st_file)
+        dk_has("STORED", 15)
 
         FD.usb_disk("sdh", 8 * MiB, "WIDGET", "WIDGET SSD 64G C", port=8, devnum="8:112", data=fat_card(8 * MiB))
         dk_seg("WRITE")

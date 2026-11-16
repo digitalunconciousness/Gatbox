@@ -55,7 +55,8 @@ while :; do
         --password-store=basic                   # no keyring unlock prompt
         --hide-crash-restore-bubble              # belt and braces with the Preferences fix above
         --overscroll-history-navigation=0        # a sideways swipe doesn't navigate back
-        --disable-pinch                          # no browser pinch-zoom; the dashboard zooms its own graph
+        # pinch zoom is left ON (the owner, 2026-11-16): two fingers zoom the whole page, two fingers out put it back. The graph
+        # and the manual viewer keep their own pinch (touch-action:none there), so a pinch on them zooms them, not the page.
         --disable-features=Translate             # no "translate this page?" bubble
         --check-for-update-interval=31536000     # no update nags
     )

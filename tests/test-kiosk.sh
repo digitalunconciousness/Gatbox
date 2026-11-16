@@ -59,10 +59,12 @@ GATBOX_WEB_PORT=$PORT GATBOX_SYNC_STATE="$T/no-hub" STATE_DIRECTORY="$T/state" C
 waitfor '[ -s "$T/launches" ]'
 check "browser started once gatbox-web answered" '[ "$(wc -l < "$T/launches")" = 1 ]'
 args=$(head -1 "$T/launches")
+KHOME="$T/home"                               # the test's stand-in home
 for f in --kiosk --ozone-platform=wayland --no-first-run --password-store=basic --overscroll-history-navigation=0 \
-         --hide-crash-restore-bubble --disable-pinch "--user-data-dir=$T/home/.local/share/gatbox-kiosk"; do
+         --hide-crash-restore-bubble "--user-data-dir=$KHOME/.local/share/gatbox-kiosk"; do
     check "flag $f"                          '[[ " $args " == *" $f "* ]]'
 done
+check "page pinch-zoom is left on (the owner, 2026-11-16): no --disable-pinch" '[[ " $args " != *" --disable-pinch "* ]]'
 check "opens the dashboard, /dash/"          '[[ $args == *" http://127.0.0.1:$PORT/dash/" ]]'
 check "crash state cleared before launch"    'grep -q "\"exited_cleanly\":true" "$T/home/.local/share/gatbox-kiosk/Default/Preferences" && grep -q "\"exit_type\":\"Normal\"" "$T/home/.local/share/gatbox-kiosk/Default/Preferences"'
 kill "$(cat "$T/browser.pid")"; waitfor '[ "$(wc -l < "$T/launches")" = 2 ]'

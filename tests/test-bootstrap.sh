@@ -102,9 +102,26 @@ if [ "$(id -u)" = 0 ] && command -v systemd-tmpfiles >/dev/null 2>&1; then
         '[ "$(stat -c "%a %g" "$R/srv/gatbox/library/library.sqlite")" = "664 983" ] && [ "$(stat -c "%a %g" "$R/srv/gatbox/library/library.sqlite-wal")" = "664 983" ] \
          && [ "$(stat -c "%a %g" "$R/srv/gatbox/library/library.sqlite-shm")" = "664 983" ] && [ "$(stat -c %u "$R/srv/gatbox/library/library.sqlite")" = 1000 ] \
          && [ "$(stat -c %a "$R/srv/gatbox/library/other.txt")" = 644 ]'
+    # A disk job that was running when the Pi lost power leaves its claim behind, and nothing treats an old one as dead (the Pi, 2026-11-16:
+    # a 2.5 hour write against a 3 hour unit limit). The claim goes at boot, and only at boot: a bootstrap run (--create) must never remove
+    # the claim of a job that is running now. A queued request and the last status are left.
+    R2="$T/tmpf-root2"; mkdir -p "$R2/etc/tmpfiles.d" "$R2/var/spool/gatbox-disk"
+    printf 'root:x:0:0:root:/root:/bin/sh\n' > "$R2/etc/passwd"; printf 'root:x:0:\n' > "$R2/etc/group"
+    grep -E "^r! /var/spool/gatbox-disk/running.json" "$TMPF" > "$R2/etc/tmpfiles.d/t.conf"
+    for f in running.json request.json status.json; do : > "$R2/var/spool/gatbox-disk/$f"; done
+    systemd-tmpfiles --root="$R2" --create t.conf >/dev/null 2>&1
+    still=$([ -e "$R2/var/spool/gatbox-disk/running.json" ] && echo yes || echo no)
+    systemd-tmpfiles --root="$R2" --create --remove t.conf >/dev/null 2>&1
+    still_noboot=$([ -e "$R2/var/spool/gatbox-disk/running.json" ] && echo yes || echo no)
+    systemd-tmpfiles --root="$R2" --boot --remove t.conf >/dev/null 2>&1
+    check "tmpfiles line, run for real: a bootstrap run or a create-and-remove without --boot leaves a running job's claim; a boot removes it and only it" \
+        '[ "$still" = yes ] && [ "$still_noboot" = yes ] && [ ! -e "$R2/var/spool/gatbox-disk/running.json" ] \
+         && [ -e "$R2/var/spool/gatbox-disk/request.json" ] && [ -e "$R2/var/spool/gatbox-disk/status.json" ]'
 else
     echo "  skip  the tmpfiles line run against a scratch root (needs root and systemd-tmpfiles)"
 fi
+check "the disk unit's limit is 12 h (an 80 GB write measured about 2.5 h on the Pi, against the 3 h it had), and a boot removes a dead job's claim" \
+    'grep -qx "TimeoutStartSec=12h" "$REPO/backend/gatbox-disk.service" && grep -qx "r! /var/spool/gatbox-disk/running.json" "$TMPF"'
 check "gatbox-web may write there (and is in the group)" 'grep -qx "ReadWritePaths=-/srv/gatbox/library" "$WEBU" && grep -qx "SupplementaryGroups=gatbox-manuals" "$WEBU"'
 
 # Disk imaging's read-only tools (hdparm -I/-N, smartctl -i/-H). Installing the two packages has side effects that are

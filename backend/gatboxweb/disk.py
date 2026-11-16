@@ -72,8 +72,15 @@ def status():
     queued, running = os.path.exists(spool("request.json")), os.path.exists(spool("running.json"))
     req = (_read("request.json") if queued else _read("running.json") if running else None) or {}
     request = {k: req.get(k) for k in ("op", "device", "label", "image", "machine") if k in req} or None
+    st = _read("status.json")
+    if isinstance(st, dict) and st.get("state") == "running" and not (queued or running):
+        # A status that says "running" with no claim behind it is a job that died without finishing: a power cut or a reboot (the claim
+        # is removed at boot, tmpfiles) leaves the last tick behind. Shown as running it would be a progress card for ever.
+        st = dict(st, state="stopped", stale=True,
+                  error=st.get("error") or "the job stopped without finishing (the Pi was restarted, or power was cut)",
+                  hint=st.get("hint") or "a write stopped partway leaves the drive partly written: don't put it in a machine; write it again")
     return {"disks": dl.disks(), "store": store(), "busy": queued or running, "queued": queued, "running": running,
-            "status": _read("status.json"), "request": request, "spool": os.path.isdir(config.DISK_SPOOL)}
+            "status": st, "request": request, "spool": os.path.isdir(config.DISK_SPOOL)}
 
 
 def images():

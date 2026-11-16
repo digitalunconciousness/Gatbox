@@ -47,6 +47,7 @@ import json
 import mmap
 import os
 import re
+import signal
 import stat
 import struct
 import subprocess
@@ -874,6 +875,20 @@ def run_job(request, status):
         return 0
     say = (lambda m: print("gatbox-disk:" + m, flush=True))
     w = Work(status, say)
+    # SIGTERM is how systemd stops this job: its time limit, or `systemctl stop`. Left alone it would end the process where it stands:
+    # no status, no log line, and a running.json that the DISK tab and every thumbnail wait on for good (the Pi, 2026-11-16: a 2.5 hour
+    # write against a 3 hour limit). Turned into a Stop, the job takes its usual way out: it says what happened, a write logs itself as
+    # stopped and partly written, and the claim is removed. Once only: a second signal while it is saying so is let through.
+    stopped_once = []
+
+    def on_term(signum, frame):
+        if stopped_once:
+            return
+        stopped_once.append(signum)
+        raise Stop("the job was stopped from outside (systemd's time limit, or systemctl stop)",
+                   "a write stopped partway leaves the drive partly written: don't put it in a machine; write it again, "
+                   "or VERIFY ONLY if it had reached its read-back")
+    old_term = signal.signal(signal.SIGTERM, on_term)
     try:
         try:
             with open(running) as f:
@@ -911,6 +926,7 @@ def run_job(request, status):
         print(f"gatbox-disk: {w.info.get('op')}: {w.info['state']}: {w.info.get('error') or ''}", flush=True)
         return 0
     finally:
+        signal.signal(signal.SIGTERM, old_term)
         try:
             os.remove(running)
         except FileNotFoundError:

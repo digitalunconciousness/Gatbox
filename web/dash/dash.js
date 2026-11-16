@@ -3619,6 +3619,35 @@
     b.addEventListener("click", () => fbExpDo(live ? "stop" : "dismiss"));
     c.appendChild(add(box, add(row, b)));
   }
+  // EARLIER COPIES: what is already in the store's _exports folder, newest first (the `recent` the copy's status carries: the latest eight).
+  // Read only: nothing here deletes a copy or opens one. A ".partial" folder is a copy that was stopped or cut off.
+  // FB.earlier (the list is open) is not in FB's literal on purpose: it starts undefined, which reads as closed.
+  function fbEarlier(c) {
+    const r = (FB.exp || {}).recent || [];
+    if (!r.length) return;
+    const box = el("div", "dk-earlier"), row = el("div", "btnrow");
+    const b = el("button", null, FB.earlier ? "HIDE EARLIER COPIES" : `EARLIER COPIES (${r.length})`);
+    b.addEventListener("click", () => { FB.earlier = !FB.earlier; renderDisk(); });
+    add(box, add(row, b));
+    if (FB.earlier) {
+      const list = el("div", "dk-eplist");
+      for (const e of r) {
+        const when = e.finished ? stamp(e.finished) : "";
+        const line = el("div", "dk-ep" + (e.incomplete ? " part" : ""));
+        if (e.incomplete) {
+          add(line, el("b", null, "UNFINISHED COPY"), el("div", "mut dk-path", `${e.dir}${when ? " · last written " + when : ""}`),
+              el("div", "warn", "A copy that was stopped or cut off. What is in it is partial."));
+        } else {
+          add(line, el("b", null, `${e.name || e.dir}`), el("div", "mut", `${when ? when + " · " : ""}${num(e.files)} file${e.files === 1 ? "" : "s"} · ${GB(e.bytes)}`),
+              el("div", "mut dk-path", `_exports/${e.dir}`),
+              e.failed ? el("div", "warn", `${num(e.failed)} file${e.failed === 1 ? "" : "s"} could not be read out of the image.`) : null);
+        }
+        list.appendChild(line);
+      }
+      add(box, list, el("div", "mut", "The latest eight. They are on the store: take the drive to another computer to use them. Each folder's _export.json has every file's SHA-1."));
+    }
+    c.appendChild(box);
+  }
   function fbSearchOpen() {
     Object.assign(FB, {view: "search", err: null, from: null});
     fbIndexLoad();
@@ -3787,6 +3816,7 @@
     if (FB.busy) c.appendChild(el("div", "dk-busy cy", FB.busy));
     if (FB.exp === null) { FB.exp = {state: "idle"}; fbExpLoad(); }                // first look: what is the copy doing?
     fbExpStrip(c);
+    fbEarlier(c);
     fbAskCard(c);
     if (FB.err) {
       if (FB.view === "file" && FB.file) c.appendChild(el("h2", null, FB.file.name));           // which file the refusal is about

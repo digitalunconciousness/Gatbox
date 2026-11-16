@@ -159,6 +159,10 @@ check "tmpfiles: disks.conf is created empty, 600 root" 'grep -qE "^f /etc/gatbo
 check "udev: whole disks behind any USB parent, group gatbox-disk 0660, the desktop told to ignore them" \
     'grep -qE "^SUBSYSTEM==\"block\", ENV\{DEVTYPE\}==\"disk\", SUBSYSTEMS==\"usb\", GROUP=\"gatbox-disk\", MODE=\"0660\", ENV\{UDISKS_IGNORE\}=\"1\"" "$RULE"'
 check "... and it does not match on ID_BUS"        '! grep -v "^#" "$RULE" | grep -q "ID_BUS"'
+# udisks reads UDISKS_IGNORE per block device: the disk's flag did not stop the desktop mounting a CF card's partition (the Pi,
+# 2026-11-15). The partition line sets that flag and nothing else, so partitions keep root:disk.
+check "udev: partitions behind any USB parent are ignored by the desktop too, with no group or mode of their own" \
+    'grep -qE "^SUBSYSTEM==\"block\", ENV\{DEVTYPE\}==\"partition\", SUBSYSTEMS==\"usb\", ENV\{UDISKS_IGNORE\}=\"1\"[[:space:]]*$" "$RULE"'
 check "gatbox-web holds the spool's group and may write the spool, not the devices' group" \
     'grep -qx "SupplementaryGroups=gatbox-disk-queue" "$WEBU" && grep -qx "ReadWritePaths=-/var/spool/gatbox-disk" "$WEBU" && ! grep -qE "^SupplementaryGroups=.*gatbox-disk($| )" "$WEBU"'
 check "the job runs as gatbox-disk with the queue group" \

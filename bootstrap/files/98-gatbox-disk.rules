@@ -8,3 +8,10 @@
 # drive through the dock, ID_BUS is "ata" (Task 0, 2026-11-06), so that match would miss exactly the drives this is for.
 # mmcblk and nvme are not behind USB, so they stay root:disk, and so do partitions (DEVTYPE "partition").
 SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", SUBSYSTEMS=="usb", GROUP="gatbox-disk", MODE="0660", ENV{UDISKS_IGNORE}="1"
+#
+# udisks reads UDISKS_IGNORE from each block device, not from the disk it sits on: with the line above alone, the desktop
+# mounted a CF card's FAT partition read-write as it appeared (the Pi, 2026-11-15), and a read-write FAT mount sets the dirty
+# flag in the card's boot sector. So a partition behind USB is ignored too. It keeps its group and mode (root:disk): only the
+# flag is set. The bootstrap's re-trigger reaches whole disks only, so a card already in the dock when the rule is installed
+# is ignored from its next plug-in.
+SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", SUBSYSTEMS=="usb", ENV{UDISKS_IGNORE}="1"

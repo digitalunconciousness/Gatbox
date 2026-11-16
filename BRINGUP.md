@@ -855,7 +855,14 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         `test-disk-store.sh`: 30, on a stand-in machine (no device is opened); six deliberate breakages of the guards each fail it.
         Read on the Pi (2026-11-14): `lsblk` shows the 4 TB drive's serial, so the script accepts it; its own model is
         `WDC WD40NMZW-11GX6S1` (not the case's "My Passport"); and the desktop had **mounted** its partition (label BATOCERA), so
-        the script refuses until it is unmounted. Once the udev rule is in, the desktop leaves USB disks alone
+        the script refuses until it is unmounted. The udev rule as installed on 2026-11-14 does **not** keep the desktop off
+        USB media: it sets `UDISKS_IGNORE` on the whole disk only, and udisks reads it per block device. On 2026-11-15 the desktop
+        (`pcmanfm --desktop` through gvfs-udisks2-volume-monitor) had udisks mount a CF card's FAT partition on the dock read-write
+        each time it appeared (`sda` had `UDISKS_IGNORE=1`, `sda1` had none). A drive the dock reports as fixed (the WD800JD) was
+        not mounted; the card, reported removable, was. The fix is a second rule line for partitions that sets only `UDISKS_IGNORE`
+        (`98-gatbox-disk.rules`, `test-bootstrap.sh`: 149). **Not installed yet.** After the install, replug a card that is already
+        in the dock: the bootstrap's re-trigger reaches whole disks only. Check it on the Pi with
+        `udevadm info /dev/sdX1 | grep UDISKS` (it should print `UDISKS_IGNORE=1`) and by plugging a card in: nothing mounts.
   - [x] `hdparm` + `smartmontools` in the bootstrap (2026-11-13), ahead of Task 4, for Task 0's remaining reads. Two side
         effects of installing them are switched off: smartmontools enables **smartd**, which polls every disk (the
         bootstrap disables it; the tool stays), and hdparm's own **udev rule** sets APM `-B254` on each drive as it appears

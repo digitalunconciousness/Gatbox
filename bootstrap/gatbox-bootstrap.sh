@@ -38,6 +38,7 @@
 #      the disk job: the gatbox-disk user, the gatbox-disk-queue group, /var/spool/gatbox-disk, gatbox-disk.path, and the
 #      image store's mount unit (srv-gatbox-disks.mount, written only when /etc/gatbox/disks.conf holds a UUID),
 #      the manuals job: the gatbox-fetch user, /var/spool/gatbox-manuals, gatbox-manuals.path (the LIBRARY's FIND A MANUAL)
+#      the chip-list job: the gatbox-mame group, /var/spool/gatbox-mame, gatbox-mame-roms.path (ROM lists for games added later)
 #   7  desktop (for the sudo user): the 7" kiosk autostart (gatbox-kiosk on|off), Pi OS autotouch off and its
 #      port-pinned touch line removed, so the panel works on either HDMI port with real touch events
 #   8  minipro (XGecu T48), built from a pinned upstream tag; its T48 part-name list for the dashboard
@@ -64,6 +65,8 @@ backend/gatbox-browse.service                   /etc/systemd/system/gatbox-brows
 backend/gatbox-disk.path                        /etc/systemd/system/gatbox-disk.path                  644
 backend/gatbox-manuals.service                  /etc/systemd/system/gatbox-manuals.service            644
 backend/gatbox-manuals.path                     /etc/systemd/system/gatbox-manuals.path               644
+backend/gatbox-mame-roms.service                /etc/systemd/system/gatbox-mame-roms.service          644
+backend/gatbox-mame-roms.path                   /etc/systemd/system/gatbox-mame-roms.path             644
 bootstrap/files/sysusers-gatbox.conf            /etc/sysusers.d/gatbox.conf                           644
 bootstrap/files/tmpfiles-gatbox.conf            /etc/tmpfiles.d/gatbox.conf                           644
 backend/gatbox-rtc-sync                         /usr/local/sbin/gatbox-rtc-sync                       755
@@ -357,7 +360,7 @@ if [ "${1:-}" = "--check" ]; then
     for l in usb_max_current_enable=1; do grep -qxF "$l" /boot/firmware/config.txt || DIFFS+=("config.txt += $l"); done
     grep -qE '^[^#]*rtc_bbat_vchg' /boot/firmware/config.txt && [ -z "$RTC_CHARGE" ] && DIFFS+=("config.txt: comment out rtc_bbat_vchg (RTC CHARGING IS ON)")
     for u in gatbox-raillog.service gatbox-web.service gatbox-scand.service gatbox-dump.path gatbox-rtc-sync.timer \
-             gatbox-sync.timer gatbox-disk.path gatbox-manuals.path gatbox-browse.socket; do
+             gatbox-sync.timer gatbox-disk.path gatbox-manuals.path gatbox-mame-roms.path gatbox-browse.socket; do
         systemctl -q is-enabled "$u" 2>/dev/null || DIFFS+=("enable     $u"); done
     systemctl -q is-enabled smartmontools.service 2>/dev/null \
         && DIFFS+=("disable    smartd (smartmontools.service): the disk jobs call smartctl on demand, nothing polls the drives")
@@ -368,6 +371,8 @@ if [ "${1:-}" = "--check" ]; then
     getent group gatbox-disk-queue >/dev/null || DIFFS+=("create     group gatbox-disk-queue (sysusers.d)")
     [ -d /var/spool/gatbox-disk ] || DIFFS+=("create     /var/spool/gatbox-disk (tmpfiles.d)")
     [ -d /var/spool/gatbox-manuals ] || DIFFS+=("create     /var/spool/gatbox-manuals (tmpfiles.d)")
+    getent group gatbox-mame >/dev/null || DIFFS+=("create     group gatbox-mame (sysusers.d: the chip-list job's spool)")
+    [ -d /var/spool/gatbox-mame ] || DIFFS+=("create     /var/spool/gatbox-mame (tmpfiles.d)")
     [ -d /srv/gatbox/disks ] || DIFFS+=("create     /srv/gatbox/disks, the image store's bare mountpoint (tmpfiles.d)")
     id -nG "$(id -un)" | grep -qw gatbox-disk-queue || DIFFS+=("group      $(id -un) += gatbox-disk-queue (the disk spool)")
     stale=$(unfixed_disk_nodes | xargs)
@@ -601,8 +606,8 @@ svc() {   # <unit> <installed path glob>...: enable it; restart only if its file
 if changed /etc/sysusers.d/gatbox.conf || ! getent passwd gatbox-dump >/dev/null || ! getent group gatbox-manuals >/dev/null \
    || ! getent passwd gatbox-sync >/dev/null || ! getent group gatbox-wifi >/dev/null \
    || ! getent passwd gatbox-disk >/dev/null || ! getent group gatbox-disk-queue >/dev/null || ! getent passwd gatbox-browse >/dev/null \
-   || ! getent passwd gatbox-fetch >/dev/null; then
-    systemd-sysusers /etc/sysusers.d/gatbox.conf && SYSUSERS_RAN=1 && log "users gatbox-dump (T48 dumps, group plugdev), gatbox-sync (hub push), gatbox-disk (disk jobs, its own devices' group) and gatbox-browse (the drive browser) and gatbox-fetch (the manuals job), groups gatbox-manuals and gatbox-disk-queue"
+   || ! getent passwd gatbox-fetch >/dev/null || ! getent group gatbox-mame >/dev/null; then
+    systemd-sysusers /etc/sysusers.d/gatbox.conf && SYSUSERS_RAN=1 && log "users gatbox-dump (T48 dumps, group plugdev), gatbox-sync (hub push), gatbox-disk (disk jobs, its own devices' group) and gatbox-browse (the drive browser) and gatbox-fetch (the manuals job), groups gatbox-manuals, gatbox-disk-queue and gatbox-mame (the chip-list spool)"
 fi
 # udev works out GROUP= when it LOADS a rule. Step 5 loaded 98-gatbox-disk.rules before this step could make the gatbox-disk
 # group, so on a first install udev ignored GROUP="gatbox-disk" ("Unknown group": udevadm verify on the Pi said so) and left the
@@ -618,7 +623,7 @@ if [ -f "$DISK_RULE" ] && { [ "${SYSUSERS_RAN:-0}" = 1 ] || [ -n "$(unfixed_disk
     still=$(unfixed_disk_nodes | xargs)
     [ -z "$still" ] || warn "still outside group gatbox-disk after that: $still (unplug it and plug it back in, or reboot)"
 fi
-if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /var/spool/gatbox-disk ] || [ ! -d /var/spool/gatbox-manuals ] || [ ! -d /srv/gatbox/disks ] || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ] || [ ! -d /srv/gatbox/manuals ] || [ ! -d /srv/gatbox/library ] || [ ! -d /etc/gatbox ] || [ ! -d /etc/gatbox/hubs.d ] || [ ! -e /etc/gatbox/hub.conf ] || [ ! -e /etc/gatbox/archive.conf ] || [ ! -d /var/spool/gatbox-wifi ]; then
+if changed /etc/tmpfiles.d/gatbox.conf || [ ! -d /var/spool/gatbox-disk ] || [ ! -d /var/spool/gatbox-manuals ] || [ ! -d /var/spool/gatbox-mame ] || [ ! -d /srv/gatbox/disks ] || [ ! -d /srv/gatbox/roms ] || [ ! -d /var/spool/gatbox-dump ] || [ ! -d /srv/gatbox/manuals ] || [ ! -d /srv/gatbox/library ] || [ ! -d /etc/gatbox ] || [ ! -d /etc/gatbox/hubs.d ] || [ ! -e /etc/gatbox/hub.conf ] || [ ! -e /etc/gatbox/archive.conf ] || [ ! -d /var/spool/gatbox-wifi ]; then
     systemd-tmpfiles --create /etc/tmpfiles.d/gatbox.conf && log "/srv/gatbox/roms + /srv/gatbox/manuals + /srv/gatbox/library + /var/spool/gatbox-dump + /var/spool/gatbox-disk + /var/spool/gatbox-manuals + /srv/gatbox/disks (bare) + /etc/gatbox (+ hubs.d, disks.conf)"
 fi
 if ! id -nG "$U" | grep -qw gatbox-dump; then
@@ -639,6 +644,9 @@ svc gatbox-dump.path /etc/systemd/system/gatbox-dump.path /etc/systemd/system/ga
 svc gatbox-disk.path /usr/local/bin/gatbox-disk '/etc/systemd/system/gatbox-disk.*' '/usr/local/lib/gatbox/gatboxlib/*'
 # FIND A MANUAL (the LIBRARY on the 7"): gatbox-web writes a request, this path unit starts the job as gatbox-fetch. After gatbox-web.
 svc gatbox-manuals.path /usr/local/bin/gatbox-manuals '/etc/systemd/system/gatbox-manuals.*' '/usr/local/lib/gatbox/gatboxlib/*'
+# ROM lists for games added to the library after the seed (phase D4): gatbox-web writes a request, this path unit starts the job
+# (a DynamicUser with the spool's group, no network, no devices). After gatbox-web.
+svc gatbox-mame-roms.path /usr/local/bin/gatbox-mame-roms '/etc/systemd/system/gatbox-mame-roms.*' '/usr/local/lib/gatbox/gatboxlib/*'
 # The drive browser (FILES on the 7"): the socket is enabled and listening, and systemd starts the service when gatbox-web asks.
 # Restarting the socket on a change stops the service too (it Requires= it), so the next ask runs the new code.
 svc gatbox-browse.socket /usr/local/bin/gatbox-browse '/etc/systemd/system/gatbox-browse.*' '/usr/local/lib/gatbox/gatboxlib/*'

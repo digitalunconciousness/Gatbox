@@ -1161,10 +1161,9 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         hub.conf, because a missing credential file fails the unit). In `backend/gatbox-sync.service`:
         `ConditionFileNotEmpty=|/etc/gatbox/archive.conf` (the job also runs when only an archive is set up) and
         `LoadCredential=archive:/etc/gatbox/archive.conf`. `bash bootstrap/gatbox-bootstrap.sh --check` lists exactly these
-  - [ ] ⏸ Owner: run `archive/RUNBOOK.md` when D3 is shown and she wants it. **Not known, 2026-11-16:** `archive.conf` is there, but the bootstrap makes
-        it empty and only root can read it, so its presence says nothing about an archive. On the Pi,
-        `sudo test -s /etc/gatbox/archive.conf && echo SET || echo EMPTY` says which (it prints one word and nothing from the file); with SET, the
-        7″'s SYSTEM tile says when the library last synced.
+  - [x] Owner: run `archive/RUNBOOK.md`. **Done:** `/etc/gatbox/archive.conf` is not empty (the owner's
+        `sudo test -s /etc/gatbox/archive.conf`, 2026-11-16: SET). Only the owner puts the archive's address and tokens there, so an
+        archive is set up and the deck syncs with it. Whether the last sync succeeded is on the 7″'s SYSTEM tile, not checked here.
   - [x] D4, on the 7" and the rest of the deck's side (built 2026-11-04, not installed). **LIBRARY → CONFLICTS**: each conflict
         the sync kept (`state/library/conflicts.json`) as BEFORE / THIS DECK / THE ARCHIVE, the fields that differ lit and each
         side's change named in words too (CHANGED), a removal said as one (THE ARCHIVE REMOVED IT), the deck side as the library

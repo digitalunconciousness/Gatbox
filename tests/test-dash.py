@@ -2485,6 +2485,12 @@ def main():
         check("... the spec sheet still answers as before: the manual's limit, its page, CONFIRM / CONFIRMED, actuals for the machine",
               "4.75–5.25 V" in text("#lb-body") and "SET ACTUAL" in text("#lb-body"))
         shot("25a-library-seeded")
+        check("the game's page lists the drive images read for its machine (the owner, 2026-11-16: 'No disk image.'), each with its size and date",
+              lib_has("Drive images (") and "Drive images (0)" not in text("#lb-body") and "WW-HDD" in text("#lb-body") and "Tap one to look inside it" in text("#lb-body"))
+        q("[...document.querySelectorAll('#lb-body button.row')].find(b => b.textContent.startsWith('WW-HDD')).click()")
+        check("... a tap opens that image in DISK → FILES", settles(c, "document.querySelector('#v-disk').classList.contains('on') && document.querySelector('#dk-body').textContent.includes('WW-HDD')", 20))
+        click('[data-view="library"]')
+        lib_has("ALL GAMES (3)")
         lib_tap("ALL GAMES")
         c.wait("document.querySelectorAll('#pane .picklist .row').length >= 3", 10)
         names = q("[...document.querySelectorAll('#pane .picklist .row')].map(r => r.textContent)")

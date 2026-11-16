@@ -1662,6 +1662,8 @@
       const ic = await imagesCard(g);
       if (ic && mnSlug() === slug) B.appendChild(ic);
     }
+    const dc = await diskImagesForGame(g, slug);
+    if (dc && mnSlug() === slug) B.appendChild(dc);
   }
   async function pickManualsMachine() {
     let R, O;
@@ -2032,6 +2034,29 @@
       else b.disabled = true;
       c.appendChild(b);
     }
+    return c;
+  }
+  // Drive images in the image store read for this game's machines (the owner, 2026-11-16: "No disk image." on California Speed's page).
+  // A READ files an image under the machine it was read for; this lists those for every machine of the game (and the game's own key).
+  // On the Pi's own screen a row opens it in DISK → FILES.
+  async function diskImagesForGame(g, slug) {
+    let r;
+    try { r = await api("GET", "/api/disk/images"); } catch (e) { return null; }
+    const mine = new Set([slug, ...(g ? [g.key, ...g.machines.map(m => m.slug)] : [])]);
+    const imgs = (r.images || []).filter(i => mine.has(i.machine));
+    const c = el("div", "card");
+    c.appendChild(el("h2", null, `Drive images (${r.mounted === false ? "?" : imgs.length})`));
+    if (r.mounted === false) { c.appendChild(el("div", "mut", "The image store isn't plugged in: its drive images show here when it is.")); return c; }
+    if (!imgs.length) { c.appendChild(el("div", "mut", "None in the image store: DISK → READ files a drive or card read for this machine here.")); return c; }
+    for (const i of imgs) {
+      const b = el("button", "row");
+      add(b, el("b", null, i.label || base(i.image)),
+          el("div", "mut", `${GB(i.bytes)} · ${(i.media || "").toUpperCase()} · ${stamp(i.started)}${i.source ? " · from " + i.source : ""} · SHA-1 ${(i.sha1 || "").slice(0, 8)}`));
+      if (S.local) b.addEventListener("click", () => { show("disk"); K.mode = "files"; fbIndexLoad(); fbOpenImage(i); });
+      else b.disabled = true;
+      c.appendChild(b);
+    }
+    if (S.local) c.appendChild(el("div", "mut", "Tap one to look inside it (DISK → FILES)."));
     return c;
   }
   const pageUrl = (slug, file, page, w) => `/manual/${encodeURIComponent(slug)}/${encodeURIComponent(file)}/${page}.png?w=${w}`;

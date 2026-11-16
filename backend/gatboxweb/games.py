@@ -18,7 +18,7 @@ import time
 from gatboxlib import library as L
 from gatboxlib import libview
 
-from . import config, libconflicts, libsource, mame_request, meter, roster
+from . import config, hubs, libconflicts, libsource, mame_request, meter, roster
 from .live import LIVE
 
 LOW_FREE = 2 * 1024 ** 3        # SYSTEM warns below 2 GB free on /srv, or at 90% used
@@ -35,7 +35,14 @@ def _view():
 
 
 def _machine_names():
-    return {e["slug"]: e.get("name") or e["slug"] for _, e in (roster.entries() or [])}
+    """slug -> name: this Pi's roster, and every hub's (a hub's machine linked here shows by its name, not its slug)."""
+    names = {}
+    for h in hubs.hubs():
+        for m in h.get("machines") or []:
+            if isinstance(m, dict) and m.get("slug"):
+                names.setdefault(m["slug"], m.get("name") or m["slug"])
+    names.update({e["slug"]: e.get("name") or e["slug"] for _, e in (roster.entries() or [])})
+    return names
 
 
 def _summary(v, key, names, conflicts=None):
@@ -117,15 +124,17 @@ def _slug_keys(v):
 
 
 def link(key, body, local):
-    """POST /api/library/games/<key>/machines {slug, replace?}: this Pi's machine is this game, so it reads the game's manuals,
-    limits, chips and images. A machine a hub knows is linked in its app (its model_key), not here."""
+    """POST /api/library/games/<key>/machines {slug, replace?}: this machine is this game, so it reads the game's manuals,
+    limits, chips and images. A machine on this Pi's roster, or one a hub lists (the owner, 2026-11-16: a hub's Time Crisis 2 with no
+    model in its app could not be given its game at all). The link is the deck's own: the hub is not told, and for a hub's machine it
+    wins over the model the hub names (roster.library reads it first)."""
     if not local:
         raise meter.Bad(403, "the library is edited on the Pi's own screen")
     body = _fields(body)
     v = _view()
     slug = body.get("slug")
-    if slug not in (roster.local_slugs() or set()):
-        raise meter.Bad(404, f"{slug!r} isn't a machine on this Pi's roster (a hub's machine is linked in its app)")
+    if not isinstance(slug, str) or (slug not in (roster.local_slugs() or set()) and hubs.machine(slug) is None):
+        raise meter.Bad(404, f"{slug!r} isn't a machine on this Pi's roster or on a hub's")
     game = v.lib.resolve(key)
     if game is None:
         raise meter.Bad(404, f"no game {key!r} in the library")

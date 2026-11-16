@@ -831,8 +831,8 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           that failed (a disk job was running) is asked for again at the next draw. `test-dash.sh`: 333 (was 331): small writes into the store
           over a poll do not redraw the grid, and a redraw that does happen (DELETED) keeps the same elements; each half fails a test on its own
           when reverted. **Not seen on the Pi yet**: the cause is read from the code and reproduced with a store whose free space moves.
-    - [x] **Thumbnails still flashing after that, and the reason (the owner's screenshot, 2026-11-16 02:03).** The disk spool held a `running.json`
-          from 01:04 and a `status.json` written at 02:02, so a disk job had been running for an hour, and `_browse/thumbs` **did not exist**: not one
+    - [x] **Thumbnails still flashing after that, and the reason (the owner's screenshot, 2026-11-16).** The disk spool held a `running.json`
+          from an hour earlier and a `status.json` written a minute before the screenshot, so a disk job had been running for an hour, and `_browse/thumbs` **did not exist**: not one
           thumbnail had ever been made. That is by design: `gatboxlib/browse.thumb()` makes none while a disk job runs (imaging has priority) and
           answers 409. The grid then removed the picture box of every refused thumbnail, which is what read as a flash: the dark box appeared and
           collapsed. Now a refused or undrawable thumbnail leaves a box of the same size (`DISK JOB RUNNING`, or `NO PICTURE` when no job is running),

@@ -849,8 +849,8 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         waited on for good; and `GET /api/disk` shows a status that says "running" with no claim behind it (a power cut, a reboot) as stopped and
         stale instead of a progress card for ever. `test-disk.sh`: 176 (was 173), `test-bootstrap.sh`: 162 (was 160, with the tmpfiles line run for
         real against a scratch root: a bootstrap run leaves the claim, a boot removes it and only it); 6 breakages each fail a test. The running job's
-        own limit cannot be raised (systemd keeps the one it started with); about 04:04 CST was its end, and the job was expected to finish about
-        03:30 to 03:45.
+        own limit cannot be raised (systemd keeps the one it started with): it ends three hours after the job started, and the job was expected to
+        finish about half an hour before that.
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4

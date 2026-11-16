@@ -623,6 +623,21 @@ def api_disk_write(h, m, q):
     _disk_queued(h, req, f"WRITE ARMED {os.path.basename(req['image'])} -> {req['device']} ({req['armed']['by']})")
 
 
+def api_disk_format_check(h, m, q):
+    req = disk.format_check_request(h.body())
+    _disk_queued(h, req, f"format check {req['device']} ({req['fs']})")
+
+
+def api_disk_format(h, m, q):
+    """POST /api/disk/format: the Pi's own screen only (h.is_local()): the hold there is the arm."""
+    req = disk.format_request(h.body(), h.is_local())
+    _disk_queued(h, req, f"FORMAT ARMED {req['device']} as {(req['check'].get('layout') or {}).get('made')} ({req['armed']['by']})")
+
+
+def api_disk_formats(h, m, q):
+    h.json(200, disk.formats())
+
+
 def api_disk_record(h, m, q):
     """GET /api/disk/record?image=REL: the job record of one stored image (the bench procedure's Appendix B)."""
     h.json(200, disk.record(q1(q, "image")))
@@ -1094,6 +1109,9 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("POST", r"/api/disk/retry", api_disk_retry),
     ("POST", r"/api/disk/check", api_disk_check),
     ("POST", r"/api/disk/write", api_disk_write),
+    ("POST", r"/api/disk/format-check", api_disk_format_check),
+    ("POST", r"/api/disk/format", api_disk_format),
+    ("GET", r"/api/disk/formats", api_disk_formats),
     ("GET", r"/api/disk/checklist", api_disk_checklist_get),
     ("POST", r"/api/disk/checklist", api_disk_checklist_post),
     ("POST", r"/api/disk/checklist/new", api_disk_checklist_new),

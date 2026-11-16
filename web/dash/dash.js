@@ -2894,7 +2894,7 @@
                      mounted: ["MOUNTED", "warn"]};
   const DISK_MEDIA = [["hdd", "HDD"], ["cf", "CF"], ["sd", "SD"], ["ssd", "SSD"]];
   const DISK_LABEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
-  const DISK_DOING = {read: "READING", retry: "RETRYING", check: "CHECKING", write: "WRITING"};
+  const DISK_DOING = {read: "READING", retry: "RETRYING", check: "CHECKING", write: "WRITING", format_check: "CHECKING", format: "FORMATTING"};
 
   const loadImages = () => api("GET", "/api/disk/images").then(r => { K.images = r.images; renderDisk(); }).catch(() => {});
   async function loadDisk() {
@@ -2966,18 +2966,19 @@
     if (!ctl) {                                      // a phone: what's going on, no controls
       const c = el("div", "card");
       add(c, el("h2", null, "Drives on USB"), driveTiles(st, null, null, 0), driveInfoBlock(st),
-          el("div", "mut", "READ and WRITE are on the Pi's own screen."));
+          el("div", "mut", "READ, WRITE and FORMAT are on the Pi's own screen."));
       add(B, c, checklistCard(), recordCard(), el("div", "card mut", "FILES, for looking inside an image, is on the Pi's own screen."), diskImagesCard(st));
       return;
     }
     const seg = el("div", "seg");
-    for (const [k, t] of [["read", "READ"], ["write", "WRITE"], ["swap", "SWAP"], ["records", "RECORDS"], ["files", "FILES"], ["checklist", "CHECKLIST"]]) {
+    for (const [k, t] of [["read", "READ"], ["write", "WRITE"], ["format", "FORMAT"], ["swap", "SWAP"], ["records", "RECORDS"], ["files", "FILES"], ["checklist", "CHECKLIST"]]) {
       const b = el("button", K.mode === k ? "on" : null, t);
-      b.addEventListener("click", () => { K.mode = k; if (k === "files" || k === "records") loadImages(); if (k === "files") fbIndexLoad(); renderDisk(); });
+      b.addEventListener("click", () => { K.mode = k; if (k === "files" || k === "records") loadImages(); if (k === "files") fbIndexLoad(); if (k === "format") loadFormats(); renderDisk(); });
       seg.appendChild(b);
     }
     B.appendChild(seg);
     if (K.mode === "write") diskWritePanel(B, st);
+    else if (K.mode === "format") diskFormatPanel(B, st);
     else if (K.mode === "swap") B.appendChild(swapCard(st));
     else if (K.mode === "records") B.appendChild(recordCard());
     else if (K.mode === "files") B.appendChild(filesCard(st));
@@ -3017,7 +3018,7 @@
   function diskProgress(st) {
     const s = st.status && st.status.state === "running" ? st.status : {}, r = st.request || s;
     const c = el("div", "card");
-    const what = r.op === "check" ? r.device : r.op === "write" ? `${base(r.image)} → ${r.device}`
+    const what = r.op === "check" || r.op === "format_check" || r.op === "format" ? r.device : r.op === "write" ? `${base(r.image)} → ${r.device}`
                : `${r.label || ""}${r.device ? " · " + r.device : ""}`;
     c.appendChild(el("h2", null, `${s.verify_only ? "VERIFYING" : DISK_DOING[r.op] || "WORKING"} ${what}`));
     const bar = el("div", "dk-bar"), fill = el("div");
@@ -3075,10 +3076,24 @@
         b.addEventListener("click", () => { K.mode = "checklist"; renderDisk(); });
         c.appendChild(b);
       }
+    } else if (s.op === "format_check" && s.state === "done") {
+      big("FORMAT CHECK PASSED", "ok");
+      line(`${s.device} · ${driveName(s.identity)} · ${exact((s.identity || {}).bytes)}`);
+      line(s.contents && s.contents.blank ? "It's blank." : "On it now: " + contentsText(s.contents), s.needs_ack ? "warn" : "mut");
+      line(`checked ${hms(s.at, true)}: good for 5 minutes`, "mut");
+    } else if (s.op === "format" && s.state === "done" && s.verified) {
+      const lay = s.layout || {}, k = s.kernel || {};
+      big("FORMATTED", "ok");
+      line(`${s.device} is now ${lay.table === "gpt" ? "GPT" : "MBR"} with one ${s.made} partition${s.label ? " '" + s.label + "'" : ""}, ${GB(lay.bytes)}`);
+      line(`${exact(s.bytes)} written, then read back twice: both match`, "mut");
+      line(k.current ? "The Pi sees the new partition."
+                     : "The Pi still lists the old partitions. Switch the dock off and on (or pull the reader) before you use this drive here.", k.current ? "mut" : "warn");
     } else {
-      big(s.op === "check" ? "TARGET REFUSED" : s.op === "write" ? (s.written ? "FAILED" : "NOT WRITTEN") : "STOPPED", "bad");
+      big(s.op === "check" ? "TARGET REFUSED" : s.op === "format_check" ? "FORMAT REFUSED" : s.op === "format" ? (s.written ? "FAILED" : "NOT FORMATTED")
+          : s.op === "write" ? (s.written ? "FAILED" : "NOT WRITTEN") : "STOPPED", "bad");
       line(s.error || "");
       if (s.hint) line("→ " + s.hint, "mut");
+      if (s.op === "format" && s.written) line("The format had started: the drive has no usable filesystem now. Format it again.", "warn");
       if (s.op === "write" && s.written) line("The drive was being written, so it holds part of the image: don't put it in a machine.", "warn");
     }
     return c;
@@ -3230,6 +3245,104 @@
       }
     }
     B.appendChild(p);
+  }
+  // --- FORMAT (docs/plans/2026-11-16-restore-and-format.md) ---------------------------------------------------------
+  // A quick format of a drive: a disk write (hard rule 6), so it goes the way WRITE goes: pick, a check that reads and writes nothing, the
+  // acknowledgement when the drive isn't blank, a hold on this screen. What is made comes from the check the job ran, not from this page.
+  // K.fmt is made on first use (not in K's literal): {drive, fs, label}.
+  const FORMAT_FS = [["fat32", "FAT32", "Reads everywhere. No file over 4 GB, no drive over 2 TB."],
+                     ["exfat", "exFAT", "Big files and big drives. Windows, macOS, cameras; older gear may not read it."],
+                     ["ext4", "ext4", "Linux only."]];
+  async function loadFormats() {
+    try { K.formats = (await api("GET", "/api/disk/formats")).formats; } catch (e) { K.formats = []; }
+    if (S.view === "disk" && K.mode === "format") renderDisk();
+  }
+  function diskFormat(ack) {
+    const body = {device: K.fmt.drive.name};
+    if (ack) body.ack = true;
+    return api("POST", "/api/disk/format", body).then(() => toast(`FORMAT armed: ${K.fmt.drive.name}`)).catch(e => { fail(e); renderDisk(); });
+  }
+  function diskFormatPanel(B, st) {
+    const f = K.fmt = K.fmt || {drive: null, fs: null, label: ""};
+    const p = el("div", "card"), ds = st.disks || [], s = st.status || {};
+    const drv = f.drive && ds.find(d => d.name === f.drive.name && d.role === "ok" && sameDrive(d.identity, f.drive.identity));
+    if (f.drive && !drv) f.drive = null;
+    if (s.op === "format" && s.job && K.fmtSeen !== s.job && s.state !== "running") { K.fmtSeen = s.job; loadFormats(); }   // a format just ended: the list below is stale
+    p.appendChild(el("div", "mut", "A quick format: a new partition table and one empty filesystem. It takes seconds, and what was on the drive is no longer reachable."));
+    add(p, el("h2", null, "1 · DRIVE"), driveTiles(st, d => { f.drive = {name: d.name, identity: d.identity}; renderDisk(); }, drv, 0), driveInfoBlock(st));
+    add(p, el("h2", null, "2 · FILESYSTEM"));
+    const seg = el("div", "seg");
+    for (const [k, t] of FORMAT_FS) {
+      const b = el("button", f.fs === k ? "on" : null, t);
+      b.addEventListener("click", () => { f.fs = k; renderDisk(); });
+      seg.appendChild(b);
+    }
+    const note = FORMAT_FS.find(x => x[0] === f.fs);
+    add(p, seg, el("div", "mut", note ? note[2] : "Pick one."));
+    const lb = el("button", null, f.label ? "LABEL: " + f.label : "LABEL: NONE (TAP TO TYPE ONE)");
+    lb.addEventListener("click", async () => {
+      const v = await keypad({title: "A name for the drive, up to 11 (A-Z, 0-9, _ and -), or nothing", max: 11, value: f.label || ""});
+      if (v == null) return;
+      const t = v.trim().toUpperCase().replace(/ /g, "_");
+      if (t && !/^[A-Z0-9][A-Z0-9_-]{0,10}$/.test(t)) return toast("A drive's name here is up to 11 of A-Z, 0-9, _ and -", "warn", 6000);
+      f.label = t; renderDisk();
+    });
+    p.appendChild(lb);
+    add(p, el("h2", null, "3 · FORMAT CHECK"));
+    const chk = el("button", null, "FORMAT CHECK");
+    chk.disabled = !(drv && f.fs && st.store.mounted && st.spool && !st.busy);
+    chk.addEventListener("click", () => api("POST", "/api/disk/format-check", {device: drv.name, identity: drv.identity, fs: f.fs, label: f.label})
+      .then(() => toast(`FORMAT CHECK queued: ${drv.name}`)).catch(fail));
+    add(p, chk, el("div", "mut", !st.store.mounted ? "Waits for the image store: every format is logged there, and it is where the check looks for an image of the drive."
+                                : "Reads what is on the drive now and looks in the store for an image of it: nothing is written."));
+    add(p, el("h2", null, "4 · FORMAT"));
+    const now = (Date.now() + S.offset) / 1000, lay = s.layout || {};
+    const ready = drv && !st.busy && s.op === "format_check" && s.state === "done" && s.target_ok === true && s.device === drv.name
+                  && lay.fs === f.fs && (s.label || "") === (f.label || "") && now - (s.at || 0) < 300;
+    clearTimeout(K.expT);
+    if (!ready) {
+      p.appendChild(el("div", "mut", "After a FORMAT CHECK of this drive, filesystem and label that passed (good for 5 minutes)."));
+    } else {
+      K.expT = setTimeout(renderDisk, Math.max(0, 300 - (now - s.at)) * 1000 + 500);
+      const want = FORMAT_FS.find(x => x[0] === f.fs)[1];
+      p.appendChild(el("div", null, `${drv.name} becomes ${lay.table === "gpt" ? "GPT" : "MBR"} with one ${lay.made} partition${s.label ? " '" + s.label + "'" : ""}, ${GB(lay.bytes)}.`));
+      if (lay.made !== want) p.appendChild(el("div", "warn", `This card is too small for ${want}: it gets ${lay.made}.`));
+      const acked = K.ackFor === s.job;
+      if (s.contents && s.contents.blank) p.appendChild(el("div", "mut", "It's blank: there is nothing on it to lose."));
+      else {
+        const from = (s.stored || []).filter(e => e.from_this_drive), same = (s.stored || []).filter(e => e.head_same);
+        if (s.warn_no_image) {
+          const box = el("div", "warn dk-over");
+          add(box, el("b", null, "THE STORE HAS NO IMAGE OF WHAT IS ON THIS DRIVE NOW."),
+              el("div", null, `On ${drv.name}: ${contentsText(s.contents)}. A format makes all of it unreachable.`),
+              from.length ? el("div", null, `An image was read from this drive (${from[0].label}, ${String(from[0].date || "").slice(0, 10)}), but the drive has changed since then.`) : null);
+          const first = el("button", "primary", "IMAGE IT FIRST");
+          first.addEventListener("click", () => { K.src = {name: drv.name, identity: drv.identity}; K.mode = "read"; renderDisk(); });
+          add(box, add(el("div", "btnrow"), first), el("div", null, "That takes you to READ with this drive picked. Or carry on below."));
+          p.appendChild(box);
+        } else {
+          p.appendChild(el("div", "warn dk-over", `NOT BLANK. On ${drv.name} now: ${contentsText(s.contents)}. A format makes all of it unreachable.`));
+          p.appendChild(el("div", "mut", `The store has it: ${same.map(e => e.label).join(", ")}. This drive still starts with the same bytes as that image (the first 64 MB are compared, not the whole drive).`));
+        }
+        const ack = el("button", "dk-ack" + (acked ? " on" : ""), (acked ? "✓ " : "") + (s.warn_no_image ? "ERASE IT WITH NO IMAGE: I'M SURE" : "ERASE IT: I'M SURE"));
+        ack.addEventListener("click", () => { K.ackFor = acked ? null : s.job; renderDisk(); });
+        p.appendChild(ack);
+      }
+      if (!s.needs_ack || acked)
+        add(p, holdButton(`HOLD 3 S TO FORMAT ${drv.name} AS ${lay.made}`, 3000, () => diskFormat(!!s.needs_ack && acked), K, renderDisk),
+            el("div", "mut", "The hold arms it for 30 s. The filesystem is made and checked in the store first, then written and read back twice."));
+    }
+    B.appendChild(p);
+    const log = el("div", "card"), rows = K.formats || [];
+    log.appendChild(el("h2", null, "Latest formats"));
+    if (!rows.length) log.appendChild(el("div", "mut", st.store.mounted ? "None yet. Each format is logged on the image store." : "The log is on the image store: plug it in."));
+    for (const r of rows)
+      log.appendChild(add(el("div", "dk-fmtrow"),
+        el("b", null, `${String(r.date || "").slice(0, 16).replace("T", " ")} · ${r.device}${r.target ? " · " + r.target : ""}`),
+        el("div", r.state === "verified" ? "ok" : "bad", r.state === "verified"
+          ? `${r.table === "gpt" ? "GPT" : "MBR"}, ${r.fs}${r.label ? " '" + r.label + "'" : ""}: verified`
+          : `stopped: ${r.error || "no reason recorded"}${r.written ? " (the format had started)" : " (nothing was written)"}`)));
+    B.appendChild(log);
   }
   function diskImagesCard(st) {
     const c = el("div", "card"), imgs = K.images;

@@ -109,7 +109,7 @@ USB port power switching, INA226, relays, MAK Strike, GBS-Control, RP2350B bus d
    jobs already write to, so COPY TO THE STORE is inside this rule, `docs/plans/2026-11-15-drive-browser-f4.md` §6. Nothing else
    in the drive browser writes anywhere but its own `_browse` folder. 2026-11-16: putting an image back on the drive it came
    from (RESTORE) is a disk write, armed and acknowledged like any other, with the one "this is the drive the image came from"
-   refusal lifted on purpose; a quick FORMAT of a target drive is a disk write too (decided, not built).
+   refusal lifted on purpose; a quick FORMAT of a target drive is a disk write too (built 2026-11-16, not installed).
    `docs/plans/2026-11-16-restore-and-format.md`.)
 7. **GPIO is 3.3 V only, Pi 5 included.** gpiozero (+lgpio), never RPi.GPIO. GPIO3 and GPIO26 reserved; keep I²C
    (2/3), UART (14/15) and SPI free. Anything at 5 V goes through a divider / opto / level shifter.
@@ -181,7 +181,7 @@ A READ for no machine no longer queues for the archive (nothing drains that queu
 
 **Disk imaging (phase D2), built 2026-11-03, installed on the Pi 2026-11-14.** Hard disks, CF and SD cards on the
 USB dock or a reader: READ into the image store, TARGET CHECK, WRITE from the 7″ (a hold arms it, two read-backs verify
-it), RESTORE (the same write onto the drive the image came from, through RESTORE CHECK: built 2026-11-16, not installed), the swap checklist. Spec: `docs/plans/2026-11-02-disk-imaging.md`; progress: BRINGUP.md. `gatbox-disk` (a CLI
+it), RESTORE (the same write onto the drive the image came from, through RESTORE CHECK: built 2026-11-16, not installed), FORMAT (a quick FAT32, exFAT or ext4 through FORMAT CHECK and the same hold; the filesystem is made in a scratch file on the store and copied through the job's one exclusive descriptor, so no mkfs opens a drive: built 2026-11-16, not installed), the swap checklist. Spec: `docs/plans/2026-11-02-disk-imaging.md`; progress: BRINGUP.md. `gatbox-disk` (a CLI
 and the job), `gatboxlib/disks.py` and gatbox-web's `/api/disk` + the DISK tab; the units, the udev rule, the sysusers and
 tmpfiles entries and the store's mount unit install with the bootstrap. The 4 TB drive is the image store and is mounted;
 as of 2026-11-15 the 7″ has run a real READ of the 80 GB donor drive, a READ of a 65 MB CF card, and the first WRITE (that card's image onto the donor, read back twice and verified). The DISK tab also has DRIVE INFO (what udev kept

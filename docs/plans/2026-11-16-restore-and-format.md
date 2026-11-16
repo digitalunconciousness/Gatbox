@@ -37,20 +37,53 @@ write). Dashboard: RESTORE CHECK beside TARGET CHECK in WRITE's step 3.
 
 Not done, said plainly: nothing here has run on a real drive, and a restore of a hard disk is hours at USB 2 speed.
 
-## FORMAT (decided, not built)
+## FORMAT (built 2026-11-16, not installed)
 
-A quick format of a target drive, from the 7″. Shape, mirroring WRITE:
-- A FORMAT step on the DISK tab, with WRITE's refusals (never the store, the system disk, a mounted drive, or one that fails the
-  identity check), a check no older than 5 minutes, a hold naming the drive and the filesystem, and an identity re-check before the first byte.
-- The check shows what is on the drive now, and whether the store holds an image of it. When it does not, it warns and offers IMAGE FIRST
-  (a READ of that drive into the store); the owner can still go on.
-- After the format it re-reads the partition table and the filesystem and checks them (`blkid`, plus an fsck check where the filesystem has one).
-- One line per format in `writes.jsonl` (`op: format`, the filesystem, the label, what was on the drive before, the result, when it was
-  armed), and a row in the job record.
+A quick format of a target drive, from the 7″ (DISK → FORMAT) or the terminal (`gatbox-disk format-check` / `format`).
 
-What has to be read on the Pi before any code (rule 12), and decided with the owner if it needs system config (rule 5):
-- Which of `mkfs.vfat`, `mkfs.exfat`, `mkfs.ext4`, `sfdisk` and `wipefs` are installed, and their versions.
-- Whether the disk job's sandbox can write a partition table and a filesystem without root. The partition device nodes are `root:disk`
-  and the job's user is not in `disk`, and re-reading a partition table needs a capability the unit does not have. A way that needs no
-  kernel re-read is preferred: write the table's bytes through the exclusive descriptor, and make the filesystem with the tool's offset option.
-- Whether any package has to be added to the bootstrap (apt before pip).
+What the Pi had (the owner's paste, 2026-11-16): `mkfs.vfat`, `mkfs.exfat`, `mkfs.ext4`, `sfdisk` and `wipefs` are all installed
+(`mkfs.fat` 4.2, exfatprogs 1.2.9); `mkfs.fat` has `--offset` and `mkfs.exfat` has not.
+
+**How it writes.** The disk job can open whole USB disks and nothing else: partition nodes are root's, and it has no capability to
+make the kernel read a partition table again. So no mkfs ever sees the drive, and the unit does not change:
+1. The filesystem is made in a sparse scratch file on the store (`_format/`, the partition's size, removed afterwards) and checked
+   there with its own fsck (`fsck.fat -n`, `fsck.exfat -n`, `e2fsck -fn`). A mkfs or an fsck that fails stops the format before the
+   drive is touched.
+2. The drive is opened with `O_EXCL` and identified again, as for a write.
+3. The drive's first MiB is zeroed and synced, so the old table is gone before anything else.
+4. The scratch file's data is copied to the partition, with the partition's first and last MiB written whole (zeros included) so no
+   older filesystem's signature survives at either end; the drive's last MiB is zeroed (a GPT's copy goes there); the first MiB,
+   with the new table, is written last. A format that stops partway leaves a drive with no table.
+5. Everything written is read back twice (past the cache) and compared, then the drive is parsed again: one partition, where it
+   should be, with the filesystem and label asked for.
+6. It reports whether the kernel's partition list shows the new partition. It does not assume so: when it does not, the 7″ says to
+   switch the dock off and on.
+
+**The layout.** MBR while the drive's sectors fit 32 bits (under 2 TiB), GPT above (protective MBR, both headers, 128 entries). One
+partition from 1 MiB to the last whole MiB that leaves at least 1 MiB free at the end. FAT32 is refused past 2 TB. A partition under
+33 MiB cannot be FAT32 (too few clusters): it gets the FAT that fits (FAT16 or FAT12), and the check says so before the hold.
+
+**ext4, found while building.** On a file, `mke2fs` records what it zeroes as holes, and takes the file's holes for a drive that
+discards to zeros. A copy of the data alone would then leave the old drive's bytes in the journal and flag the inode tables as
+already zeroed. It is run with `-E nodiscard,lazy_itable_init=1,lazy_journal_init=0` and `UNIX_IO_NOZEROOUT=1`, which makes it
+write its zeros as it would on a drive with neither feature; the tool then checks that the journal really is data in the scratch
+file, and refuses ext4 if it is not. The test cuts the partition out of a drive full of old bytes and runs `e2fsck` on it.
+
+**The check and the image.** FORMAT CHECK reads what is on the drive and looks through the store's sidecars: an image read from
+this drive (by serial; with no serial, by make, model and size), and whether the drive still starts with that image's bytes (the
+first 64 MiB, or the whole image when it is smaller). No image whose bytes the drive still starts with means the warning, in
+capitals, and IMAGE IT FIRST, which opens READ with the drive picked. It is a warning and never a refusal (decision 3). It compares
+64 MiB, not the whole drive, and says so.
+
+**Refusals, each leaving the drive as it was:** the store, the system disk, a mounted drive, an empty slot; sectors that are not
+512 bytes; under 16 MiB; a label that is not up to 11 of A-Z, 0-9, `_` and `-`; not blank without the acknowledgement; no passing
+FORMAT CHECK of this drive in the last 5 minutes; an arm older than 30 s; another drive under the same name; contents that changed
+since the check; under 2 GB free on the store.
+
+**The log.** One line per format in `<store>/writes.jsonl` (`op: format`, verified or stopped, the filesystem, the table, the label,
+what was on the drive, whether the store had an image, whether anything was written, the arm). The 7″ lists the latest six. A format
+is not on any image's job record: it is not about an image.
+
+**Not done, said plainly:** nothing here has run on a real drive. Whether udev makes the kernel re-read the table when the job
+closes the drive is not known for this Pi; the result says what it found. `mkfs.fat` 4.2 and exfatprogs 1.2.9 are the Pi's versions;
+the tests ran on 4.2 and 1.2.2. ext4's root folder belongs to root, as `mkfs.ext4` makes it.

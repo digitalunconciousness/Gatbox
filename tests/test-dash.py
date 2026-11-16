@@ -1500,6 +1500,76 @@ def main():
         q("document.querySelector('#dk-body .dk-reading').scrollIntoView({block: 'center'})")
         shot("23h-disk-checklist")
 
+        # FORMAT (docs/plans/2026-11-16-restore-and-format.md): a quick format from the 7", armed like a write. Skipped where mkfs.fat is missing.
+        if not shutil.which("mkfs.fat", path=os.environ.get("PATH", "") + ":/usr/sbin:/sbin"):
+            print("  skip  FORMAT on the 7\": mkfs.fat is not installed here (apt: dosfstools)")
+        else:
+            old_card = bytes(range(1, 256)) * (24 * MiB // 255 + 1)
+            FD.usb_disk("sdp", 24 * MiB, "WIDGET", "WIDGET CF 24", port=16, devnum="8:240", data=fat_card(4096) + old_card[4096:24 * MiB], rotational=False)
+            dk_seg("FORMAT")
+            fbtn = lambda t: f"[...document.querySelectorAll('#dk-body button')].find(b => b.textContent.startsWith({json.dumps(t)}))"
+            check("FORMAT is a mode of the DISK tab: it says what a quick format is, and FORMAT CHECK is off until a drive and a filesystem are picked",
+                  dk_has("A quick format: a new partition table and one empty filesystem", 10) and settles(c, f"!!{fbtn('sdp ·')}", 15)
+                  and q(f"{fbtn('FORMAT CHECK')}.disabled") and "After a FORMAT CHECK" in text("#dk-body"))
+            check("... the seven modes fit the 7\" in one row, each label on one line, nothing wider than the screen, no text under 14 px",
+                  q("document.querySelectorAll('#dk-body > .seg button').length") == 7
+                  and q("new Set([...document.querySelectorAll('#dk-body > .seg button')].map(b => Math.round(b.getBoundingClientRect().top))).size") == 1
+                  and q("document.querySelector('#dk-body').scrollWidth <= document.querySelector('#dk-body').clientWidth + 1") and not q(BOX_SMALL))
+            dk_tile("sdp")
+            dk_tap("FAT32")
+            check("a filesystem picked says what it is good for, and the label can stay empty", "No file over 4 GB" in text("#dk-body")
+                  and "LABEL: NONE" in text("#dk-body") and not q(f"{fbtn('FORMAT CHECK')}.disabled"))
+            dk_tap("LABEL: NONE")
+            c.wait("document.querySelector('#pane .kp-field')")
+            tap_keys("WIDGET")
+            c.wait("document.querySelector('#dk-body').textContent.includes('LABEL: WIDGET')", 10)
+            dk_tap("FORMAT CHECK")
+            check("FORMAT CHECK on a card with files and no image in the store: it passes, says what the drive becomes (FAT16: too small for FAT32), "
+                  "and WARNS in capitals that the store has no image, with IMAGE IT FIRST", dk_has("FORMAT CHECK PASSED", 30)
+                  and "sdp becomes MBR with one FAT16 partition 'WIDGET'" in text("#dk-body") and "too small for FAT32: it gets FAT16" in text("#dk-body")
+                  and "THE STORE HAS NO IMAGE OF WHAT IS ON THIS DRIVE NOW." in text("#dk-body") and "vfat filesystem on the whole drive" in text("#dk-body")
+                  and q(f"!!{fbtn('IMAGE IT FIRST')}"))
+            check("... no hold before the acknowledgement, and the acknowledgement names what is being given up",
+                  not q("[...document.querySelectorAll('#dk-body button')].some(b => b.textContent.startsWith('HOLD'))") and q(f"!!{fbtn('ERASE IT WITH NO IMAGE')}"))
+            q("document.querySelector('#dk-body .dk-over').scrollIntoView({block: 'center'})")
+            check("... on the 7\": no text under 14 px, the buttons a finger tall", not q(BOX_SMALL)
+                  and q(f"{fbtn('IMAGE IT FIRST')}.getBoundingClientRect().height") >= 55.5 and q(f"{fbtn('ERASE IT WITH NO IMAGE')}.getBoundingClientRect().height") >= 55.5)
+            shot("23k-format-check")
+            dk_tap("IMAGE IT FIRST")
+            check("IMAGE IT FIRST goes to READ with this drive picked as the source", settles(c, "document.querySelector('#dk-body').textContent.includes('1 · SOURCE')", 10)
+                  and q("[...document.querySelectorAll('#dk-body .dk-drives .tile.on')].some(t => t.textContent.startsWith('sdp ·'))"))
+            dk_seg("FORMAT")
+            dk_tap("ERASE IT WITH NO IMAGE")
+            c.wait("[...document.querySelectorAll('#dk-body button')].some(b => b.textContent.startsWith('HOLD 3 S TO FORMAT sdp AS FAT16'))", 10)
+            q("document.querySelector('#dk-body button.hold').dispatchEvent(new PointerEvent('pointerdown', {bubbles: true}))")
+            time.sleep(1.0)
+            q("document.querySelector('#dk-body button.hold').dispatchEvent(new PointerEvent('pointerup', {bubbles: true}))")
+            time.sleep(1.0)
+            check("let go early: nothing armed, nothing sent, the card as it was",
+                  not os.path.exists(f"{T}/dspool/request.json") and open(f"{FD.dev}/sdp", "rb").read(4096) == fat_card(4096))
+            q("document.querySelector('#dk-body button.hold').scrollIntoView({block: 'center'})")
+            shot("23l-format-armable")
+            q("document.querySelector('#dk-body button.hold').dispatchEvent(new PointerEvent('pointerdown', {bubbles: true}))")
+            check("held 3 s: FORMATTED, said in full: MBR, one FAT16 partition, its label, read back twice",
+                  dk_has("FORMATTED", 40) and "sdp is now MBR with one FAT16 partition 'WIDGET'" in text("#dk-body") and "read back twice: both match" in text("#dk-body"))
+            card = open(f"{FD.dev}/sdp", "rb").read()
+            check("... the card: a partition table at sector 0, a FAT boot sector labelled WIDGET at 1 MiB, and the old bytes further in untouched",
+                  card[510:512] == b"\x55\xaa" and card[446 + 4] in (0x04, 0x06) and card[MiB + 54:MiB + 59] == b"FAT16" and card[MiB + 43:MiB + 49] == b"WIDGET"
+                  and card[12 * MiB:13 * MiB] == old_card[12 * MiB:13 * MiB])
+            check("... it says the Pi still lists the old partitions and to switch the dock off and on (this fake kernel never re-reads them)",
+                  "still lists the old partitions" in text("#dk-body") and "Switch the dock off and on" in text("#dk-body"))
+            check("... and the log on the screen has it: the drive, FAT16 'WIDGET', verified",
+                  settles(c, "!!document.querySelector('#dk-body .dk-fmtrow') && document.querySelector('#dk-body .dk-fmtrow').textContent.includes(\"MBR, FAT16 'WIDGET': verified\")", 15)
+                  and "WIDGET CF 24" in text("#dk-body .dk-fmtrow"))
+            check("... after it, the hold is gone: the check is spent, and a new format needs a new check",
+                  not q("[...document.querySelectorAll('#dk-body button')].some(b => b.textContent.startsWith('HOLD'))") and "After a FORMAT CHECK" in text("#dk-body"))
+            q("document.querySelector('#dk-body').scrollIntoView()")
+            shot("23m-format-done")
+            dk_tap("FORMAT CHECK")
+            check("a second FORMAT CHECK of the same card: it still warns (nothing in the store starts with these bytes), and the plain refusal words are not used",
+                  dk_has("FORMAT CHECK PASSED", 30) and "THE STORE HAS NO IMAGE" in text("#dk-body"))
+            FD.unplug("sdp")
+            dk_seg("READ")
         # DRIVE INFO, the CF adapter's warning, the swap's steps and the job record (the owner's bench procedure, 2026-11-12)
         sda_args = dict(port=1, devnum="8:0")
 
@@ -2145,10 +2215,11 @@ def main():
             settles(c, "document.querySelectorAll('#dk-body .dk-tick').length === 10", 10)
             time.sleep(0.5)
             shot("24-disk-phone")
-            check("from a phone: the state, the drives, the images and the checklist; no READ, WRITE or hold",
+            check("from a phone: the state (the last job's verdict), the drives, the images and the checklist; no READ, WRITE, FORMAT or hold",
                   not q("document.querySelector('#dk-body .seg')") and not q("document.querySelector('#dk-body button.hold')")
                   and q("document.querySelectorAll('#dk-body button.dk-tick').length") == 10
-                  and "READ and WRITE are on the Pi's own screen" in text("#dk-body") and "VERIFIED" in text("#dk-body")
+                  and "READ, WRITE and FORMAT are on the Pi's own screen" in text("#dk-body")
+                  and ("FORMAT CHECK PASSED" if shutil.which("mkfs.fat", path=os.environ.get("PATH", "") + ":/usr/sbin:/sbin") else "VERIFIED") in text("#dk-body")
                   and not q("[...document.querySelectorAll('#dk-body .dk-drives button')].length"))
             q("[...document.querySelectorAll('#dk-body button.dk-tick')].find(b => b.textContent.includes('version matches')).click()")
             check("from a phone: a tap ticks a checklist line, and gatbox-web keeps it (the owner's 2026-11-03 answer)",

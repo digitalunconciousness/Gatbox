@@ -112,6 +112,8 @@ check "gatbox-web may write there (and is in the group)" 'grep -qx "ReadWritePat
 # that sets an APM level on each drive as it appears (its USB guard knows pci-*-usb- paths, and a Pi 5's are
 # platform-xhci-hcd, so it would not skip the dock).
 PKGLINES=$(sed -n '/^PKGS=(/,/^      mame)/p' "$BOOT")
+check "the package list names what FORMAT runs (dosfstools, exfatprogs, e2fsprogs): without them a format stops and says which is missing" \
+    'grep -qw dosfstools <<<"$PKGLINES" && grep -qw exfatprogs <<<"$PKGLINES" && grep -qw e2fsprogs <<<"$PKGLINES"'
 check "the package list names hdparm and smartmontools"   'grep -qw hdparm <<<"$PKGLINES" && grep -qw smartmontools <<<"$PKGLINES"'
 # The drive browser (docs/plans/2026-11-15-drive-browser.md) lists the files in a stored image with sleuthkit and makes thumbnails with Pillow.
 check "the package list names sleuthkit and python3-pil (the drive browser)" 'grep -qw sleuthkit <<<"$PKGLINES" && grep -qw python3-pil <<<"$PKGLINES"'

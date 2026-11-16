@@ -29,6 +29,8 @@ from .meter import Bad, resolved
 ARM_S, CHECK_FRESH_S = 30, 300
 LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$")      # gatbox-disk's rule: the label becomes a file name
 MEDIA = ("hdd", "cf", "sd", "ssd")
+FORMATS = ("fat32", "exfat", "ext4")                            # gatbox-disk's FORMATS
+FLABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,10}$")       # its label rule; it puts the label in capitals
 # The swap checklist (note §4.4). It blocks nothing; each tick keeps its time.
 CHECKLIST = [("before", "version", "power-up screen: version noted (phone photo)"),
              ("before", "settings", "settings and audits photographed"),
@@ -217,6 +219,56 @@ def write_request(body, local):
     _record(req["id"], image=img["image"], device=device, machine=img.get("machine"),
             target=f"{ident.get('vendor', '')} {ident.get('model', '')}".strip() or None)
     return req
+
+
+def format_check_request(body):
+    """POST /api/disk/format-check {device, identity, fs, label?}: the FORMAT CHECK (what is on the drive, and whether the store has
+    an image of it). It reads; nothing is written."""
+    body = _obj(body)
+    fs, label = body.get("fs"), body.get("label") or ""
+    if fs not in FORMATS:
+        raise Bad(400, f"fs: one of {', '.join(FORMATS)}")
+    if not isinstance(label, str) or (label.strip() and not FLABEL.match(label.strip())):
+        raise Bad(400, "label: up to 11 of A-Z, 0-9, '_' and '-', or empty")
+    _store()
+    d = _disk(body.get("device"), body.get("identity"))
+    return _queue({"op": "format_check", "device": d["name"], "identity": d["identity"], "fs": fs, "label": label.strip().upper()})
+
+
+def format_request(body, local):
+    """POST /api/disk/format {device, ack?}: a quick format, armed by a hold on the Pi's own screen (hard rule 6: a disk write).
+    What is made is what the passing FORMAT CHECK of the last 5 minutes said: the filesystem and the label come from it, not from here."""
+    if not local:
+        raise Bad(403, "a format is armed at the Pi: hold FORMAT on its own screen")
+    body = _obj(body)
+    _store()
+    device, ack = body.get("device"), body.get("ack") is True
+
+    def check_first():
+        last = _read("status.json") or {}
+        if not (last.get("op") == "format_check" and last.get("state") == "done" and last.get("target_ok") is True
+                and last.get("device") == device and (last.get("at") or 0) >= time.time() - CHECK_FRESH_S):
+            raise Bad(409, "run FORMAT CHECK on this drive first (a passing check in the last 5 minutes)")
+        if last.get("needs_ack") and not ack:
+            raise Bad(409, "the drive isn't blank: acknowledge that it gets erased")
+        d = next((x for x in dl.disks() if x["name"] == device), None)
+        if d is None or d["role"] != "ok" or not dl.same_drive(d["identity"], last.get("identity") or {}):
+            raise Bad(409, f"{device} isn't the drive that was checked: check it again")
+        return {"check": last}                      # the job re-validates it before it writes
+    now = round(time.time(), 3)
+    return _queue({"op": "format", "device": device, "ack": ack, "armed": {"by": "screen", "at": now, "until": now + ARM_S}},
+                  check=check_first)
+
+
+def formats():
+    """GET /api/disk/formats: the latest formats from the store's writes.jsonl (op: format), newest first."""
+    if not dl.store_mounted():
+        return {"formats": []}
+    rows = [w for w in dl.writes() if w.get("op") == "format"][::-1][:6]
+    return {"formats": [{"date": w.get("date"), "state": w.get("state"), "device": w.get("device"), "fs": w.get("fs"),
+                         "table": w.get("table"), "label": w.get("label"), "error": w.get("error"), "written": bool(w.get("written")),
+                         "target": " ".join(x for x in ((w.get("target") or {}).get("vendor"), (w.get("target") or {}).get("model")) if x)}
+                        for w in rows]}
 
 
 # --- the swap checklist ------------------------------------------------------------------------------------------------

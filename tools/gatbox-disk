@@ -6,6 +6,8 @@
     gatbox-disk retry -m SLUG -l LABEL                      ddrescue -r3 on that read's map (after bad areas)
     gatbox-disk check -i IMAGE -d sdb                       the TARGET CHECK, on its own
     gatbox-disk write -i IMAGE -d sdb [--overwrite]         check, show both drives, type the model, write, verify
+    gatbox-disk format-check -d sdb --fs fat32 [--label X]  the FORMAT CHECK, on its own (fat32, exfat or ext4)
+    gatbox-disk format -d sdb --fs fat32 [--label X] [--overwrite]   check, type the model, quick format, verify
 
 The spec is docs/plans/2026-11-02-disk-imaging.md. What the 2026-11-02 swap done by hand taught, and so what this does:
   * A drive is its model, size and sector size (and its ATA serial, once the bridge is known to pass it), never a
@@ -28,6 +30,7 @@ The spec is docs/plans/2026-11-02-disk-imaging.md. What the 2026-11-02 swap done
     identified once more, the image's bytes written and fsynced, then two O_DIRECT reads of exactly that many bytes,
     both hashing to the image. One read or write at a time on the store. One line in <store>/writes.jsonl, stopped
     or verified. The rest of a larger drive is left untouched.
+  * FORMAT: a quick format (FAT32, exFAT or ext4; MBR under 2 TiB, GPT above), by the same road as a write. See the FORMAT section.
 
 Not here yet (the note's §10): the MAME CHD check (Task 3: the chdman parser waits for Task 0's real output), the
 dashboard's job mode (Task 4/5), and what needs the dock's pass-through known first (Task 0 stage 3): the drive's ATA
@@ -54,6 +57,9 @@ import sys
 import tempfile
 import time
 import urllib.request
+import uuid
+import zlib
+import shutil          # last on purpose: another open branch adds an import where the alphabet would put this one
 
 
 def lib_path():
@@ -833,6 +839,418 @@ class Write(Work):
             f.write(json.dumps(line) + "\n")
 
 
+# --- FORMAT ---------------------------------------------------------------------------------------------------------------
+# A quick format of a target drive (docs/plans/2026-11-16-restore-and-format.md; the owner's decisions of 2026-11-16: FAT32, exFAT or
+# ext4, quick only, MBR up to 2 TB and GPT above, a warning and an offer to image first when the store has no image of the drive).
+# It is a disk write under hard rule 6, so it goes the way WRITE goes: a check first, the arm or the typed model, the drive held
+# with O_EXCL and identified again, everything written read back twice.
+#
+# The job can open whole USB disks and nothing else: partition nodes are root's, and it has no capability to make the kernel read a
+# partition table again. So no mkfs ever sees the drive. The filesystem is made in a sparse scratch file on the store, checked there
+# with its own fsck, and only then are the bytes it wrote copied through the one exclusive descriptor, the partition table last (a
+# format that stops partway leaves a drive with no table, not a table that points at half a filesystem).
+
+MIB = 1 << 20
+FORMATS = {"fat32": "FAT32", "exfat": "exFAT", "ext4": "ext4"}
+FLABEL = re.compile(r"^[A-Z0-9][A-Z0-9_-]{0,10}$")                # fits all three: FAT's 11 characters, no lower case
+FORMAT_MIN = 16 * MIB                                            # a smaller drive is not formatted here
+FAT32_MIN = 33 * MIB                                             # FAT32 needs 65,525 clusters: a smaller partition gets FAT16 or FAT12
+FORMAT_DIR = "_format"                                           # the scratch files, in the store
+FORMAT_ROOM = 2048 * MIB                                         # free space the store needs for one (an ext4 journal is up to 1 GiB)
+RESCAN_S = float(os.environ.get("GATBOX_DISK_RESCAN", "6"))      # how long to watch for the kernel's new partition list
+GPT_BASIC, GPT_LINUX = "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7", "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
+MKFS_ENV = dict(os.environ, PATH=os.environ.get("PATH", "") + ":/usr/sbin:/sbin", LC_ALL="C")
+
+
+def format_layout(nbytes, fs):
+    """Where the one partition goes on a drive of NBYTES, and which table: MBR while the drive's sectors fit its 32 bits (2 TiB), GPT
+    above. The partition starts at 1 MiB and ends on a MiB at least 1 MiB before the end (a GPT keeps its copy there)."""
+    if fs not in FORMATS:
+        raise Stop(f"filesystem: one of {', '.join(FORMATS)}")
+    if nbytes < FORMAT_MIN:
+        raise Stop(f"too small to format here: {nbytes:,} bytes", f"the smallest is {FORMAT_MIN // MIB} MB")
+    start, end = MIB, (nbytes - MIB) // MIB * MIB
+    size = end - start
+    if fs == "fat32" and size >= 1 << 41:
+        raise Stop("FAT32 stops at 2 TB, and this drive is bigger", "pick exFAT or ext4")
+    return {"table": "dos" if nbytes // SECTOR <= 0xFFFFFFFF else "gpt", "start": start, "bytes": size, "fs": fs,
+            "made": "FAT16" if fs == "fat32" and size < FAT32_MIN else FORMATS[fs]}
+
+
+def _chs(lba):
+    c, rest = divmod(lba, 255 * 63)
+    h, sec = divmod(rest, 63)
+    if c > 1023:
+        c, h, sec = 1023, 254, 62
+    return bytes([h, ((c >> 2) & 0xC0) | (sec + 1), c & 0xFF])
+
+
+def mbr_sector(ptype, start_lba, count):
+    """A DOS partition table with one entry (not bootable) and no boot code."""
+    entry = b"\0" + _chs(start_lba) + bytes([ptype]) + _chs(start_lba + count - 1) + struct.pack("<II", start_lba, count)
+    return b"\0" * 440 + os.urandom(4) + b"\0\0" + entry + b"\0" * 48 + b"\x55\xaa"
+
+
+def gpt_pair(sectors, start_lba, count, type_guid, name):
+    """(the drive's first 34 sectors, its last 33): a protective MBR, the GPT header and its 128 entries, and their copy at the end."""
+    entry = (uuid.UUID(type_guid).bytes_le + uuid.uuid4().bytes_le + struct.pack("<QQQ", start_lba, start_lba + count - 1, 0)
+             + name.encode("utf-16-le")[:72].ljust(72, b"\0"))
+    entries = entry.ljust(128 * 128, b"\0")
+    disk = uuid.uuid4().bytes_le
+
+    def header(me, other, table):
+        h = struct.pack("<8sIIIIQQQQ16sQIII", b"EFI PART", 0x10000, 92, 0, 0, me, other, 34, sectors - 34, disk, table, 128, 128,
+                        zlib.crc32(entries))
+        return (h[:16] + struct.pack("<I", zlib.crc32(h)) + h[20:]).ljust(SECTOR, b"\0")
+    protective = (b"\0" * 446 + b"\0\0\x02\0\xee\xff\xff\xff" + struct.pack("<II", 1, min(sectors - 1, 0xFFFFFFFF))
+                  + b"\0" * 48 + b"\x55\xaa")
+    return protective + header(1, sectors - 1, 2) + entries, entries + header(sectors - 1, 1, sectors - 33)
+
+
+def _tool(name):
+    path = shutil.which(name, path=MKFS_ENV["PATH"])
+    if not path:
+        raise Stop(f"{name} isn't installed on this Pi", "the bootstrap installs it (dosfstools, exfatprogs, e2fsprogs): nothing was written")
+    return path
+
+
+def _run_tool(argv, env=None):
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=900, env=env or MKFS_ENV)
+    except subprocess.TimeoutExpired:
+        raise Stop(f"{os.path.basename(argv[0])} did not finish in 15 minutes", "nothing was written to the drive") from None
+    return r.returncode, (r.stderr or r.stdout or "").strip().splitlines()[-1:] or [""]
+
+
+def data_extents(path):
+    """The parts of a sparse file that hold data: [(offset, length)], each rounded out to whole sectors."""
+    out, fd = [], os.open(path, os.O_RDONLY)
+    try:
+        end, off = os.fstat(fd).st_size, 0
+        while off < end:
+            try:
+                d = os.lseek(fd, off, os.SEEK_DATA)
+            except OSError:                         # ENXIO: nothing but a hole from here on
+                break
+            off = os.lseek(fd, d, os.SEEK_HOLE)
+            a, b = d // SECTOR * SECTOR, min(end, -(-off // SECTOR) * SECTOR)
+            if out and a <= out[-1][0] + out[-1][1]:
+                out[-1] = (out[-1][0], b - out[-1][0])
+            else:
+                out.append((a, b - a))
+    finally:
+        os.close(fd)
+    return out
+
+
+def make_filesystem(path, lay, label):
+    """Make the filesystem in the scratch file PATH (sparse, the partition's size) and check it with its own fsck. -> what was made
+    (FAT32, FAT16, FAT12, exFAT, ext4). Nothing here touches a drive: a mkfs or fsck that fails stops the format before it starts."""
+    with open(path, "wb") as f:
+        f.truncate(lay["bytes"])
+    fs, made = lay["fs"], FORMATS[lay["fs"]]
+    if fs == "fat32":
+        # -h: the partition's first sector, as a partitioned drive's boot sector says it; -g: the geometry every USB bridge reports
+        argv = ([_tool("mkfs.fat")] + (["-F", "32"] if lay["bytes"] >= FAT32_MIN else []) + (["-n", label] if label else [])
+                + ["-h", str(lay["start"] // SECTOR), "-g", "255/63", path])
+        check = [_tool("fsck.fat"), "-n", path]
+        env = None
+    elif fs == "exfat":
+        argv = [_tool("mkfs.exfat"), "-q"] + (["-L", label] if label else []) + [path]
+        check = [_tool("fsck.exfat"), "-n", path]
+        env = None
+    else:
+        # On a file mke2fs marks what it zeroes as holes, and takes a file's holes for a drive that discards to zeros. Copied to a
+        # drive, holes are whatever was there before. nodiscard and UNIX_IO_NOZEROOUT make it write its zeros, as it would on a drive
+        # with neither: the journal is zeroed for real, and the inode tables are left for the kernel to zero and flagged so.
+        argv = ([_tool("mkfs.ext4"), "-q", "-F"] + (["-L", label] if label else [])
+                + ["-E", "nodiscard,lazy_itable_init=1,lazy_journal_init=0", path])
+        check = [_tool("e2fsck"), "-fn", path]
+        env = dict(MKFS_ENV, UNIX_IO_NOZEROOUT="1")
+    rc, last = _run_tool(argv, env)
+    if rc != 0:
+        raise Stop(f"{os.path.basename(argv[0])} failed: {last[0][:160]}", "nothing was written to the drive")
+    with open(path, "rb") as f:
+        head = f.read(4096)
+    if fs == "fat32":
+        kind = head[82:87] if head[82:85] == b"FAT" else head[54:59]
+        made = {b"FAT32": "FAT32", b"FAT16": "FAT16", b"FAT12": "FAT12"}.get(bytes(kind))
+        if made is None:
+            raise Stop("mkfs.fat made something that isn't FAT", "nothing was written to the drive")
+        if made == "FAT32":
+            spc, reserved, nfats = head[13], struct.unpack("<H", head[14:16])[0], head[16]
+            total, fatsz = struct.unpack("<I", head[32:36])[0], struct.unpack("<I", head[36:40])[0]
+            if spc == 0 or (total - reserved - nfats * fatsz) // spc < 65525:
+                raise Stop("the FAT32 that was made has too few clusters to be FAT32", "nothing was written to the drive")
+    elif fs == "ext4" and struct.unpack("<I", head[1024 + 0x5C:1024 + 0x60])[0] & 4:
+        journal = struct.unpack("<I", head[1024 + 0x10C + 64:1024 + 0x10C + 68])[0] | struct.unpack("<I", head[1024 + 0x10C + 60:1024 + 0x10C + 64])[0] << 32
+        if sum(n for _, n in data_extents(path)) < journal:
+            raise Stop("this Pi's mkfs.ext4 left the journal as a hole in the scratch file, so it can't be copied to a drive safely",
+                       "nothing was written to the drive: pick FAT32 or exFAT")
+    rc, last = _run_tool(check)
+    if rc != 0:
+        raise Stop(f"the new filesystem did not pass its own check ({os.path.basename(check[0])}: {last[0][:120]})",
+                   "nothing was written to the drive")
+    return made
+
+
+def stored_evidence(d, drive_head):
+    """What the store holds of this drive, from the sidecars: an image read from it (by its serial; without one, by make, model and
+    size), and whether the drive still starts with that image's bytes (DRIVE_HEAD(n) -> the SHA-1 of the drive's first n bytes)."""
+    ident, out, store = d["identity"], [], os.path.realpath(DISKS)
+    for side in sorted(glob.glob(os.path.join(store, "*", "*.json"))):
+        if side.endswith(".read.json") or not os.path.isfile(side[:-5] + ".img"):
+            continue
+        try:
+            with open(side) as f:
+                j = json.load(f)
+        except (OSError, ValueError):
+            continue
+        src, fp = j.get("source") or {}, j.get("fingerprint") or {}
+        both = bool(src.get("serial") and ident.get("serial"))
+        mine = (src["serial"] == ident["serial"]) if both else (not src.get("serial") and not ident.get("serial")
+                                                                 and all(src.get(k) == ident.get(k) for k in ("vendor", "model", "bytes")))
+        same = None
+        if fp.get("sha1") and isinstance(fp.get("bytes"), int) and 0 < fp["bytes"] <= min(ident["bytes"], HEAD_SCAN):
+            same = drive_head(fp["bytes"]) == fp["sha1"]
+        if mine or same:
+            out.append({"image": os.path.relpath(side[:-5] + ".img", store), "label": j.get("label"), "machine": j.get("machine"),
+                        "date": j.get("date"), "from_this_drive": mine, "by": ("serial" if both else "make, model and size") if mine else None,
+                        "head_same": same})
+    return out
+
+
+def format_check(device, fs, label="", say=print, expect=None):
+    """The FORMAT CHECK: every reason to refuse, what is on the drive now, and whether the store has an image of it."""
+    require_store()
+    label = (label or "").strip().upper()
+    if label and not FLABEL.match(label):
+        raise Stop("label: up to 11 of A-Z, 0-9, '_' and '-'", "or leave it empty")
+    d = pick(device)
+    if expect is not None and not same_drive(d["identity"], expect):
+        raise Stop(f"{d['name']} is a different drive from the one picked ({describe(d['identity'])})", "pick the drive again")
+    ident = d["identity"]
+    if ident["logical"] != SECTOR:
+        raise Stop(f"{d['name']} has {ident['logical']}-byte sectors", "only 512-byte sectors are formatted here")
+    lay = format_layout(ident["bytes"], fs)
+    c = contents(d["node"], ident["logical"])
+    heads = {c["fingerprint"]["bytes"]: c["fingerprint"]["sha1"]}
+
+    def drive_head(n):
+        if n not in heads:
+            heads[n] = hashed_read(d["node"], n)
+        return heads[n]
+    stored = [] if c["blank"] else stored_evidence(d, drive_head)
+    has = any(e["head_same"] for e in stored)
+    result = {"op": "format_check", "target_ok": True, "device": d["name"], "identity": ident, "contents": c, "layout": lay,
+              "label": label, "needs_ack": not c["blank"], "stored": stored, "has_image": has,
+              "warn_no_image": not c["blank"] and not has, "at": round(time.time(), 3)}
+    say(f"  target  {d['name']}: {describe(ident)}")
+    say(f"          {say_contents(c)}")
+    say(f"  format  {'MBR' if lay['table'] == 'dos' else 'GPT'}, one partition of {lay['bytes']:,} bytes, {lay['made']}" + (f" '{label}'" if label else ""))
+    if result["warn_no_image"]:
+        say("          THE STORE HAS NO IMAGE OF WHAT IS ON THIS DRIVE NOW: read it first if any of it matters")
+    return result
+
+
+class Format(Work):
+    """The go-ahead is ARMED (the hold on the Pi's own screen) or CONFIRM (the terminal: the model typed), as for a write."""
+    def __init__(self, checked, ack=False, armed=None, confirm=None, status=None, say=print):
+        super().__init__(status, say)
+        self.checked, self.ack, self.armed, self.confirm = checked, ack, armed, confirm
+        self.info.update(op="format", device=checked.get("device"), layout=checked.get("layout"), label=checked.get("label"),
+                         ack=ack, armed=armed, contents=checked.get("contents"), has_image=checked.get("has_image"))
+
+    def go(self):
+        c, lock, scratch = self.checked, None, None
+        try:
+            require_store()
+            lock = take_lock()
+            if not c.get("target_ok") or c.get("op") != "format_check":
+                raise Stop("there's no passing FORMAT CHECK", "check the drive first")
+            if self.armed is not None:
+                until = self.armed.get("until") if isinstance(self.armed, dict) else None
+                if isinstance(until, bool) or not isinstance(until, (int, float)):
+                    raise Stop("the arm is malformed: it has no expiry", "nothing was written: hold FORMAT again")
+                if time.time() > until:
+                    raise Stop("the 30-second arm ran out before the job started", "nothing was written: hold FORMAT again")
+            if time.time() - c.get("at", 0) > CHECK_FRESH_S:
+                raise Stop("the FORMAT CHECK is more than 5 minutes old", "check the drive again")
+            d = pick(c["device"])
+            if not same_drive(d["identity"], c["identity"]):
+                raise Stop(f"{c['device']} is a different drive from the one checked ({describe(d['identity'])})",
+                           "nothing was written: check the drive that's on the dock now")
+            fresh = contents(d["node"], d["identity"]["logical"])
+            self.info["contents"] = fresh
+            was = (c["contents"] or {}).get("fingerprint")
+            if was and was != fresh.get("fingerprint"):
+                raise Stop(f"what is on {c['device']} changed since the check: its first 64 MiB are not the ones that were checked",
+                           "a different card or drive on the dock? nothing was written: run the check again")
+            if not fresh["blank"] and not self.ack:
+                raise Stop("the drive isn't blank: " + say_contents(fresh), "acknowledge that it gets erased (--overwrite)")
+            nbytes, label = d["identity"]["bytes"], str(c.get("label") or "")
+            lay = format_layout(nbytes, (c.get("layout") or {}).get("fs"))
+            if lay != c.get("layout") or (label and not FLABEL.match(label)):
+                raise Stop("the check doesn't fit this drive any more", "nothing was written: check it again")
+            self.info["target"] = d["identity"]
+            if self.armed is None and (self.confirm is None or not self.confirm(self)):
+                raise Stop("the model wasn't typed: nothing was written")
+            # the filesystem, made and checked in the store before the drive is touched
+            folder = os.path.join(os.path.realpath(DISKS), FORMAT_DIR)
+            os.makedirs(folder, exist_ok=True)
+            for old in os.listdir(folder):                      # a scratch file a killed job left: one format at a time, so it is nobody's
+                os.remove(os.path.join(folder, old))
+            if shutil.disk_usage(folder).free < FORMAT_ROOM:
+                raise Stop("the store needs 2 GB free to prepare a format", "nothing was written to the drive")
+            scratch = os.path.join(folder, f"{os.getpid()}.fs")
+            self.step("make", f"{lay['made']} for {lay['bytes']:,} bytes, made and checked in the store first", progress=0.02)
+            made = make_filesystem(scratch, lay, label)
+            self.info["made"] = made
+            sectors, first, count = nbytes // SECTOR, lay["start"] // SECTOR, lay["bytes"] // SECTOR
+            if lay["table"] == "dos":
+                ptype = {"FAT32": 0x0C, "FAT16": 0x06 if lay["bytes"] >= 32 * MIB else 0x04, "FAT12": 0x01, "exFAT": 0x07, "ext4": 0x83}[made]
+                head, tail = mbr_sector(ptype, first, count), b""
+            else:
+                head, tail = gpt_pair(sectors, first, count, GPT_LINUX if made == "ext4" else GPT_BASIC, label or "GATBOX")
+            # What is written, as pieces that don't overlap: the filesystem's own bytes (and the partition's first and last MiB whole,
+            # zeros included, so no older filesystem's signature survives there), the drive's last MiB, and its first MiB last of all.
+            edge = [(0, min(MIB, lay["bytes"])), (max(0, lay["bytes"] - MIB), min(MIB, lay["bytes"]))]
+            spans = []
+            for a, n in sorted(data_extents(scratch) + edge):
+                if spans and a <= spans[-1][0] + spans[-1][1]:
+                    spans[-1] = (spans[-1][0], max(spans[-1][1], a + n - spans[-1][0]))
+                else:
+                    spans.append((a, n))
+            pieces = [(lay["start"] + a, n, a) for a, n in spans]
+            pieces.append((nbytes - MIB, MIB, (b"\0" * (MIB - len(tail)) + tail)))
+            pieces.append((0, MIB, head.ljust(MIB, b"\0")))
+            total = sum(n for _, n, _ in pieces)
+            self.info["bytes"] = total
+            try:
+                fd = os.open(d["node"], os.O_WRONLY | os.O_EXCL)
+            except OSError as e:
+                if e.errno == errno.EBUSY:
+                    raise Stop(f"{d['name']} is busy: something has it mounted or open", "nothing was written") from None
+                if e.errno in (errno.EROFS, errno.EACCES, errno.EPERM):
+                    raise Stop(f"{d['name']} is write-protected or read-only", "check the card's lock switch: nothing was written") from None
+                raise
+            src = os.open(scratch, os.O_RDONLY)
+            try:
+                again = pick(c["device"])
+                if not same_drive(again["identity"], c["identity"]) or os.lseek(fd, 0, os.SEEK_END) != nbytes:
+                    raise Stop(f"{c['device']} is a different drive from the one checked ({describe(again['identity'])})",
+                               "nothing was written: check the drive that's on the dock now")
+                self.info["written"] = True                 # from here on a stop leaves the drive partly formatted
+                self.step("write", f"{total:,} bytes to {d['name']}, the partition table last", progress=0.10)
+                # First the old table goes: the drive's first MiB is zeroed (and reaches the drive) before anything else, so a format that
+                # stops partway leaves no table at all, never the old one pointing into half a new filesystem. The new table is the last piece.
+                wipe = bytes(MIB)
+                if os.pwrite(fd, wipe, 0) != MIB:
+                    raise Stop("the drive stopped taking data", "nothing of the format was written: try again, or another drive")
+                os.fsync(fd)
+                want, done = hashlib.sha1(), 0
+                for off, n, what in pieces:
+                    want.update(struct.pack("<QQ", off, n))
+                    at = 0
+                    while at < n:
+                        piece = what[at:at + CHUNK] if isinstance(what, bytes) else os.pread(src, min(CHUNK, n - at), what + at)
+                        if not piece:
+                            raise Stop("the scratch file ended early", "the drive is partly formatted: format it again")
+                        want.update(piece)
+                        sent = 0
+                        while sent < len(piece):
+                            k = os.pwrite(fd, piece[sent:], off + at + sent)
+                            if k <= 0:
+                                raise Stop("the drive stopped taking data", "it is partly formatted now: try again, or another drive")
+                            sent += k
+                        at += len(piece)
+                        done += len(piece)
+                        self.tick(f"{gb(done)} of {gb(total)} written to {d['name']}", 0.10 + 0.40 * done / total)
+                os.fsync(fd)
+                for n in (1, 2):
+                    lo = 0.50 + 0.235 * (n - 1)
+                    self.step("verify", f"read-back {n} of 2 of everything written, past the cache", progress=round(lo, 4))
+                    if self._read_back(d["node"], pieces) != want.hexdigest():
+                        raise Stop(f"read-back {n} doesn't match what was written", "the drive didn't take the format: try another one")
+            finally:
+                os.close(src)
+                os.close(fd)
+            now = contents(d["node"], SECTOR)
+            parts = now["partitions"]
+            family = {"FAT32": "vfat", "FAT16": "vfat", "FAT12": "vfat", "exFAT": "exfat", "ext4": "ext4"}[made]
+            if (now["table"] != lay["table"] or len(parts) != 1 or parts[0]["start"] != lay["start"] or parts[0]["bytes"] != lay["bytes"]
+                    or parts[0]["fs"] != family or (label and family != "exfat" and parts[0]["label"] != label)):
+                raise Stop("read again, the drive doesn't show the partition and filesystem that were written: " + say_contents(now),
+                           "format it again, or try another drive")
+            self.info["contents_after"] = now
+            # The kernel still holds the old partition list. udev reads it again when a writer closes a whole disk; whether it has
+            # is looked up here and said, never assumed.
+            seen, until = None, time.monotonic() + RESCAN_S
+            while True:
+                seen = next((x["partitions"] for x in disks() if x["name"] == d["name"]), None)
+                if seen == [d["name"] + "1"] or time.monotonic() >= until:
+                    break
+                time.sleep(0.5)
+            self.info.update(verified=True, state="done", kernel={"partitions": seen, "current": seen == [d["name"] + "1"]})
+            self.step("verified", f"{d['name']} is {'MBR' if lay['table'] == 'dos' else 'GPT'} with one {made} partition"
+                      + (f" '{label}'" if label else "") + f": {total:,} bytes written and read back twice", progress=1.0)
+            return self.info
+        except Stop as s:
+            self.info.update(state="stopped", error=s.what, hint=s.hint)
+            raise
+        except Exception as e:
+            self.info.update(state="stopped", error=f"gatbox-disk failed: {e!r}")
+            raise
+        finally:
+            if scratch:
+                try:
+                    os.remove(scratch)
+                except OSError:
+                    pass
+            if lock is not None:
+                os.close(lock)
+            self.log()
+
+    @staticmethod
+    def _read_back(node, pieces):
+        """SHA-1 of every piece as the drive holds it now, in the order written (O_DIRECT on a block device, as hashed_read)."""
+        h, direct = hashlib.sha1(), _is_block(node)
+        fd = os.open(node, os.O_RDONLY | (os.O_DIRECT if direct else 0))
+        try:
+            buf = mmap.mmap(-1, CHUNK)
+            view = memoryview(buf)
+            try:
+                for off, n, _ in pieces:
+                    h.update(struct.pack("<QQ", off, n))
+                    at = 0
+                    while at < n:
+                        got = os.preadv(fd, [view[:min(CHUNK, n - at)]], off + at)
+                        if got <= 0:
+                            raise Stop("the drive went away during the read-back", "it may be partly formatted: check it again")
+                        h.update(view[:got])
+                        at += got
+            finally:
+                view.release()
+                buf.close()
+        finally:
+            os.close(fd)
+        return h.hexdigest()
+
+    def log(self):
+        """One line per format, stopped or verified, in <store>/writes.jsonl beside the writes (op: format)."""
+        if not store_mounted():
+            return
+        i = self.info
+        lay = i.get("layout") or {}
+        line = {"op": "format", "date": now_iso(), "epoch": round(time.time(), 3), "state": "verified" if i.get("verified") else "stopped",
+                "device": i.get("device"), "target": i.get("target"), "fs": i.get("made") or lay.get("made"), "table": lay.get("table"),
+                "label": i.get("label"), "bytes": i.get("bytes"), "ack": i.get("ack"), "armed": i.get("armed"),
+                "contents": i.get("contents"), "has_image": i.get("has_image"), "written": bool(i.get("written")),
+                "error": i.get("error"), "tool": "gatbox-disk"}
+        with open(os.path.join(os.path.realpath(DISKS), "writes.jsonl"), "a") as f:
+            f.write(json.dumps(line) + "\n")
+
+
 # --- the terminal ---------------------------------------------------------------------------------------------------------
 
 def show_list(as_json):
@@ -897,6 +1315,15 @@ def run_job(request, status):
                           machine=req.get("machine"), realm=req.get("realm"), status=status, say=say)
                 w.info.update(base)
                 w.go(verify_only=req.get("verify_only") is True)
+            elif op == "format_check":
+                w.info.update(base, device=req.get("device"))
+                w.step("check", f"{req.get('device')} before a format", progress=0.1)
+                w.info.update(format_check(str(req.get("device")), req.get("fs"), str(req.get("label") or ""), say=say,
+                                           expect=req.get("identity")))
+            elif op == "format":
+                w = Format(req.get("check") or {}, ack=req.get("ack") is True, armed=req.get("armed"), status=status, say=say)
+                w.info.update(base)
+                w.go()
             else:
                 raise Stop(f"unknown job {op!r}", "gatbox-web validates these; this shouldn't happen")
             w.info["state"] = "done"
@@ -945,11 +1372,19 @@ def main():
         if name == "write":
             p.add_argument("--overwrite", action="store_true", help="the target isn't blank, and that's fine")
             p.add_argument("--verify-only", action="store_true", help="it already holds the image: read it back twice")
+    for name in ("format-check", "format"):
+        p = sub.add_parser(name, help="the FORMAT CHECK" if name == "format-check" else "check, then a quick format, verified")
+        p.add_argument("-d", "--device", required=True)
+        p.add_argument("--fs", required=True, choices=sorted(FORMATS))
+        p.add_argument("--label", default="")
+        p.add_argument("--json", action="store_true")
+        if name == "format":
+            p.add_argument("--overwrite", action="store_true", help="the drive isn't blank, and erasing it is fine")
     args = ap.parse_args()
     if args.job:
         return run_job(args.job, args.status or os.path.join(os.path.dirname(args.job), "status.json"))
     if not args.cmd:
-        ap.error("a command is needed: list, read, retry, check or write")
+        ap.error("a command is needed: list, read, retry, check, write, format-check or format")
     # the store is shared by the owner (terminal) and the dashboard's job, both in its group, and setgid
     os.umask(0o002)
     say = (lambda *a: None) if getattr(args, "json", False) else print
@@ -972,6 +1407,39 @@ def main():
         print(("\nSTORED: " if st["new"] else "\nALREADY IN THE STORE: ") + st["path"])
         print(f"  {info['bytes']:,} bytes · SHA-1 {info['sha1']} · {info['reads']} read(s)"
               + (" identical" if info.get("identical") else ""))
+        return 0
+
+    if args.cmd in ("format-check", "format"):
+        try:
+            c = format_check(args.device, args.fs, args.label, say=say)
+        except Stop as s:
+            return report_stop(s, args.json)
+        if args.cmd == "format-check":
+            if args.json:
+                print(json.dumps(dict(c, state="done")))
+            return 0
+
+        def typed(w):
+            model = c["identity"]["model"]
+            want = model or c["device"]
+            try:
+                got = input(f"\nType the drive's {'model' if model else 'device name'} ({want}) to FORMAT it: ")
+            except EOFError:
+                got = ""
+            ok = bool(want) and got.strip() == want
+            w.info["armed"] = {"by": "terminal", "typed": ok}
+            return ok
+        w = Format(c, ack=args.overwrite, confirm=typed, say=say)
+        try:
+            info = w.go()
+        except Stop as s:
+            return report_stop(s, args.json, w.info)
+        if args.json:
+            print(json.dumps(info))
+        else:
+            print(f"\nFORMATTED: {info['device']} is {info['made']}; {info['bytes']:,} bytes written and read back twice")
+            if not info["kernel"]["current"]:
+                print("  the Pi still lists the old partitions: switch the dock off and on before using the drive here")
         return 0
 
     try:

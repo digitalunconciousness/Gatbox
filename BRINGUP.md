@@ -854,6 +854,21 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         branches): `/run/udev/data` is world-readable and gives both drives' own model and serial; both have a USB ancestor, so
         the rule matches; `udevadm verify` said **Unknown group 'gatbox-disk'**, because step 5 loaded the rule before step 6
         made the group: the bootstrap now loads udev again after sysusers. Still before the first READ: format the 4 TB drive
+  - [x] **FORMAT** (the owner, 2026-11-16: "a drive format through an arming button and a log entry"; built the same day, **not installed**;
+        `docs/plans/2026-11-16-restore-and-format.md`). DISK → FORMAT on the 7″, and `gatbox-disk format-check` / `format`: FAT32, exFAT or
+        ext4, quick only, one partition, MBR under 2 TiB and GPT above. A disk write under hard rule 6: FORMAT CHECK first (it reads, and
+        looks in the store for an image of the drive), the acknowledgement when the drive is not blank, a 3 s hold on the Pi's own screen
+        (30 s arm), the drive held with `O_EXCL` and identified again, everything written read back twice, one line in `writes.jsonl`.
+        With no image in the store that the drive still starts with, it warns in capitals and offers IMAGE IT FIRST (a warning, not a refusal).
+        **No mkfs touches the drive, and the unit does not change:** the job cannot open a partition, so the filesystem is made and
+        fsck-checked in a sparse scratch file on the store, then copied through the one exclusive descriptor, the old table zeroed first
+        and the new one written last. **System config, one line (hard rule 5):** the bootstrap's package list gains
+        `dosfstools exfatprogs e2fsprogs`; all three are on the Pi already (the paste of 2026-11-16), so it installs nothing there.
+        Found while building: `mke2fs` on a file leaves its zeroing as holes, which a copy would skip; it is run so that it writes them,
+        and the tool refuses ext4 if the journal is not really there. `test-disk-format.sh`: 78 (new), `test-disk.sh`: 182 (was 173: the
+        routes and their gates), `test-dash.sh`: 347 (was 333), `test-bootstrap.sh`: 161 (was 160); each of 30 breakages of the tool fails a test.
+        **Not on a real drive yet.** Whether the Pi re-reads the partition table by itself after a format is not known: the result says
+        what it found, and the 7″ says to switch the dock off and on when it did not.
   - [x] READ shows where it is (2026-11-15, found on the Pi: the 7″ sat at 5% for the whole ddrescue pass and at 80% for the whole
         hash). `gatbox-disk` ticks the status file at most every 5 s: bytes ddrescue has read (`/proc/PID/io`) for a first pass,
         bytes hashed for a hash or a card's second read, as a line under the bar. `test-disk.sh`: 149, `test-dash.sh`: 229. **Not

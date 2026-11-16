@@ -3042,7 +3042,9 @@
       line(`SHA-1 ${s.sha1}`, "mut");
       if (s.fingerprint) line(`fingerprint ${s.fingerprint.nonzero.toLocaleString("en-US")} non-zero bytes in the first 64 MiB`, "mut");
       if (s.source) line(`from ${driveName(s.source)}`, "mut");
-      line(sto.new ? "Queued for the archive." : "Those bytes were already stored: this read is noted on that image.", "mut");
+      line(sto.new ? "Queued for the archive."
+           : sto.machine && sto.machine !== s.machine ? `Those bytes were already stored under ${sto.machine}: this read is noted on that image, which stays there.`
+           : "Those bytes were already stored: this read is noted on that image.", "mut");
     } else if (reading && s.needs_retry) {
       const d = s.ddrescue || {};
       big("BAD AREAS", "warn");

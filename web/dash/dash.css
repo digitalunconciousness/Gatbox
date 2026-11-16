@@ -469,6 +469,11 @@ button.dk-frow.gone,button.dk-cell.gone{border-style:dashed}
 .dk-ask,.dk-exp{margin:0 0 10px;padding:10px 12px;border:1px solid var(--cyan);border-radius:8px;background:var(--bg2)}
 .dk-ask>b{display:block;font:600 17px/1.2 var(--disp);margin-bottom:4px;overflow-wrap:anywhere}
 .dk-ask .btnrow,.dk-exp .btnrow{margin-top:8px}
+/* FILES: COMPARE (hashing one duplicate group): the button row, and how it is going or what it found */
+.dk-cmprow{margin:4px 0 8px;align-items:center;gap:10px}
+.dk-cmprow .mut{flex:1;min-width:0}
+.dk-cmpbox{margin:4px 0 10px;padding:10px 12px;border:1px solid var(--cyan);border-radius:8px;background:var(--bg2)}
+.dk-cmpbox .btnrow{margin-top:8px}
 .dk-cell.gone img{opacity:.75}
 .dk-gonenote{margin:6px 0;font-size:16px}
 #vw-note{padding:6px 12px;border-bottom:1px solid var(--line);font-size:16px;background:var(--bg2)}

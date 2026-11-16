@@ -605,8 +605,28 @@ def web_side(E, jpg, daemon, denv):
         check("... it finishes, the copy is on the store under _exports, and it is the photo, byte for byte",
               got["state"] == "done" and len(copies) == 1 and sha(f"{T}/store/_exports/{copies[0]}/{jpg['name']}") == sha(f"{T}/tree/Photos/2019/IMG_0001.jpg")
               and got["recent"][0]["dir"] == copies[0])
+        code, ctype, body = get("/api/browse/hash")
+        check("COMPARE: from the Pi's own screen, what the comparison is doing: idle, and no files", code == 200 and json.loads(body)["state"] == "idle" and json.loads(body)["files"] == [])
+        mem = [{"id": 1, "image": E, "vol": 2048, "inode": jpg["inode"], "size": jpg["size"]}, {"id": 2, "image": E, "vol": 2048, "inode": jpg["inode"], "size": jpg["size"]}]
+        code, ctype, body = post("/api/browse/hash", {"action": "start", "name": jpg["name"], "members": [mem[0]]})
+        check("... one member is refused with its words (400)", code == 400 and "2 to" in json.loads(body)["error"])
+        code, ctype, body = post("/api/browse/hash", {"action": "start", "name": jpg["name"], "members": [dict(mem[0], image="../outside.img"), mem[1]]})
+        check("... an image that is not in the store is refused (404)", code == 404)
+        code, ctype, body = post("/api/browse/hash", {"action": "start", "name": jpg["name"], "members": mem, "evil": "x"})
+        check("... a comparison is started through gatbox-web, with its members passed on (the extra key is dropped), and answered at once",
+              code == 200 and json.loads(body)["state"] in ("queued", "hashing", "done") and len(json.loads(body)["files"]) == 2)
+        end = time.time() + 60
+        while time.time() < end and json.loads(get("/api/browse/hash")[2])["state"] != "done":
+            time.sleep(0.2)
+        got = json.loads(get("/api/browse/hash")[2])
+        check("... it finishes, says the two are the same file, and each SHA-1 is the photo's",
+              got["state"] == "done" and got["verdict"] == "same" and [f["sha1"] for f in got["files"]] == [hashlib.sha1(open(f"{T}/tree/Photos/2019/IMG_0001.jpg", "rb").read()).hexdigest()] * 2)
+        code, ctype, body = post("/api/browse/hash", {"action": "dismiss"})
+        check("... DISMISS puts it back to idle", code == 200 and json.loads(body)["state"] == "idle")
         lan = next((a for a in _lan_addrs() if "." in a and not a.startswith("127.")), None)
         if lan:
+            check("from a phone: what the comparison is doing is 403, and one cannot be started (403), whatever is asked",
+                  get("/api/browse/hash", base=f"http://{lan}:{port}")[0] == 403 and post("/api/browse/hash", {"action": "start", "members": mem}, base=f"http://{lan}:{port}")[0] == 403)
             code, ctype, body = get("/api/browse/export", base=f"http://{lan}:{port}")
             check("from a phone: what the copy is doing is 403 too, and a copy cannot be started (403), whatever is asked",
                   code == 403 and post("/api/browse/export", {"action": "start", "image": E, "vol": 2048, "kind": "file", "inode": jpg["inode"]}, base=f"http://{lan}:{port}")[0] == 403)

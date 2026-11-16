@@ -1090,6 +1090,8 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("POST", r"/api/browse/index", _browse_post("/index")),
     ("GET", r"/api/browse/export", _browse("/export")),
     ("POST", r"/api/browse/export", _browse_post("/export")),
+    ("GET", r"/api/browse/hash", _browse("/hash")),
+    ("POST", r"/api/browse/hash", _browse_post("/hash")),
     ("POST", r"/api/disk/read", api_disk_read),
     ("POST", r"/api/disk/retry", api_disk_retry),
     ("POST", r"/api/disk/check", api_disk_check),

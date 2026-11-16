@@ -2100,8 +2100,9 @@ def main():
             # F4c: possible duplicates, from the names in the index (this image is indexed here; two others in the store are not)
             check("ALL IMAGES has a DUPLICATES button beside SEARCH", q("[...document.querySelectorAll('#dk-body .btnrow button')].map(b => b.textContent)").count("DUPLICATES") == 1)
             fb_btn("DUPLICATES", 15, exact=True)
-            check("DUPLICATES: it says what it is, in words: the same name and size, nothing read, so only POSSIBLE, and that nothing here deletes",
-                  dk_has("Possible duplicates", 25) and "only possible duplicates" in text("#dk-body") and "Nothing is read to compare them" in text("#dk-body")
+            check("DUPLICATES: it says what it is, in words: the same name and size, nothing read to list them, so only POSSIBLE, that COMPARE reads a group, and that nothing here deletes",
+                  dk_has("Possible duplicates", 25) and "only possible duplicates" in text("#dk-body") and "Nothing is read to list them" in text("#dk-body")
+                  and "COMPARE reads one group's copies" in text("#dk-body")
                   and "a copy under another name is not found" in text("#dk-body") and "Nothing here can delete anything" in text("#dk-body"))
             fb_btn("4 KB UP", 15, exact=True)
             gh = "[...document.querySelectorAll('#dk-body .dk-gh b')].map(b => b.textContent)"
@@ -2119,6 +2120,38 @@ def main():
                   and q("document.querySelector('#dk-body').scrollWidth <= document.querySelector('#dk-body').clientWidth + 1")
                   and q("""[...document.querySelectorAll('#dk-body .seg button')].every(x => { const g = document.createRange(); g.selectNodeContents(x); return g.getClientRects().length === 1; })"""))
             shot("28a-files-duplicates")
+            # COMPARE: the tap that settles a possible duplicate by reading the copies and checking their SHA-1
+            cmp_btns = "[...document.querySelectorAll('#dk-body button.dk-cmp')]"
+            box_ = "#dk-body .dk-cmpbox"
+            check("COMPARE: every group has a button, a finger tall, and says what it does (reads every copy in full and checks its SHA-1)",
+                  q(f"{cmp_btns}.length") == 2 and q(f"{cmp_btns}.every(b => b.getBoundingClientRect().height >= 55.5 && !b.disabled)")
+                  and "Reads every copy in full and checks its SHA-1" in text("#dk-body") and not q(BOX_SMALL))
+            open(f"{T}/dspool/request.json", "w").write("{}")
+            q("(() => { const g = [...document.querySelectorAll('#dk-body .dk-gh')].find(x => x.textContent.includes('zeta.jpg')); let n = g.nextElementSibling; while (n && !n.querySelector('button.dk-cmp')) n = n.nextElementSibling; n.querySelector('button.dk-cmp').click(); })()")
+            check("with a disk job queued: a notice says comparing waits for it, and nothing starts",
+                  settles(c, "!document.querySelector('#toast').classList.contains('hide') && document.querySelector('#toast').textContent.includes('a disk job is running')", 10)
+                  and not q(f"!!document.querySelector('{box_}')"))
+            os.remove(f"{T}/dspool/request.json")
+            q("(() => { const g = [...document.querySelectorAll('#dk-body .dk-gh')].find(x => x.textContent.includes('zeta.jpg')); let n = g.nextElementSibling; while (n && !n.querySelector('button.dk-cmp')) n = n.nextElementSibling; n.querySelector('button.dk-cmp').click(); })()")
+            check("the photo's two copies: THE SAME FILE, with the SHA-1 each row shows (the same 8 characters), and the other group's button is still there",
+                  settles(c, f"!!document.querySelector('{box_}') && document.querySelector('{box_}').textContent.includes('THE SAME FILE')", 40)
+                  and "all 2 copies" in text(box_) and len(set(q("[...document.querySelectorAll('#dk-body .dk-mem')].map(m => (m.textContent.match(/SHA-1 ([0-9a-f]{8})/) || [])[1]).filter(Boolean)"))) == 1
+                  and len(q("[...document.querySelectorAll('#dk-body .dk-mem')].map(m => (m.textContent.match(/SHA-1 ([0-9a-f]{8})/) || [])[1]).filter(Boolean)")) == 2
+                  and q(f"{cmp_btns}.length") == 1)
+            check("... on the 7\": no text under 14 px, OK is a finger tall, nothing wider than the screen",
+                  not q(BOX_SMALL) and q(f"document.querySelector('{box_} button').getBoundingClientRect().height") >= 55.5
+                  and q("document.querySelector('#dk-body').scrollWidth <= document.querySelector('#dk-body').clientWidth + 1"))
+            shot("28b-files-compare-same")
+            q(f"{cmp_btns}[0].click()")
+            check("the big file's two copies (a second comparison replaces the first, which goes back to a button): NOT THE SAME, two different files, each row in its own set",
+                  settles(c, f"!!document.querySelector('{box_}') && document.querySelector('{box_}').textContent.includes('NOT THE SAME')", 60)
+                  and "2 different files share this name and size" in text(box_)
+                  and sorted(q("[...document.querySelectorAll('#dk-body .dk-mem')].map(m => (m.textContent.match(/SET ([AB])/) || [])[1]).filter(Boolean)")) == ["A", "B"]
+                  and q(f"{cmp_btns}.length") == 1)
+            shot("28c-files-compare-different")
+            q(f"document.querySelector('{box_} button').click()")
+            check("OK puts the answer away: the group has its COMPARE button again, and the rows lose their SHA-1 lines",
+                  settles(c, f"!document.querySelector('{box_}') && {cmp_btns}.length === 2", 10) and "SHA-1 " not in text("#dk-body .dk-mem"))
             fb_btn("PHOTOS", 15, exact=True)
             check("PHOTOS: only the photo's group", settles(c, f"{gh}.length === 1 && {gh}[0] === 'zeta.jpg'", 20))
             fb_btn("OTHER", 15, exact=True)

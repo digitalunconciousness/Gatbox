@@ -12,10 +12,10 @@ store's current mounts. Run by hand (tests), it makes its own socket at --socket
 
     gatbox-browse [--socket PATH] [--idle SECONDS] [--exit-when-store-missing]
 
-Routes (GET, JSON unless noted): /volumes /ls /stats /info /text, /preview and /thumb (image/jpeg), /search /duplicates /locate /index /export, /ping.
+Routes (GET, JSON unless noted): /volumes /ls /stats /info /text, /preview and /thumb (image/jpeg), /search /duplicates /locate /index /export /hash, /ping.
 The POSTs are /index (start, stop or remove an image's name index) and /export (COPY TO THE STORE: start, stop or dismiss one copy into
-the store's _exports folder, the only place this service writes). An error is {"error": "a sentence for the screen"} with an HTTP code.
-It stays running while an index pass, a count or a copy has work to do.
+the store's _exports folder, the only place this service writes) and /hash (COMPARE: read the files of one duplicate group out of their images and hash them; nothing is written). An error is {"error": "a sentence for the screen"} with an HTTP code.
+It stays running while an index pass, a count, a copy or a comparison has work to do.
 """
 import argparse
 import json
@@ -42,6 +42,7 @@ sys.path.insert(0, lib_path())
 from gatboxlib import browse as B  # noqa: E402
 from gatboxlib import browseindex as X  # noqa: E402
 from gatboxlib import browsecopy as C  # noqa: E402
+from gatboxlib import browsehash as H  # noqa: E402
 
 STATE = {"last": time.time(), "active": 0, "stale": False}
 LOCK = threading.Lock()
@@ -83,6 +84,16 @@ def route_export(q):
     return C.EXP.status()
 
 
+def route_hash(q):
+    """COMPARE: what the comparison of one duplicate group is doing, or its answer (browsehash.py)."""
+    return H.HASH.status()
+
+
+def post_hash(body):
+    """COMPARE: start, stop or dismiss the one comparison. It reads files out of images and writes nothing."""
+    return H.HASH.request(body)
+
+
 def post_export(body):
     """COPY TO THE STORE: start, stop or dismiss the one copy. It writes only into the store's _exports folder (browsecopy.py)."""
     return C.EXP.request(body)
@@ -120,9 +131,9 @@ def route_thumb(q):
 
 ROUTES = {"/thumb": route_thumb, "/volumes": route_volumes, "/ls": route_ls, "/stats": route_stats, "/info": route_info, "/text": route_text,
           "/preview": route_preview, "/search": route_search, "/duplicates": route_duplicates, "/locate": route_locate, "/index": route_index,
-          "/export": route_export,
+          "/export": route_export, "/hash": route_hash,
           "/ping": lambda q: {"ok": True}}
-POSTS = {"/index": post_index, "/export": post_export}
+POSTS = {"/index": post_index, "/export": post_export, "/hash": post_hash}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -177,7 +188,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             try:
                 n = int(self.headers.get("Content-Length") or 0)
-                body = json.loads(self.rfile.read(min(n, 4096)) or b"{}")
+                body = json.loads(self.rfile.read(min(n, 16384)) or b"{}")
                 self.reply(200, fn(body))
             except ValueError:
                 self.reply(400, {"error": "the body is not JSON"})
@@ -218,7 +229,7 @@ def listening_socket(path):
 def watchdog(srv, idle, exit_when_stale):
     while True:
         time.sleep(0.5)
-        working = any(st.get("state") in ("computing", "waiting") for st in list(B._stats.values())) or X.IDX.busy() or C.EXP.busy()
+        working = any(st.get("state") in ("computing", "waiting") for st in list(B._stats.values())) or X.IDX.busy() or C.EXP.busy() or H.HASH.busy()
         with LOCK:
             quiet = STATE["active"] == 0 and not working
             done = quiet and (time.time() - STATE["last"] > idle or (exit_when_stale and STATE["stale"]))

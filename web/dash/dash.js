@@ -2878,7 +2878,7 @@
              ackFor: null, holding: false, pending: false, expT: null, info: false, swap: null, rec: null,
              fb: {view: "images", img: null, label: "", vols: null, vol: null, volName: "", path: [], sort: "name", order: "asc", kind: "all", deleted: false,
                   page: 0, ls: null, file: null, info: null, text: null, err: null, busy: null, stats: {}, poll: null,
-                  index: null, ixPoll: null, dmin: 1048576, dkind: "all", dpage: 0, dres: null, exp: null, expPoll: null, ask: null, q: "", scope: "names", skind: "all", syear: null, spage: 0, sres: null, from: null, at: null, hit: null, hitRow: null}};
+                  index: null, ixPoll: null, hres: null, hgroup: null, hPoll: null, dmin: 1048576, dkind: "all", dpage: 0, dres: null, exp: null, expPoll: null, ask: null, q: "", scope: "names", skind: "all", syear: null, spage: 0, sres: null, from: null, at: null, hit: null, hitRow: null}};
   const GB = n => n >= 1e12 ? (n / 1e12).toFixed(2) + " TB" : n >= 1e9 ? (n / 1e9).toFixed(1) + " GB"
                 : n >= 1e6 ? Math.round(n / 1e6) + " MB" : (n || 0).toLocaleString("en-US") + " bytes";
   const exact = n => (n || 0).toLocaleString("en-US") + " bytes";
@@ -3620,6 +3620,86 @@
     if (r) { FB.sres = r; FB.spage = r.page; }
     renderDisk();
   }
+  // COMPARE (a follow-up to possible duplicates): one group's files are read out of their images, in full, and hashed, so the screen can say
+  // which really are the same file. gatbox-browse does the reading (browsehash.py) and writes nothing; this only asks and shows. One at a time.
+  const HASH_CAP = 2048 * 1048576;                                     // what the service reads for one tap (browsehash.HASH_CAP)
+  const HASH_LIVE = ["queued", "hashing", "waiting"];
+  const hashKey = g => `${g.name}|${g.size}`;
+  async function fbHashLoad() {
+    clearTimeout(FB.hPoll);
+    let st;
+    try { st = await api("GET", "/api/browse/hash"); } catch (e) { st = {state: "error", error: String(e.message || e)}; }
+    // this is only asked while a comparison is running, so "idle" means the service restarted and lost it
+    if (st.state === "idle") st = {state: "error", error: "The comparison was lost: the drive browser restarted. Tap COMPARE to start it again.", files: []};
+    FB.hres = st;
+    renderDisk();
+    if (HASH_LIVE.includes(st.state) && S.view === "disk" && K.mode === "files" && FB.view === "dups") FB.hPoll = setTimeout(fbHashLoad, 1500);
+  }
+  async function fbHashStart(g) {
+    const members = g.members.map(m => ({id: m.id, image: m.image, vol: m.vol, inode: m.inode, size: m.size}));
+    try { FB.hres = await api("POST", "/api/browse/hash", {action: "start", name: g.name, members}); } catch (e) { return fail(e); }
+    FB.hgroup = hashKey(g);
+    fbHashLoad();
+  }
+  async function fbHashDo(action) {
+    try { await api("POST", "/api/browse/hash", {action}); } catch (e) { return fail(e); }
+    if (action === "dismiss") { FB.hres = null; FB.hgroup = null; renderDisk(); } else fbHashLoad();
+  }
+  // the sets a finished comparison found, in the order they first appear: [[sha1, [ids]], ...]
+  const hashSets = h => {
+    const sets = [];
+    for (const f of (h.files || [])) {
+      if (!f.sha1) continue;
+      const hit = sets.find(x => x[0] === f.sha1);
+      if (hit) hit[1].push(f.id); else sets.push([f.sha1, [f.id]]);
+    }
+    return sets;
+  };
+  // under a group's header: the COMPARE button, or how the comparison is going, or what it found (with OK to put it away)
+  function fbHashStrip(c, g, h) {
+    const other = FB.hres && HASH_LIVE.includes(FB.hres.state);
+    if (!h) {
+      const big = g.size * g.members.length > HASH_CAP, b = el("button", "dk-cmp", "COMPARE");
+      b.disabled = big || other;
+      b.addEventListener("click", () => fbHashStart(g));
+      c.appendChild(add(el("div", "btnrow dk-cmprow"), b,
+        el("span", "mut", big ? "Too big to compare here (over 2 GB in all)." : other ? "One comparison at a time." : "Reads every copy in full and checks its SHA-1.")));
+      return;
+    }
+    const live = HASH_LIVE.includes(h.state), box = el("div", "dk-cmpbox"), sets = hashSets(h), n = (h.files || []).length;
+    const unread = (h.files || []).filter(f => !f.sha1).length, partial = g.more ? ` (the ${n} listed of ${num(g.count)})` : "";
+    if (live) {
+      add(box, el("div", h.state === "waiting" ? "warn" : "cy", h.state === "waiting"
+        ? "The comparison is standing still: a disk job is running. It carries on when that is over."
+        : `COMPARING: copy ${num((h.current || 0) + 1)} of ${n} · ${GB(h.bytes_done)} of ${GB(h.bytes_total)}`));
+      const bar = el("div", "dk-bar"), fill = el("div");
+      fill.style.width = (h.bytes_total ? Math.min(100, 100 * h.bytes_done / h.bytes_total) : 0) + "%";
+      add(bar, fill);
+      box.appendChild(bar);
+    } else if (h.state === "done" && h.verdict === "same") {
+      box.appendChild(el("div", "ok", `THE SAME FILE: all ${n} copies${partial} have the same SHA-1, ${sets[0][0].slice(0, 8)}… Only the places differ.`));
+    } else if (h.state === "done" && h.verdict === "different") {
+      box.appendChild(el("div", "warn", `NOT THE SAME: ${sets.length} different files share this name and size${partial}. Each row says which set it belongs to.`));
+    } else if (h.state === "done" && h.verdict === "partly") {
+      box.appendChild(el("div", "warn", `The ${n - unread} cop${n - unread === 1 ? "y" : "ies"} that could be read ${n - unread === 1 ? "has" : "have"} one SHA-1, but ${unread} could not be read, so nothing is proven for ${unread === 1 ? "it" : "them"}.`));
+    } else if (h.state === "done") {
+      box.appendChild(el("div", "bad", "Nothing could be read out of the images."));
+    } else if (h.state === "stopped") {
+      box.appendChild(el("div", "warn", "Stopped before every copy was read: that is not an answer."));
+    } else box.appendChild(el("div", "bad", h.error || "The comparison did not finish."));
+    const row = el("div", "btnrow"), b = el("button", null, live ? "STOP" : "OK");
+    b.addEventListener("click", () => fbHashDo(live ? "stop" : "dismiss"));
+    c.appendChild(add(box, add(row, b)));
+  }
+  // one member's line under its path: what the comparison found for it
+  function fbHashMember(h, m) {
+    const f = (h.files || []).find(x => x.id === m.id);
+    if (!f || f.state === "pending") return null;
+    if (f.state === "hashing") return el("div", "cy", "reading…");
+    if (f.state === "failed") return el("div", "warn", f.note || "could not be read out of the image");
+    const sets = hashSets(h), at = sets.findIndex(x => x[0] === f.sha1);
+    return el("div", h.verdict === "different" ? "warn" : "mut", `SHA-1 ${f.sha1.slice(0, 8)}…${h.verdict === "different" ? " · SET " + String.fromCharCode(65 + at) : ""}${f.note ? " · " + f.note : ""}`);
+  }
   // POSSIBLE DUPLICATES (F4c): the same name and exactly the same size, from the name index alone. Nothing is read from an image.
   async function fbDups() {
     Object.assign(FB, {view: "dups", err: null, from: null});
@@ -3628,6 +3708,7 @@
     if (seq !== FB.dseq) return;                                       // a newer look was asked for while this one was away: that one answers
     if (r) { FB.dres = r; FB.dpage = r.page; }
     renderDisk();
+    if (FB.hres && HASH_LIVE.includes(FB.hres.state)) fbHashLoad();       // a comparison started before this look is still going
   }
   // a result: its file opens as it does from a folder; a folder result opens that folder
   function fbOpenHit(h) {
@@ -3774,8 +3855,9 @@
   function fbDupsView(c) {
     c.appendChild(add(el("div", "btnrow"), fbBack("ALL IMAGES", fbImages)));
     c.appendChild(el("h2", null, "Possible duplicates"));
-    c.appendChild(el("div", "mut", "The same name and exactly the same size, in every image that has been indexed. Nothing is read to compare them, so these are only "
-                                   + "possible duplicates: two different files can match, and a copy under another name is not found. Nothing here can delete anything."));
+    c.appendChild(el("div", "mut", "Listed by name and exact size, in every image that has been indexed. Nothing is read to list them, so these are only "
+                                   + "possible duplicates: two different files can match, and a copy under another name is not found. COMPARE reads one group's copies "
+                                   + "and checks them. Nothing here can delete anything."));
     const sizes = el("div", "seg"), kinds = el("div", "seg");
     for (const [n, t] of [[4096, "4 KB UP"], [1048576, "1 MB UP"], [10485760, "10 MB UP"]]) {
       const b = el("button", FB.dmin === n ? "on" : null, t);
@@ -3801,9 +3883,11 @@
       const tag = FB_TAG[(g.members[0] || {}).kind];
       c.appendChild(add(el("div", "dk-gh"), add(el("div", "dk-fn"), el("b", null, g.name), tag ? el("span", "tag " + tag[1], tag[0]) : null),
                         el("div", "mut", `${g.count} copies · ${GB(g.size)} each · ${GB(g.waste)} extra`)));
+      const mine = FB.hgroup === hashKey(g) ? FB.hres : null;
+      if (g.members.length > 1 && g.members.every(m => m.image)) fbHashStrip(c, g, mine);
       for (const m of g.members) {
         const r = el("button", "row dk-frow dk-mem");
-        add(r, el("div", "dk-path", m.path), el("div", "mut", `${m.label} · ${m.volume}${m.mtime ? " · " + stamp(m.mtime) : ""}`));
+        add(r, el("div", "dk-path", m.path), el("div", "mut", `${m.label} · ${m.volume}${m.mtime ? " · " + stamp(m.mtime) : ""}`), mine ? fbHashMember(mine, m) : null);
         if (m.image) r.addEventListener("click", () => fbShow(m));
         else { r.disabled = true; r.appendChild(el("div", "warn", "this image is not in the store any more")); }
         c.appendChild(r);

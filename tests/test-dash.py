@@ -1769,6 +1769,23 @@ def main():
                   settles(c, "document.querySelector('#vw-title').textContent === 'red.png' && document.querySelector('#vw-page').textContent === '2 / 2' && document.querySelector('#vw-img').complete", 40))
             q("document.querySelector('#vw-close').click()")
             check("CLOSE: the grid again", settles(c, f"{imgs_js}.length === 2", 15))
+            # The owner's card, 2026-11-16: thumbnails showed for a frame and left empty boxes. The store's free space moves with every
+            # thumbnail written to it, the 5 s poll redrew the tab when it did, and every redraw made new blank <img> elements.
+            q(f"{imgs_js}.forEach(i => {{ i.dataset.kept = '1'; }}); window.__redraws = 0;"
+              " new MutationObserver(m => { window.__redraws += m.length; }).observe(document.querySelector('#dk-body'), {childList: true}); true")
+            import shutil as _sh
+            bucket = lambda: _sh.disk_usage(FD.store).free // (256 * MiB)
+            b0 = bucket()
+            for i in range(7):                                         # small writes move the store's free space, as thumbnails do, over more than one poll
+                with open(f"{FD.store}/_noise{i}", "wb") as nf:
+                    nf.write(os.urandom(256 * 1024))
+                time.sleep(1.1)
+            moved = bucket() != b0                                     # (a 256 MB step crossed by chance: the redraw would be right)
+            check("the store's free space moving a little (as a thumbnail written does) does not redraw the grid: no redraw over a 5 s poll, "
+                  "the same thumbnails, still drawn", moved or (q("window.__redraws") == 0 and q(f"{imgs_js}.length") == 2
+                  and q(f"{imgs_js}.every(i => i.dataset.kept === '1' && i.complete && i.naturalWidth > 0)")))
+            for i in range(7):
+                os.remove(f"{FD.store}/_noise{i}")
             # F4b: a deleted photo in the grid, and the warning that follows it through the viewer
             tog = "document.querySelector('#dk-body .dk-count button')"
             check("DELETED is off to begin with: two photos, the line says one deleted is not shown, the toggle is a finger tall and not pressed",
@@ -1784,6 +1801,9 @@ def main():
             check("... its thumbnail is really drawn (the deleted file's data was still there), and nothing is under 14 px",
                   settles(c, "[...document.querySelectorAll('#dk-body .dk-cell.gone img')].every(i => i.complete && i.naturalWidth > 0)", 40) and not q(BOX_SMALL))
             shot("27b-files-deleted-grid")
+            check("the grid was redrawn for the new cell, and the two live photos kept their own <img> elements (moved, still drawn), not new blank ones",
+                  q("[...document.querySelectorAll('#dk-body .dk-cell:not(.gone) img')].filter(i => i.dataset.kept === '1' && i.complete && i.naturalWidth > 0).length") == 2
+                  and q("window.__redraws") > 0)
             q("[...document.querySelectorAll('#dk-body .dk-cell')].find(b => b.querySelector('.dk-cn').textContent === 'IMG_0001.jpg').click()")
             note = "document.querySelector('#vw-note')"
             check("a live photo in a folder that also shows deleted ones: the viewer has no warning, and it is one of three",

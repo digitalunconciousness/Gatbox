@@ -2914,7 +2914,9 @@
     }
     if (s.op === "write" && s.verified && K.listFor !== s.job) loadChecklist(s.job);
     else if (K.listFor === undefined) loadChecklist(null);
-    const sig = JSON.stringify(st);
+    // The store's free space moves with every thumbnail and index page written to it, so a poll that compared it exactly redrew the tab
+    // (and a grid of thumbnails) each time one was made. It is compared in 256 MB steps; the line that shows it is as new as the last redraw.
+    const sig = JSON.stringify(st, (k, v) => k === "free" && typeof v === "number" ? Math.floor(v / (256 * 1048576)) : v);
     if (sig === K.sig) return;                       // the 5 s poll: nothing changed, nothing redrawn
     K.sig = sig;
     renderDisk();
@@ -3443,6 +3445,25 @@
   // is mounted. A folder is named by its inode and every row carries its own, so this walks down by inode and never builds a path.
   // What comes out of an image is slow (a spinning drive): every step says what it is waiting for, and BACK always works.
   const FB = K.fb;
+  // A thumbnail's <img> outlives a redraw of the tab. renderDisk() clears the body, and a fresh <img> is blank for a frame (a lazy one,
+  // until the browser chooses to fetch it), so a grid redrawn by a poll, the copy strip or a count showed its pictures for a frame and
+  // then empty boxes (the owner's card, 2026-11-16). The same element is moved into the new grid instead, still loaded. One that failed
+  // (a photo that cannot be drawn, or a disk job) is left out, so its cell is just the name.
+  const FB_THUMBS = new Map();
+  function fbThumb(url) {
+    let img = FB_THUMBS.get(url);
+    if (img && img.dataset.failed) { FB_THUMBS.delete(url); img = null; }              // the failure may have been a disk job: ask again on the next draw
+    if (!img) {
+      img = el("img");
+      img.loading = "lazy";
+      img.alt = "";
+      img.addEventListener("error", () => { img.dataset.failed = "1"; img.remove(); });
+      img.src = url;
+      FB_THUMBS.set(url, img);
+      if (FB_THUMBS.size > 400) FB_THUMBS.delete(FB_THUMBS.keys().next().value);       // the oldest go: a 4 TB drive has more photos than that
+    }
+    return img;
+  }
   const fbQ = o => Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== "")
                          .map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
   const fbDir = () => FB.path.length ? FB.path[FB.path.length - 1].inode : null;
@@ -3980,12 +4001,10 @@
     if (grid.length) {
       const g = el("div", "dk-grid");
       for (const e of grid) {
-        const cell = el("button", "dk-cell" + (FB.hit && e.inode === FB.hit ? " hit" : "") + (e.deleted ? " gone" : "")), img = el("img");
-        img.loading = "lazy";
-        img.alt = "";
-        img.addEventListener("error", () => img.remove());               // a photo that cannot be drawn, or a disk job: the name is still there
-        if (!e.reused) img.src = "/api/browse/thumb?" + fbQ({image: FB.img, vol: FB.vol, inode: e.inode, size: e.size});   // a reused inode would draw another file's picture
-        add(cell, img, el("div", "dk-cn", e.name), e.deleted ? el("span", "tag bad", e.reused ? "NAME ONLY" : "DELETED") : null);
+        const cell = el("button", "dk-cell" + (FB.hit && e.inode === FB.hit ? " hit" : "") + (e.deleted ? " gone" : ""));
+        // a reused inode would draw another file's picture: no thumbnail is asked for
+        const img = e.reused ? null : fbThumb("/api/browse/thumb?" + fbQ({image: FB.img, vol: FB.vol, inode: e.inode, size: e.size}));
+        add(cell, img && !img.dataset.failed ? img : null, el("div", "dk-cn", e.name), e.deleted ? el("span", "tag bad", e.reused ? "NAME ONLY" : "DELETED") : null);
         cell.addEventListener("click", () => e.reused ? toast(FB_REUSED, "warn", 6000) : fbOpenFile(e));
         if (FB.hit && e.inode === FB.hit) requestAnimationFrame(() => cell.scrollIntoView({block: "center"}));
         g.appendChild(cell);

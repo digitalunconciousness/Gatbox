@@ -812,15 +812,25 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           2775), and a file whose mode cannot be set stops the copy with a sentence instead of being ignored. `test-browse-copy.sh`: 41, with the
           sandbox's refusal emulated; 3 breakages fail a test (a fourth is equivalent). A copy made before the fix is 0700 and needs `sudo` to read
           or delete, once.
-    - [x] **Camera raw photos** (the owner, 2026-11-16: the NIKON card's photos are `.nef` and showed no thumbnails; the grid keeps only the name
-          of a photo it cannot draw). A NEF is a TIFF file, so it was sniffed as a photo and handed to Pillow, which cannot draw the raw data.
+    - [x] **Camera raw photos** (the owner first said the NIKON card's photos were `.nef`, with no thumbnails; **they turned out to be JPG**, and the
+          thumbnails' real cause is the next bullet. This stays in as a real gap for a card that does hold raws; the grid keeps only the name of a
+          photo it cannot draw). A NEF is a TIFF file, so it was sniffed as a photo and handed to Pillow, which cannot draw the raw data.
           `gatboxlib/rawpreview.py` (stdlib and Pillow, in the bootstrap's manifest) walks the file's TIFF directories (IFD0 and its chain, SubIFDs,
           the EXIF directory, Nikon's PreviewIFD inside the MakerNote) and draws the largest embedded JPEG, or a small uncompressed thumbnail
           when that is all the camera stored; the file's own orientation is applied. It is used when Pillow cannot open the file at all, or when
           the first image is under 640 px (a thumbnail); an ordinary TIFF is left alone and not decoded. `test-browse-raw.sh`: 28, on invented
           NEF-shaped files in both byte orders and through `thumb`, `info` and `preview` on a FAT image; 12 breakages fail a test (a 13th, the cap
           on entries in one directory, only bounds memory and time). **Not tried on a real D100 NEF**: the layout is the TIFF and EXIF one in
-          general, and the first look at the owner's card on the Pi is the real test. Not installed.
+          general, and the first look at a card of raws on the Pi is the real test. Installed with the next bootstrap run.
+    - [x] **Thumbnails flashed for a frame and left empty boxes** (the owner, 2026-11-16, JPG photos on the NIKON card). The cause is not the
+          photos: `GET /api/disk` carries the image store's **free space**, which changes with every thumbnail (and index page) written to the
+          store, so the DISK tab's 5 s poll saw "something changed" and redrew the tab, and each redraw made new `<img>` elements: blank for a
+          frame (a lazy one, until the browser chose to fetch it). The tests never saw it, because a fake store's free space does not move. Two
+          changes in `web/dash/dash.js`: the poll compares the free space in 256 MB steps, and a thumbnail's `<img>` is kept and moved into the
+          next draw (`FB_THUMBS`, up to 400), so any other redraw (the copy strip, a count, the DELETED toggle) leaves the pictures alone. One
+          that failed (a disk job was running) is asked for again at the next draw. `test-dash.sh`: 333 (was 331): small writes into the store
+          over a poll do not redraw the grid, and a redraw that does happen (DELETED) keeps the same elements; each half fails a test on its own
+          when reverted. **Not seen on the Pi yet**: the cause is read from the code and reproduced with a store whose free space moves.
   - [x] **RESTORE TO THE ORIGINAL** (the owner, 2026-11-16: "I should be able to put an image back onto the disk I pull it from also
         with an arming button"; built the same day, **not installed**; `docs/plans/2026-11-16-restore-and-format.md`). The refusal "this is the
         drive the image came from" is lifted only by a deliberate RESTORE CHECK (`gatbox-disk check|write --restore`, the 7″'s RESTORE CHECK

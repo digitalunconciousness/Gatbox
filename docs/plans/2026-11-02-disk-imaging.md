@@ -245,7 +245,9 @@ Each tick is saved with the write record, with its time. The checklist blocks no
     not by the desktop.
 - **One disk job at a time,** with 409 while one is queued or running. T48 and disk jobs don't block each other.
 - **Timeouts:** not the dump's 20 minutes. Size `TimeoutStartSec` for a 40 GB HDD at USB 2 speed (about 3 h). An
-  interrupted read resumes from its map.
+  interrupted read resumes from its map. **Measured on the Pi (2026-11-16, an 80 GB drive):** a WRITE is four passes and took about 2.5 hours
+  (image check 33 min, write 37 min, read-backs about 40 min each), so 3 h was too tight; the unit's limit is 12 h, a ceiling for a hung
+  dock. A stop by systemd (SIGTERM) is answered by the job: it says so, logs a write as stopped and partly written, and removes its claim.
 - **Hard rule 6 becomes:** "The only hardware writes from the dashboard are a T48 burn and a disk write, each armed at
   the Pi (a hold on the 7″ for now, the physical ARM button later), checked first (blank check / target check) and
   verified. Nothing else writes hardware. No part auto-detect."

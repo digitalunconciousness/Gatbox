@@ -14,9 +14,12 @@ After=srv-gatbox-disks.mount
 # the drive's identity before it opens the drive.
 Type=oneshot
 ExecStart=/usr/local/bin/gatbox-disk --job /var/spool/gatbox-disk/request.json --status /var/spool/gatbox-disk/status.json
-# A 40 GB IDE drive at USB 2 speed, read once, or written and read back twice (note §5). An interrupted read resumes
-# from its ddrescue map.
-TimeoutStartSec=3h
+# A WRITE is four passes over the drive (its image checked, written, read back twice) and a READ about two. Measured on the Pi
+# (2026-11-16, the 80 GB drive, USB 2): 33 min to check the image, 37 min to write it, about 40 min per read-back, so about 2.5
+# hours, against the 3 h this unit had, which was sized for a 40 GB drive and a guessed speed. 12 h covers 250 GB at 30 MB/s. It is
+# a ceiling for a hung dock, not a deadline: the DISK tab shows the progress, and a stop (this limit, or systemctl stop) is
+# answered cleanly by the job (SIGTERM: it says so, logs it and removes its claim). An interrupted read resumes from its map.
+TimeoutStartSec=12h
 # Its own narrow identity (note §5, §9.3):
 #   - group gatbox-disk is the devices' group: the udev rule gives it rw on whole USB disks only (ID_BUS usb,
 #     DEVTYPE disk); mmcblk and nvme stay root:disk. Only this user holds it.

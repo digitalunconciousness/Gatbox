@@ -959,6 +959,32 @@ def main():
           st["state"] == "done" and st["verified"] and st["restore"] is True and open(f"{DEV}/sdh", "rb").read(len(src)) == src
           and last["restore"] is True and last["armed"]["by"] == "screen" and last["ack"] is True)
     F.unplug("sdh")
+    # SIGTERM is how systemd stops the job (its time limit, `systemctl stop`). The job used to die on the spot: no status, no log line, and
+    # a running.json that the DISK tab, a new request and every thumbnail waited on for good (the Pi, 2026-11-16: a 2.5 hour write against a
+    # 3 hour limit). It now says so, exits normally and removes its claim.
+    import signal as _sig
+    term_ident = next(d for d in json.loads(disk("list", "--json")[1])["disks"] if d["name"] == "sdb")["identity"]
+    with open(f"{spool}/request.json", "w") as f:
+        json.dump({"op": "read", "device": "sdb", "identity": term_ident, "machine": "widget-wars", "label": "WW-TERM", "media": "sd",
+                   "id": "jobterm", "at": time.time()}, f)
+    pr = subprocess.Popen(["python3", TOOL, "--job", f"{spool}/request.json", "--status", f"{spool}/status.json"],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env(FAKE_DDRESCUE_SLOW="20"))
+    t_end = time.time() + 30
+    while time.time() < t_end and not os.path.exists(f"{spool}/running.json"):
+        time.sleep(0.05)
+    time.sleep(1.5)                                                    # into the read
+    claimed = os.path.exists(f"{spool}/running.json")
+    pr.send_signal(_sig.SIGTERM)
+    try:
+        pr.communicate(timeout=90)
+    except subprocess.TimeoutExpired:
+        pr.kill()
+        pr.communicate()
+    tst = json.load(open(f"{spool}/status.json"))
+    check("SIGTERM in the middle of a job: it exits normally, says it was stopped from outside, and removes its claim (no running.json left)",
+          claimed and pr.returncode == 0 and not os.path.exists(f"{spool}/running.json") and tst["state"] == "stopped"
+          and "stopped from outside" in tst["error"] and tst["job"] == "jobterm" and "partly written" in tst["hint"]
+          and not any(f.startswith("WW-TERM_") for f in files("widget-wars")))
     old2 = os.urandom(MiB)
     usb_disk("sde", len(old2), "WIDGET", "OLDSPINNER 40", port=5, devnum="8:64", data=old2)
     ident = next(d for d in json.loads(disk("list", "--json")[1])["disks"] if d["name"] == "sde")["identity"]
@@ -1069,6 +1095,27 @@ def web_side(image):
         check("GET /api/disk: the USB disks with their roles, the store mounted with its space, the spool there",
               code == 200 and names.get("sdc") == "store" and names.get("sdd") == "empty" and "mmcblk0" not in names
               and st["store"]["mounted"] and st["store"]["total"] > 0 and st["spool"] and not st["busy"])
+        # A status that says "running" with no claim behind it is a job that died without finishing (a power cut, a reboot): shown as running
+        # it would be a progress card for ever. It reads as stopped and stale, with the warning about a partly written drive.
+        sp0 = f"{w}/spool/status.json"
+        before = open(sp0).read() if os.path.exists(sp0) else None
+        with open(sp0, "w") as f:
+            json.dump({"op": "write", "job": "dead1", "state": "running", "step": "verify", "progress": 0.62}, f)
+        code, r = call("GET", "/api/disk")
+        check("a status that says running with no claim behind it (a power cut, a reboot): GET /api/disk shows it stopped and stale, with the "
+              "partly-written warning, and not busy", code == 200 and not r["busy"] and r["status"]["state"] == "stopped" and r["status"]["stale"] is True
+              and "restarted" in r["status"]["error"] and "partly written" in r["status"]["hint"] and r["status"]["progress"] == 0.62)
+        with open(f"{w}/spool/running.json", "w") as f:
+            json.dump({"op": "write", "id": "dead1"}, f)                  # with its claim there, the same status is a job that is running
+        code, r = call("GET", "/api/disk")
+        check("... and with the claim there it is a running job: busy, still running, not stale", code == 200 and r["busy"]
+              and r["status"]["state"] == "running" and not r["status"].get("stale"))
+        os.remove(f"{w}/spool/running.json")
+        if before is None:
+            os.remove(sp0)
+        else:
+            with open(sp0, "w") as f:
+                f.write(before)
         code, r = call("GET", "/api/disk/images")
         check("GET /api/disk/images: the store's images from their sidecars, with label and source drive",
               code == 200 and any(i["image"] == image and i["label"] == "WW-HDD" and i["source"] == "WIDGET WIDGETDRIVE 1000"

@@ -17,3 +17,7 @@
   `GDDD` CHS metadata line), which is the format Task 3's parser was waiting for.
 - Approved, queued: the CF card's model name read byte-swapped (`ASSMNU G` for `SAMSUNG`), shown de-swapped; hashing the possible
   duplicates on a tap; a list of earlier copies on the 7″.
+- The first real RESTORE (the 80 GB donor) showed the disk unit's three-hour limit was too tight for a write (about 2.5 hours) and that a job
+  stopped by systemd or a power cut leaves a claim that blocks the DISK tab and the thumbnails. Fixed as a diff for the owner (the limit
+  becomes 12 hours; the claim is removed at boot) and in code (the job answers SIGTERM cleanly; a status left "running" with no claim shows
+  as stopped). Not installed while her job was running.

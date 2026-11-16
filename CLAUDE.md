@@ -185,8 +185,8 @@ from the drive's own IDENTIFY, plus sysfs), SWAP (the procedure's steps, ticking
 (the bench procedure's job record) and the CF adapter's +5 V warning. None of them sends anything to a drive. **This dock's
 bridge hangs on SMART and native-max commands and resets the USB device** (`hdparm -N`, smartd's SMART ENABLE: the Pi,
 2026-11-14), so nothing here asks a drive behind it for them; `hdparm -I` works. **A CF-to-IDE adapter on the dock needs one +5 V
-supply:** with the dock's barrel plug in and a second feed on the adapter, only 1 of 6 power-ups came back right (the mechanism is
-not measured; BRINGUP Task 0, 2026-11-15). The store's UUID is site config in
+supply, the dock's own Molex (live with the barrel plug in):** with a separate feed beside the dock's power, only 1 of 6 power-ups
+came back right; fed from the Molex alone, the owner's re-test passed (the mechanism is not measured; BRINGUP Task 0, 2026-11-15). The store's UUID is site config in
 `/etc/gatbox/disks.conf` (git-ignored territory, like `hub.conf`). Facts about the dock and the store (USB IDs, serials, what
 the bridge passes through) come from Task 0's output, never from a guess.
 `hdparm` and `smartmontools` are installed by the bootstrap, with smartd disabled and hdparm's own udev rule masked

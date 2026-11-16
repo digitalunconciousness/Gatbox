@@ -160,7 +160,7 @@ Bring-up done 2026-09-23 (BRINGUP.md "Bring-up 1/2"). Phase 0 and Phase 1 (rail 
 first cabinet log 2026-09-25 (Gauntlet Legends). **Phase 2 started 2026-09-28**: progress checklist in BRINGUP.md.
 M0–M7 done 2026-09-29 (the first real burn from the 7″ that evening); M8 on hold.
 
-**Drive browser (FILES on the DISK tab), F1 built 2026-11-15, not installed.** Look inside a stored disk image on the 7" only:
+**Drive browser (FILES on the DISK tab), F1 to F4d built 2026-11-15 and installed on the Pi the same day (main a692799; the unit's sandbox ran, `systemd-analyze security` 0.8 SAFE).** Look inside a stored disk image on the 7" only:
 volumes, folders by inode, counts by kind, photos, PDF pages and text, with nothing mounted. `backend/gatbox-browse` is a
 socket-activated stdlib service (its own user, no network, no devices, the store read-only except its own `_browse` and `_exports` folders, idle exit) that runs sleuthkit
 (`mmls`, `fsstat`, `fls`, `icat`), Pillow and `pdftoppm`; gatbox-web forwards the loopback routes `/api/browse/*` (GETs, and two POSTs: start or stop an image's index, and COPY TO THE STORE) and refuses a
@@ -180,7 +180,7 @@ USB dock or a reader: READ into the image store, TARGET CHECK, WRITE from the 7�
 it), the swap checklist. Spec: `docs/plans/2026-11-02-disk-imaging.md`; progress: BRINGUP.md. `gatbox-disk` (a CLI
 and the job), `gatboxlib/disks.py` and gatbox-web's `/api/disk` + the DISK tab; the units, the udev rule, the sysusers and
 tmpfiles entries and the store's mount unit install with the bootstrap. The 4 TB drive is the image store and is mounted;
-as of 2026-11-15 no READ or WRITE has been run from the 7″ on real media. The DISK tab also has DRIVE INFO (what udev kept
+as of 2026-11-15 one real READ has been run from the 7″ (the 80 GB donor drive) and no WRITE has been run on real media. The DISK tab also has DRIVE INFO (what udev kept
 from the drive's own IDENTIFY, plus sysfs), SWAP (the procedure's steps, ticking themselves from the live drive list), RECORDS
 (the bench procedure's job record) and the CF adapter's +5 V warning. None of them sends anything to a drive. **This dock's
 bridge hangs on SMART and native-max commands and resets the USB device** (`hdparm -N`, smartd's SMART ENABLE: the Pi,

@@ -765,8 +765,18 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           the library, hub-sending and archive-sync files (Phases B, C and D) were already current. The logger was left running (up to date);
           `gatbox-web` and `gatbox-disk.path` restarted; `gatbox-browse.socket` is listening; `/run/gatbox-browse` is `root:root` 0755; `_browse` is
           `gatbox-browse:gatbox-browse` 0700 and `_exports` is `gatbox-browse:gatbox-disk-queue` 2775, as the unit makes them. The service ran under its
-          sandbox (the journal shows its requests) and a first COPY TO THE STORE completed. **Open from that run:** `dmesg` shows
-          `usb 1-2: reset high-speed USB device` at 5786 s, 5847 s and 7140 s of uptime, not yet placed against what was being done.
+          sandbox (the journal shows its requests) and a first COPY TO THE STORE completed, and `systemd-analyze security gatbox-browse.service`
+          says **0.8 SAFE**. The service leaves after its 300 s idle, as designed (`Deactivated successfully`). The 80 GB donor drive had been READ
+          from the 7″ earlier the same day (the first real READ), and FILES opened its volume, counted it, listed folders and showed a text file.
+    - [x] The three `usb 1-2` resets in that `dmesg` are placed (2026-11-15, the owner's `dmesg -T` and `lsusb`): `usb 1-2` is the **XinTop XT-U33502
+          dock** (1f75:0611), not the store, and the resets are on the evening of 2026-11-14 (18:29, 18:30 and 18:52 by the Pi's clock), before any of
+          today's browsing or copying; none since. That matches the hangs the DISK notes already record that evening (smartd's SMART ENABLE twice, and
+          `hdparm -N`), so I take them for those. A recheck after the second bootstrap run showed no new reset.
+    - [x] Second bootstrap run on the Pi, 2026-11-15 (main a692799: the duplicate check across the store, the WRITE progress bar and the copy-folder
+          fix): **3 files**, `/usr/local/bin/gatbox-disk`, `gatboxlib/browsecopy.py` and the dashboard's `dash.js`; the logger left running;
+          `gatbox-web`, `gatbox-disk.path` and `gatbox-browse.socket` restarted. **Not yet checked on the Pi:** a new COPY (its folder should list with a plain
+          `ls -l`, no sudo), a READ of a drive already in the store under another machine (the new "already stored under ..." line), and a WRITE
+          (the first ever from the 7″; nothing has been written to a drive on real media).
     - [x] F4d fix found by that run (2026-11-15): the finished copy's folder was **unreadable to the owner** (`Permission denied`). The unit has
           `RestrictSUIDSGID=yes`, which refuses any chmod that names the setgid bit; the copy asked for `chmod 2775` on each folder it made and
           swallowed the refusal, leaving the folders 0700 (the service's umask is 0077). Outside the sandbox nothing refuses it, so no test saw it.

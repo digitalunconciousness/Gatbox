@@ -115,3 +115,8 @@
   Appendix B stay blank on the record.
 - Owner, next: run the bootstrap from main (`--check` first, then the real run, with the dock idle), then the first READ of
   the 80 GB drive from the 7″.
+- **That evening she did, from the Pi:** the bootstrap from main installed the drive browser (10 files, all its own, the logger untouched), the 80 GB
+  drive had been READ from the 7″ (the first real READ) and FILES opened it, and a first COPY TO THE STORE completed. It showed one bug the
+  tests could not: the copy's folders were 0700 and unreadable to her, because the unit's `RestrictSUIDSGID=yes` refuses the `chmod 2775` the copy asked
+  for and the copy swallowed the refusal. Fixed (the folders are made with the umask cleared, and a refused mode now stops the copy) and installed in
+  a second run (3 files). The three `usb 1-2` resets in `dmesg` were the dock's, from the night before.

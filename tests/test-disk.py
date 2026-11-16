@@ -996,7 +996,7 @@ def main():
                          FAKE_DDRESCUE_BAD="0:512", FAKE_DDRESCUE_HEAL=1)
     check("a RETRY job: -r3 on the same map, then stored", st["state"] == "done" and calls()[0].startswith("-r3 ")
           and st["stored"]["new"])
-    code, st, gone = job({"op": "format"})
+    code, st, gone = job({"op": "shred"})
     check("an unknown job: stopped, saying so", st["state"] == "stopped" and "unknown job" in st["error"] and gone)
 
     web_side(image)
@@ -1260,6 +1260,44 @@ def web_side(image):
         code_w, rec2 = call("GET", f"/api/disk/record?image={image}")
         check("a file outside the store is never read (404), a write of other bytes isn't on this image's record, and a bad "
               "line in writes.jsonl is skipped", code_out == 404 and code_w == 200 and "OTHER-BYTES-MARKER" not in json.dumps(rec2))
+        # FORMAT through gatbox-web (docs/plans/2026-11-16-restore-and-format.md): the same shape as a write. The tool's own tests are
+        # tests/test-disk-format.py; these are the routes and their gates. Skipped, saying so, where mkfs.fat is not installed.
+        import shutil as _shutil
+        if not _shutil.which("mkfs.fat", path=os.environ.get("PATH", "") + ":/usr/sbin:/sbin"):
+            print("  skip  FORMAT through gatbox-web: mkfs.fat is not installed here (apt: dosfstools)")
+        else:
+            usb_disk("sdf", 20 * MiB, "WIDGET", "WIDGET CF 20", port=21, devnum="8:80", data=bytes(range(1, 256)) * 4096)
+            fd_ = disk_of("sdf")
+            target_f = {"device": "sdf", "identity": fd_["identity"]}
+            check("POST /api/disk/format-check: a filesystem that isn't one of the three, or a label with a space -> 400; a drive that isn't the one picked -> 409",
+                  call("POST", "/api/disk/format-check", dict(target_f, fs="ntfs"))[0] == 400
+                  and call("POST", "/api/disk/format-check", dict(target_f, fs="fat32", label="two words"))[0] == 400
+                  and call("POST", "/api/disk/format-check", {"device": "sdf", "identity": dict(fd_["identity"], model="OTHER"), "fs": "fat32"})[0] == 409)
+            check("POST /api/disk/format with no FORMAT CHECK behind it -> 409", call("POST", "/api/disk/format", {"device": "sdf", "ack": True})[0] == 409)
+            code, r = call("POST", "/api/disk/format-check", dict(target_f, fs="fat32", label="widget"))
+            fc = done()
+            check("POST /api/disk/format-check -> 202, and the job's answer: it passes, the label in capitals, FAT16 for a card this small, the "
+                  "acknowledgement wanted and the no-image warning", code == 202 and r["op"] == "format_check" and r["label"] == "WIDGET"
+                  and fc.get("op") == "format_check" and fc.get("target_ok") and fc["layout"]["made"] == "FAT16" and fc["needs_ack"] and fc["warn_no_image"])
+            check("POST /api/disk/format without the acknowledgement on a drive that isn't blank -> 409; for another drive than the one checked -> 409",
+                  call("POST", "/api/disk/format", {"device": "sdf"})[0] == 409 and call("POST", "/api/disk/format", {"device": "sda", "ack": True})[0] == 409)
+            lan_f = next((a for a in _lan_addrs() if "." in a and not a.startswith("127.")), None)
+            if lan_f:
+                check("POST /api/disk/format from a phone -> 403: a format is armed at the Pi", call("POST", "/api/disk/format", {"device": "sdf", "ack": True}, base=B.replace("127.0.0.1", lan_f))[0] == 403)
+            code, r = call("POST", "/api/disk/format", {"device": "sdf", "ack": True, "fs": "ext4", "label": "EVIL"})
+            ff = done()
+            check("POST /api/disk/format from the Pi's own screen -> 202, armed for 30 s; the job formats what the CHECK said (FAT16, WIDGET), "
+                  "whatever the request says, and ends verified", code == 202 and r["armed"]["by"] == "screen" and 29 <= r["armed"]["until"] - r["armed"]["at"] <= 31
+                  and ff.get("op") == "format" and ff.get("state") == "done" and ff.get("verified") and ff.get("made") == "FAT16" and ff.get("label") == "WIDGET")
+            code, r = call("GET", "/api/disk/formats")
+            check("GET /api/disk/formats: that format, newest first, with the drive, the filesystem, the label and verified",
+                  code == 200 and r["formats"][0]["state"] == "verified" and r["formats"][0]["fs"] == "FAT16" and r["formats"][0]["label"] == "WIDGET"
+                  and r["formats"][0]["device"] == "sdf" and "WIDGET CF 20" in r["formats"][0]["target"])
+            check("a second POST /api/disk/format on the strength of the same check -> 409 (the last result is the format, not a check)",
+                  call("POST", "/api/disk/format", {"device": "sdf", "ack": True})[0] == 409)
+            code_r, rec_f = call("GET", f"/api/disk/record?image={image}")
+            check("a format's line in writes.jsonl is not on any image's record", code_r == 200 and "FAT16" not in json.dumps(rec_f))
+            F.unplug("sdf")
         mount_table(store=False)
         code, _ = call("GET", f"/api/disk/record?image={image}")
         mount_table()

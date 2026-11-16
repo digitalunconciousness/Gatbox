@@ -482,4 +482,8 @@ button.dk-frow.gone,button.dk-cell.gone{border-style:dashed}
 .dk-cmpbox .btnrow{margin-top:8px}
 .dk-cell.gone img{opacity:.75}
 .dk-gonenote{margin:6px 0;font-size:16px}
+/* DISK: FORMAT: the log's rows */
+.dk-fmtrow{margin:0 0 8px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2)}
+.dk-fmtrow>b{display:block;font:600 16px/1.2 var(--disp);overflow-wrap:anywhere}
+.dk-over>b{display:block}
 #vw-note{padding:6px 12px;border-bottom:1px solid var(--line);font-size:16px;background:var(--bg2)}

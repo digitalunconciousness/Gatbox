@@ -653,6 +653,32 @@ def info(rel, start, inode, size=None):
     return res
 
 
+RAW_PREVIEW_EDGE = 640          # a camera raw whose first image is smaller than this is a thumbnail: a larger one inside it is better
+
+
+def _is_tiff(path):
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(4) in (b"II*\x00", b"MM\x00*")
+    except OSError:
+        return False
+
+
+def _tiff_or_raw(im, path):
+    """A camera raw (a Nikon NEF, a Canon CR2, a Sony ARW) is a TIFF whose first image is often a tiny thumbnail, or raw data
+    Pillow will not even open (that case is the `except` below). When the first image is small, a larger picture inside the file
+    is drawn instead (gatboxlib/rawpreview.py). An ordinary TIFF, whose first image is not small, is left exactly as it was,
+    and is not decoded here."""
+    if max(im.size) >= RAW_PREVIEW_EDGE:
+        return im
+    from . import rawpreview
+    alt = rawpreview.preview_image(path, MAX_PIXELS)
+    if alt is not None and max(alt.size) > max(im.size):
+        im.close()
+        return alt
+    return im
+
+
 def _open_photo(path):
     from PIL import Image
     Image.MAX_IMAGE_PIXELS = MAX_PIXELS
@@ -661,12 +687,19 @@ def _open_photo(path):
         im = Image.open(path)
         if im.size[0] * im.size[1] > MAX_PIXELS:
             raise Err(413, f"too large to draw ({im.size[0]}x{im.size[1]} pixels)")
+        if im.format == "TIFF":
+            im = _tiff_or_raw(im, path)
         return im
     except Err:
         raise
     except (Image.DecompressionBombError, Image.DecompressionBombWarning):
         raise Err(413, "too large to draw (more pixels than the Pi will decode)") from None
     except Exception:
+        if _is_tiff(path):                                               # Pillow would not even open it: a raw's pictures may still be there
+            from . import rawpreview
+            alt = rawpreview.preview_image(path, MAX_PIXELS)
+            if alt is not None:
+                return alt
         raise Err(415, "this photo could not be read (damaged, or a format this does not know)") from None
 
 

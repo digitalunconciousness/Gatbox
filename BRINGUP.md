@@ -812,6 +812,15 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           2775), and a file whose mode cannot be set stops the copy with a sentence instead of being ignored. `test-browse-copy.sh`: 41, with the
           sandbox's refusal emulated; 3 breakages fail a test (a fourth is equivalent). A copy made before the fix is 0700 and needs `sudo` to read
           or delete, once.
+    - [x] **Camera raw photos** (the owner, 2026-11-16: the NIKON card's photos are `.nef` and showed no thumbnails; the grid keeps only the name
+          of a photo it cannot draw). A NEF is a TIFF file, so it was sniffed as a photo and handed to Pillow, which cannot draw the raw data.
+          `gatboxlib/rawpreview.py` (stdlib and Pillow, in the bootstrap's manifest) walks the file's TIFF directories (IFD0 and its chain, SubIFDs,
+          the EXIF directory, Nikon's PreviewIFD inside the MakerNote) and draws the largest embedded JPEG, or a small uncompressed thumbnail
+          when that is all the camera stored; the file's own orientation is applied. It is used when Pillow cannot open the file at all, or when
+          the first image is under 640 px (a thumbnail); an ordinary TIFF is left alone and not decoded. `test-browse-raw.sh`: 28, on invented
+          NEF-shaped files in both byte orders and through `thumb`, `info` and `preview` on a FAT image; 12 breakages fail a test (a 13th, the cap
+          on entries in one directory, only bounds memory and time). **Not tried on a real D100 NEF**: the layout is the TIFF and EXIF one in
+          general, and the first look at the owner's card on the Pi is the real test. Not installed.
   - [x] **RESTORE TO THE ORIGINAL** (the owner, 2026-11-16: "I should be able to put an image back onto the disk I pull it from also
         with an arming button"; built the same day, **not installed**; `docs/plans/2026-11-16-restore-and-format.md`). The refusal "this is the
         drive the image came from" is lifted only by a deliberate RESTORE CHECK (`gatbox-disk check|write --restore`, the 7″'s RESTORE CHECK

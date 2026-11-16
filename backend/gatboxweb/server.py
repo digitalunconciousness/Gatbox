@@ -640,8 +640,8 @@ def _browse(route):
 
 
 def _browse_post(route):
-    """The drive browser's one write: start, stop or remove an image's name index (derived data in the browser's own folder).
-    The Pi's own screen only, like every other FILES route."""
+    """The drive browser's writes: start, stop or remove an image's name index (derived data in the browser's own folder), and COPY TO
+    THE STORE (a copy into the store's _exports folder). The Pi's own screen only, like every other FILES route."""
     def handler(h, m, q):
         if not h.is_local():
             raise Bad(403, "FILES is on the Pi's own screen: what is inside a drive is not shown anywhere else")
@@ -1084,9 +1084,12 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("GET", r"/api/browse/preview", _browse("/preview")),
     ("GET", r"/api/browse/thumb", _browse("/thumb")),
     ("GET", r"/api/browse/search", _browse("/search")),
+    ("GET", r"/api/browse/duplicates", _browse("/duplicates")),
     ("GET", r"/api/browse/locate", _browse("/locate")),
     ("GET", r"/api/browse/index", _browse("/index")),
     ("POST", r"/api/browse/index", _browse_post("/index")),
+    ("GET", r"/api/browse/export", _browse("/export")),
+    ("POST", r"/api/browse/export", _browse_post("/export")),
     ("POST", r"/api/disk/read", api_disk_read),
     ("POST", r"/api/disk/retry", api_disk_retry),
     ("POST", r"/api/disk/check", api_disk_check),

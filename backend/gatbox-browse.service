@@ -1,7 +1,9 @@
 # Installed by gatbox-bootstrap.sh (F1 of docs/plans/2026-11-15-drive-browser.md); started by gatbox-browse.socket.
 # Lists and shows what is inside a stored disk image (sleuthkit, Pillow, pdftoppm). Filesystem parsers and file decoders are
 # attack surface, and the images come from drives other people used, so everything below is about what this service cannot do:
-# it has no network, no devices, no capabilities, and sees the image store read-only. It never mounts anything.
+# it has no network, no devices, no capabilities, and sees the image store read-only, except its own _browse folder (cache and
+# index) and _exports, where COPY TO THE STORE puts a copy of a file out of an image (F4d: the owner's reading of hard rule 6,
+# 2026-11-15, is that a write into the store's exports folder is not a hardware write). It never mounts anything.
 [Unit]
 Description=GATBOX drive browser (what is inside a stored image; started by gatbox-browse.socket)
 Requires=gatbox-browse.socket
@@ -11,9 +13,10 @@ After=srv-gatbox-disks.mount
 
 [Service]
 Type=simple
-# Make the service's own folder on the store (cache, counts), once the store is mounted and carries its marker. "+" runs this
-# one line outside the sandbox below; it changes nothing on the drive but this folder, and does nothing if the store is away.
-ExecStartPre=+/bin/sh -c 'mountpoint -q /srv/gatbox/disks && [ -f /srv/gatbox/disks/.gatbox-image-store ] && install -d -o gatbox-browse -g gatbox-browse -m 0700 /srv/gatbox/disks/_browse || true'
+# Make the service's own folders on the store (_browse: cache and counts; _exports: the copies, group-writable by the spool's group
+# so the owner can delete one), once the store is mounted and carries its marker. "+" runs this one line outside the sandbox
+# below; it changes nothing on the drive but these two folders, and does nothing if the store is away.
+ExecStartPre=+/bin/sh -c 'mountpoint -q /srv/gatbox/disks && [ -f /srv/gatbox/disks/.gatbox-image-store ] && install -d -o gatbox-browse -g gatbox-browse -m 0700 /srv/gatbox/disks/_browse && install -d -o gatbox-browse -g gatbox-disk-queue -m 2775 /srv/gatbox/disks/_exports || true'
 ExecStart=/usr/local/bin/gatbox-browse --idle 300 --exit-when-store-missing
 User=gatbox-browse
 Group=gatbox-browse
@@ -35,7 +38,7 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 ReadOnlyPaths=/srv/gatbox/disks
-ReadWritePaths=-/srv/gatbox/disks/_browse
+ReadWritePaths=-/srv/gatbox/disks/_browse -/srv/gatbox/disks/_exports
 ReadOnlyPaths=-/var/spool/gatbox-disk
 InaccessiblePaths=-/etc/gatbox -/var/lib/gatbox-web -/var/lib/gatbox-sync -/srv/gatbox/library -/srv/gatbox/manuals -/srv/gatbox/roms
 ProtectProc=invisible

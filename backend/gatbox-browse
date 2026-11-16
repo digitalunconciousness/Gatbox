@@ -12,9 +12,10 @@ store's current mounts. Run by hand (tests), it makes its own socket at --socket
 
     gatbox-browse [--socket PATH] [--idle SECONDS] [--exit-when-store-missing]
 
-Routes (GET, JSON unless noted): /volumes /ls /stats /info /text, /preview (image/jpeg), /search /locate /index, /ping. The one
-POST is /index (start, stop or remove an image's name index). An error is {"error": "a sentence for the screen"} with an
-HTTP code. It stays running while an index pass or a count has work to do.
+Routes (GET, JSON unless noted): /volumes /ls /stats /info /text, /preview and /thumb (image/jpeg), /search /duplicates /locate /index /export, /ping.
+The POSTs are /index (start, stop or remove an image's name index) and /export (COPY TO THE STORE: start, stop or dismiss one copy into
+the store's _exports folder, the only place this service writes). An error is {"error": "a sentence for the screen"} with an HTTP code.
+It stays running while an index pass, a count or a copy has work to do.
 """
 import argparse
 import json
@@ -40,6 +41,7 @@ def lib_path():
 sys.path.insert(0, lib_path())
 from gatboxlib import browse as B  # noqa: E402
 from gatboxlib import browseindex as X  # noqa: E402
+from gatboxlib import browsecopy as C  # noqa: E402
 
 STATE = {"last": time.time(), "active": 0, "stale": False}
 LOCK = threading.Lock()
@@ -55,11 +57,15 @@ def route_volumes(q):
 
 def route_ls(q):
     return B.ls(q1(q, "image"), q1(q, "vol"), q1(q, "dir"), q1(q, "sort") or "name", q1(q, "order") or "asc",
-                q1(q, "kind") or "all", q1(q, "page") or 0, at=q1(q, "at"))
+                q1(q, "kind") or "all", q1(q, "page") or 0, at=q1(q, "at"), deleted=q1(q, "deleted") == "1")
 
 
 def route_search(q):
     return X.search(q1(q, "q"), q1(q, "kind") or "all", q1(q, "year"), q1(q, "min"), q1(q, "max"), q1(q, "page") or 0, scope=q1(q, "in") or "names")
+
+
+def route_duplicates(q):
+    return X.duplicates(q1(q, "min"), q1(q, "kind") or "all", q1(q, "page") or 0)
 
 
 def route_locate(q):
@@ -70,6 +76,16 @@ def route_index(q):
     """The index's state. Asking also starts the worker if the queue has work left from before a restart."""
     X.IDX.kick()
     return X.state()
+
+
+def route_export(q):
+    """The copy to the store: what it is doing now, and the latest copies on the store."""
+    return C.EXP.status()
+
+
+def post_export(body):
+    """COPY TO THE STORE: start, stop or dismiss the one copy. It writes only into the store's _exports folder (browsecopy.py)."""
+    return C.EXP.request(body)
 
 
 def post_index(body):
@@ -103,9 +119,10 @@ def route_thumb(q):
 
 
 ROUTES = {"/thumb": route_thumb, "/volumes": route_volumes, "/ls": route_ls, "/stats": route_stats, "/info": route_info, "/text": route_text,
-          "/preview": route_preview, "/search": route_search, "/locate": route_locate, "/index": route_index,
+          "/preview": route_preview, "/search": route_search, "/duplicates": route_duplicates, "/locate": route_locate, "/index": route_index,
+          "/export": route_export,
           "/ping": lambda q: {"ok": True}}
-POSTS = {"/index": post_index}
+POSTS = {"/index": post_index, "/export": post_export}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -150,8 +167,8 @@ class Handler(BaseHTTPRequestHandler):
                 STATE["last"] = time.time()
 
     def do_POST(self):
-        """Only /index takes a body: the index is the one thing this service keeps, and it can be thrown away. Nothing here
-        writes to an image or a drive."""
+        """Two things take a body: /index (the name index, which this service keeps and which can be thrown away) and /export (COPY TO THE
+        STORE, which writes into the store's _exports folder and nowhere else). Nothing here writes to an image or a drive."""
         fn = POSTS.get(urlsplit(self.path).path)
         if fn is None:
             return self.reply(405, {"error": "read-only: nothing here changes anything"})
@@ -201,7 +218,7 @@ def listening_socket(path):
 def watchdog(srv, idle, exit_when_stale):
     while True:
         time.sleep(0.5)
-        working = any(st.get("state") in ("computing", "waiting") for st in list(B._stats.values())) or X.IDX.busy()
+        working = any(st.get("state") in ("computing", "waiting") for st in list(B._stats.values())) or X.IDX.busy() or C.EXP.busy()
         with LOCK:
             quiet = STATE["active"] == 0 and not working
             done = quiet and (time.time() - STATE["last"] > idle or (exit_when_stale and STATE["stale"]))

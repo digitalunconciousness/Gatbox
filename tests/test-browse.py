@@ -528,6 +528,13 @@ def web_side(E, jpg, daemon, denv):
                 return r.status, r.headers.get("Content-Type"), r.read()
         except urllib.error.HTTPError as e:
             return e.code, e.headers.get("Content-Type"), e.read()
+    def post(path, obj, base=B):
+        req = urllib.request.Request(base + path, data=json.dumps(obj).encode(), headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return r.status, r.headers.get("Content-Type"), r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers.get("Content-Type"), e.read()
     try:
         for _ in range(100):
             try:
@@ -547,8 +554,29 @@ def web_side(E, jpg, daemon, denv):
         check("... a parameter the service does not read is dropped, an empty one is too", code == 200 and json.loads(body)["total"] > 0)
         code, ctype, body = get(f"/api/browse/ls?image=../outside.img&vol=2048")
         check("... the service's refusals come through with their codes and sentences", code == 404 and "not an image in the store" in json.loads(body)["error"])
+        code, ctype, body = get("/api/browse/export")
+        check("COPY TO THE STORE: from the Pi's own screen, what the copy is doing: idle, and no copies yet", code == 200 and json.loads(body)["state"] == "idle"
+              and json.loads(body)["recent"] == [])
+        code, ctype, body = post("/api/browse/export", {"action": "start", "image": E, "vol": 2048, "kind": "evil", "inode": jpg["inode"]})
+        check("... a kind that is not one is refused with its words (400)", code == 400 and "kind" in json.loads(body)["error"])
+        code, ctype, body = post("/api/browse/export", {"action": "start", "image": "../outside.img", "vol": 2048, "kind": "file", "inode": jpg["inode"]})
+        check("... an image that is not in the store is refused (404)", code == 404)
+        code, ctype, body = post("/api/browse/export", {"action": "start", "image": E, "vol": 2048, "kind": "file", "inode": jpg["inode"], "name": jpg["name"],
+                                                         "size": jpg["size"], "evil": "x"})
+        check("... a copy is started through gatbox-web and answered at once (the extra key is dropped)", code == 200 and json.loads(body)["state"] in ("queued", "planning", "copying", "done"))
+        end = time.time() + 60
+        while time.time() < end and json.loads(get("/api/browse/export")[2])["state"] != "done":
+            time.sleep(0.2)
+        got = json.loads(get("/api/browse/export")[2])
+        copies = [d_ for d_ in os.listdir(f"{T}/store/_exports") if not d_.endswith(".partial")] if os.path.isdir(f"{T}/store/_exports") else []
+        check("... it finishes, the copy is on the store under _exports, and it is the photo, byte for byte",
+              got["state"] == "done" and len(copies) == 1 and sha(f"{T}/store/_exports/{copies[0]}/{jpg['name']}") == sha(f"{T}/tree/Photos/2019/IMG_0001.jpg")
+              and got["recent"][0]["dir"] == copies[0])
         lan = next((a for a in _lan_addrs() if "." in a and not a.startswith("127.")), None)
         if lan:
+            code, ctype, body = get("/api/browse/export", base=f"http://{lan}:{port}")
+            check("from a phone: what the copy is doing is 403 too, and a copy cannot be started (403), whatever is asked",
+                  code == 403 and post("/api/browse/export", {"action": "start", "image": E, "vol": 2048, "kind": "file", "inode": jpg["inode"]}, base=f"http://{lan}:{port}")[0] == 403)
             code, ctype, body = get(f"/api/browse/volumes?image={E}", base=f"http://{lan}:{port}")
             check("from a phone (the LAN address): 403, 'FILES is on the Pi's own screen', and nothing was read", code == 403 and "Pi's own screen" in json.loads(body)["error"])
             code, ctype, body = get(f"/api/browse/preview?image={E}&vol=2048&inode={jpg['inode']}", base=f"http://{lan}:{port}")

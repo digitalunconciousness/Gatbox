@@ -52,6 +52,15 @@ the contents may be gone), then previews of deleted files with the warning. Not 
 because a search result that leads to a half-file is not what she asked for. Needs a real FAT or NTFS image to test the reading
 honestly, and she has none yet.
 
+**Built as F4b (2026-11-15), after her "Fine".** What sleuthkit gave on real deleted entries, tried on a FAT32 and an ext4 image (`mdel`,
+`mdeltree`, `debugfs`): both list a deleted entry with " (deleted)" after its name; a deleted FAT file reads back whole, byte for byte,
+until something is written over its clusters, after which `icat` returns whatever is there now under the old name; FAT keeps no first
+letter for a deleted short name (`a.txt` comes back as `_.txt`; a long name keeps it); an ext4 file deleted by a real system has its
+inode cleared and lists as size 0 with nothing to read; and a deleted entry whose inode a newer file now holds is marked
+"(deleted-realloc)", which is why the screen offers only its name. A deleted folder can be listed on FAT. Not tried: NTFS (no tool here
+makes an NTFS image with a deleted file) and a real camera card. Search, the index and the counts leave deleted entries out; they are
+counted as deleted.
+
 ## 3. HEIC photos
 
 **What it is.** Photos from an iPhone are HEIC, and Pillow cannot open them.
@@ -108,6 +117,12 @@ background, standing still for a disk job. The screen must never offer to delete
 (2) a hash pass on the candidates only, on a tap. Worth doing once she has two overlapping drives (it would be most useful for
 her photo and document drives); not before.
 
+**Built as F4c (2026-11-15), step 1 only.** `browseindex.duplicates`: the same name (capitals ignored, ASCII only: SQLite's `lower()`) and exactly the
+same size among every volume whose names are indexed, files of 4 KB or more (smaller ones are mostly the same icon or empty setting), the groups
+with the most space in extra copies first, up to 1,000 groups, 20 to a page, 12 places listed for a group. One scan of the index grouped by name and
+size, with no new database index and so no re-index: stopped after 30 seconds, in words, if the index is very large. It says "possible" because
+nothing is read: the test has two different files with the same name and size, and they are offered. Step 2 (hashing the candidates on a tap) is not built.
+
 ## 6. Copying files out
 
 **What it is.** Getting a file from an image to somewhere else: a USB stick, her phone, another machine.
@@ -129,6 +144,14 @@ disk job (the spool, its own user). It writes only to a folder on the drive that
 rule 6's intent, but **that is her call**, because the rule says "the only hardware writes". Getting it off the store needs §6's other
 two options, or the drive in her hand: the store is a USB drive and it can be plugged into any computer. For many archive jobs that
 is the whole answer: copy what she wants to the store, take the store to the machine.
+
+**Built as F4d (2026-11-15), after her "Fine" to both parts of question 5.** One difference from the recommendation above: it is not a separate job with its own user and a
+spool. It runs as a thread inside `gatbox-browse`, which is already a sandboxed user with no network, no devices and no capabilities and the store read-only, so
+the system change is `ReadWritePaths=-/srv/gatbox/disks/_exports` and one more `install -d` on the unit's existing `ExecStartPre` line (the unit is not installed yet). The
+destination is `<store>/_exports/<time>_<image>_<name>/`, made as `.partial` and renamed when whole; every file is written new (`O_EXCL`), hashed as it is written,
+flushed, read back from the store and hashed again, and listed with its SHA-1 in `_export.json`. A folder copy takes live files only; a deleted file or folder is copied when it
+is the thing asked for and is marked as a recovery. The directories are group-writable by `gatbox-disk-queue` (setgid) so the owner can delete a copy. Getting a copy off the
+store is, as said above, taking the drive.
 
 ## 7. A phone, with a pairing PIN
 
@@ -164,6 +187,11 @@ contents), if she wants that. Better to decide after F4a to F4e have been used o
 6. Duplicates with hashing (§5, step 2), OCR (§4) and the phone (§7) only when there is a drive that needs them.
 
 ## 9. Questions for the owner
+
+**Answered 2026-11-15:** "Fine" to 1, 3, 4, 5 and 6, and to 2 "no HEIC photos". So: deleted files shown with a warning and kept out of search
+(F4b, built); HEIC skipped; OCR left until a drive of scans turns up; possible duplicates from names and sizes first, hashing only on a
+tap (F4c); COPY TO THE STORE, with hard rule 6 read as allowing a write into the store's exports folder (F4d); no phone, FILES stays on the
+Pi's own screen. The questions are kept below as asked.
 
 Each has a recommendation. "Recommended" on all of them is a complete answer, as before.
 

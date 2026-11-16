@@ -14,7 +14,7 @@ from . import config
 from .meter import Bad
 
 PARAMS = ("image", "vol", "dir", "sort", "order", "kind", "page", "inode", "size", "w", "begin",
-          "q", "year", "min", "max", "id", "at", "in")                                                      # all the service reads
+          "q", "year", "min", "max", "id", "at", "in", "deleted")                                                      # all the service reads
 
 
 class _Conn(http.client.HTTPConnection):
@@ -47,11 +47,11 @@ def call(route, query, timeout=300):
 
 
 def post(route, body):
-    """POST a small JSON body to the service (only /index takes one). Returns (status, content type, body bytes)."""
+    """POST a small JSON body to the service (/index and /export take one). Returns (status, content type, body bytes)."""
     path = config.BROWSE_SOCK
     if not os.path.exists(path):
         raise Bad(503, "the drive browser isn't installed yet")
-    data = json.dumps({k: body.get(k) for k in ("action", "image") if isinstance(body, dict) and body.get(k) is not None}).encode()
+    data = json.dumps({k: body.get(k) for k in ("action", "image", "vol", "inode", "kind", "name", "size", "deleted") if isinstance(body, dict) and body.get(k) is not None}).encode()
     conn = _Conn(path, 60)
     try:
         conn.request("POST", route, body=data, headers={"Content-Type": "application/json", "Content-Length": str(len(data))})

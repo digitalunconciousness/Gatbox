@@ -49,6 +49,12 @@ TEXT_ICAT_TIMEOUT = 120                                 # seconds to read one do
 TEXT_FILE_S = 0.025                                     # the measured cost of one small document: 20 ms to read, 3 to extract
 TEXT_RATE = 5 * (1 << 20)                               # bytes a second for big documents (F0: 6 MB/s, a little under it)
 AUTO_TEXT_S = 1800                                      # text is read on its own after the names when this is the estimate or less
+DUP_MIN = 4096                                          # a smaller file is mostly the same icon or the same empty setting: not offered
+DUP_GROUPS = 1000                                       # groups looked at (the most space first); the screen says when there are more
+DUP_PAGE = 20                                           # groups on a screen page
+DUP_MEMBERS = 12                                        # places listed for one group; the rest are counted
+DUP_SECONDS = 30                                        # a comparison that takes longer is stopped, and says so
+DUP_TICK = 20000                                        # database steps between looks at the clock
 ACTIONS = ("start", "stop", "remove", "all", "stop_all", "text", "text_stop", "text_remove", "text_all", "text_stop_all")
 KINDS = {"all": None, "photos": "photo", "documents": "document", "other": "other", "folders": "folder"}
 
@@ -505,7 +511,7 @@ class Indexer:
                         continue
                     path_text, inode, mode, size, mtime = got
                     t = mode[:1]
-                    if path_text.endswith(" (deleted)") or t not in ("d", "r") or path_text.endswith("(Volume Label Entry)"):
+                    if B.gone_name(path_text) or t not in ("d", "r") or path_text.endswith("(Volume Label Entry)"):
                         continue
                     entries += 1
                     live["entries"] = entries
@@ -775,6 +781,70 @@ def search(q, kind="all", year=None, size_min=None, size_max=None, page=0, scope
         out.append(item)
     return {"query": q, "results": out, "total": min(n, COUNT_CAP), "capped": n > COUNT_CAP, "page": page, "pages": pages,
             "years": [[int(y), n] for y, n in facet if y], "coverage": coverage}
+
+
+_dup_lock = threading.Lock()
+
+
+def duplicates(size_min=None, kind="all", page=0):
+    """Files that may be the same file: the same name (capitals ignored) and exactly the same size, among every fully indexed volume
+    of every image in the store, the groups wasting the most space first. NOTHING IS READ from an image and nothing is hashed, so
+    these are possible duplicates only: two different files can share a name and a size, and a copy under another name is not found.
+    Files under DUP_MIN bytes are left out, and so are folders."""
+    if kind not in KINDS or kind == "folders":
+        raise Err(400, "kind is all, photos, documents or other")
+    lo = max(DUP_MIN, B._num(size_min, DUP_MIN))
+    page = max(0, B._num(page, 0))
+    if B.disk_busy():
+        raise Err(409, "a disk job is running: the comparison waits for it")
+    coverage = _coverage()
+    c = connect(create=False)
+    base = {"min": lo, "kind": kind, "groups": [], "total": 0, "capped": False, "waste": 0, "page": 0, "pages": 1, "coverage": coverage}
+    if c is None:
+        return base
+    if not _dup_lock.acquire(timeout=DUP_SECONDS + 5):                  # a tap on another chip while one is running waits its turn
+        raise Err(429, "another comparison is running: try again in a moment")
+    try:
+        deadline = time.time() + DUP_SECONDS
+        c.set_progress_handler(lambda: 1 if time.time() > deadline else 0, DUP_TICK)
+        where, args = ["v.state='done'", "f.kind!='folder'", "f.size>=?"], [lo]
+        if KINDS[kind]:
+            where.append("f.kind=?")
+            args.append(KINDS[kind])
+        try:
+            groups = c.execute("SELECT lower(f.name) AS n, f.size AS s, count(*) AS k FROM files f JOIN volumes v ON v.id=f.vol WHERE "
+                               + " AND ".join(where) + f" GROUP BY n, s HAVING k>1 ORDER BY (k-1)*s DESC, n LIMIT {DUP_GROUPS + 1}", args).fetchall()
+            capped = len(groups) > DUP_GROUPS
+            groups = groups[:DUP_GROUPS]
+            pages = max(1, -(-len(groups) // DUP_PAGE))
+            page = min(page, pages - 1)
+            shown = groups[page * DUP_PAGE:(page + 1) * DUP_PAGE]
+            rows = []
+            if shown:
+                pairs = ",".join("(?,?)" for _ in shown)
+                rows = c.execute("SELECT f.id, f.inode, f.name, f.kind, f.size, f.mtime, names.path, v.sha1, v.rel, v.label, v.start, v.fs, v.vlabel "
+                                 "FROM files f JOIN volumes v ON v.id=f.vol JOIN names ON names.rowid=f.id "
+                                 f"WHERE v.state='done' AND f.kind!='folder' AND (f.size, lower(f.name)) IN (VALUES {pairs}) ORDER BY v.label, names.path",
+                                 [x for g in shown for x in (g[1], g[0])]).fetchall()
+        except sqlite3.OperationalError:
+            raise Err(504, "there are too many files to compare in one go: try a bigger minimum size") from None
+    finally:
+        c.set_progress_handler(None, 0)
+        c.close()
+        _dup_lock.release()
+    cache, by = {}, {}
+    for fid, inode, name, k, size, mtime, path, sha1, hint, label, start, fs, vlabel in rows:
+        by.setdefault((name.lower(), size), []).append({
+            "id": fid, "inode": inode, "name": name, "kind": k, "size": size, "mtime": mtime, "path": path,
+            "folder": path.rsplit("/", 1)[0] if "/" in path else "", "image": _rel_of(sha1, hint, cache), "label": label, "vol": start,
+            "volume": fs + (f" '{vlabel}'" if vlabel else "")})
+    out = []
+    for n, size, count in shown:
+        members = by.get((n, size), [])
+        out.append({"name": members[0]["name"] if members else n, "size": size, "count": count, "waste": (count - 1) * size,
+                    "members": members[:DUP_MEMBERS], "more": max(0, count - min(len(members), DUP_MEMBERS))})
+    return {"min": lo, "kind": kind, "groups": out, "total": len(groups), "capped": capped, "waste": sum((k - 1) * s for _, s, k in groups),
+            "page": page, "pages": pages, "coverage": coverage}
 
 
 def _coverage():

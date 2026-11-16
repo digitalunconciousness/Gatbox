@@ -104,7 +104,10 @@ USB port power switching, INA226, relays, MAK Strike, GBS-Control, RP2350B bus d
 6. **The only hardware writes from the dashboard are a T48 burn and a disk write**, each armed at the Pi (a hold on
    the 7″ for now, a physical ARM button later), checked first (blank check / target check) and verified. Nothing else
    writes hardware. No part auto-detect. (The owner's decisions: 2026-09-29 for the burn, which overrides the spec's
-   "No burn anywhere in gatbox-web"; 2026-11-02 for the disk write, `docs/plans/2026-11-02-disk-imaging.md` §5.)
+   "No burn anywhere in gatbox-web"; 2026-11-02 for the disk write, `docs/plans/2026-11-02-disk-imaging.md` §5; 2026-11-15:
+   a copy of a file out of a stored image into the image store's `_exports` folder is not a hardware write, it is the drive the READ
+   jobs already write to, so COPY TO THE STORE is inside this rule, `docs/plans/2026-11-15-drive-browser-f4.md` §6. Nothing else
+   in the drive browser writes anywhere but its own `_browse` folder.)
 7. **GPIO is 3.3 V only, Pi 5 included.** gpiozero (+lgpio), never RPi.GPIO. GPIO3 and GPIO26 reserved; keep I²C
    (2/3), UART (14/15) and SPI free. Anything at 5 V goes through a divider / opto / level shifter.
 8. **The board under test is always external.** Nothing here energizes a board.
@@ -159,15 +162,17 @@ M0–M7 done 2026-09-29 (the first real burn from the 7″ that evening); M8 on 
 
 **Drive browser (FILES on the DISK tab), F1 built 2026-11-15, not installed.** Look inside a stored disk image on the 7" only:
 volumes, folders by inode, counts by kind, photos, PDF pages and text, with nothing mounted. `backend/gatbox-browse` is a
-socket-activated stdlib service (its own user, no network, no devices, the store read-only, idle exit) that runs sleuthkit
-(`mmls`, `fsstat`, `fls`, `icat`), Pillow and `pdftoppm`; gatbox-web forwards the loopback routes `/api/browse/*` (GETs, and one POST that starts or stops an image's index) and refuses a
-phone. `gatboxlib/browse.py` is the logic. It is read-only and sends nothing to a drive, so hard rule 6 is unchanged. F2 (an
+socket-activated stdlib service (its own user, no network, no devices, the store read-only except its own `_browse` and `_exports` folders, idle exit) that runs sleuthkit
+(`mmls`, `fsstat`, `fls`, `icat`), Pillow and `pdftoppm`; gatbox-web forwards the loopback routes `/api/browse/*` (GETs, and two POSTs: start or stop an image's index, and COPY TO THE STORE) and refuses a
+phone. `gatboxlib/browse.py` is the logic. It sends nothing to a drive and never changes an image; its one write is a copy into the store's `_exports` folder (F4d, below), so hard rule 6 is unchanged. F2 (an
 index and name search) is built on top (`gatboxlib/browseindex.py`: a disposable SQLite and FTS5 index in `_browse/` on the store, one volume
 per pass, searchable only when whole, standing still for a disk job). F3 (text search inside documents) is built on top: `gatboxlib/browsetext.py` reads the documents (text, HTML, PDF, Office, OpenDocument,
 ePub, and the old Office formats through catdoc) and the index's text phase reads them out of the image one at a time, on its own when the
-estimate is short; F4a (photo thumbnails, a grid under PHOTOS, PREV and NEXT through a folder's photos) is built; the rest of F4 (deleted files, HEIC, OCR,
-duplicates, copy out, a phone) waits for the owner's answers in `docs/plans/2026-11-15-drive-browser-f4.md`; spec `docs/plans/2026-11-15-drive-browser.md`,
-progress in BRINGUP.md.
+estimate is short; F4a (photo thumbnails, a grid under PHOTOS, PREV and NEXT through a folder's photos) and F4b (a DELETED toggle: deleted entries shown dashed
+and tagged, with a warning that what comes back may be incomplete or another file's data, and never indexed) and F4c (possible duplicates from names and sizes, nothing read) and F4d (COPY TO THE STORE: a file or a folder out of an image into `<store>/_exports/<time>_<image>_<name>/`, a new
+folder each time, every file read back from the store and its SHA-1 listed in `_export.json`; it runs inside gatbox-browse, so the system change is two lines in that unit) are built.
+The owner's answers on F4 (2026-11-15): HEIC is skipped, OCR waits for a drive of scans, and there is no phone (FILES stays on the Pi's own screen);
+`docs/plans/2026-11-15-drive-browser-f4.md`; spec `docs/plans/2026-11-15-drive-browser.md`, progress in BRINGUP.md.
 A READ for no machine no longer queues for the archive (nothing drains that queue yet).
 
 **Disk imaging (phase D2), built 2026-11-03, installed on the Pi 2026-11-14.** Hard disks, CF and SD cards on the

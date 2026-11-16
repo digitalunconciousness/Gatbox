@@ -305,9 +305,23 @@ def setup():
                GATBOX_MANUALS=f"{T}/manuals", GATBOX_LIBRARY=f"{T}/lib/library.sqlite", GATBOX_MAME_TITLES=f"{T}/mame-titles.json",
                GATBOX_MANUALS_SPOOL=f"{T}/mspool", GATBOX_SYSFS=FD.sys, GATBOX_DEV=FD.dev, GATBOX_MOUNTINFO=FD.mountinfo, GATBOX_UDEV=FD.udev,
                GATBOX_DISKS=FD.store, GATBOX_DISK_SPOOL=f"{T}/dspool", GATBOX_BROWSE_SOCK=f"{T}/browse.sock")
+    # A stand-in fls in front of the real one: it adds one line a drive cannot be made to give here, an entry whose inode another file
+    # now holds ("deleted-realloc"), to a folder listing while the file `ghost` is beside it. The browser scrubs its environment, so
+    # the stand-in is steered by that file and not by a variable.
+    fstub = f"{T}/flsbin"
+    os.makedirs(fstub)
+    open(f"{fstub}/fls", "w").write(
+        "#!/bin/sh\n"
+        "here=$(dirname \"$0\")\n"
+        f"{shutil.which('fls')} \"$@\"\n"
+        "rc=$?\n"
+        "case \" $* \" in *\" -r \"*) ;; *) [ -e \"$here/ghost\" ] && printf '%s\\n' "
+        "'0|/ghost.png (deleted-realloc)|99999|r/rrw-r--r--|0|0|2048|1794786586|1794786586|1794786586|1794786586';; esac\n"
+        "exit $rc\n")
+    os.chmod(f"{fstub}/fls", 0o755)
     # the drive browser's service (FILES), over the same fake store, on its own socket (systemd would start it on demand)
     procs["browse"] = subprocess.Popen([sys.executable, os.path.join(REPO, "backend/gatbox-browse"), "--socket", f"{T}/browse.sock", "--idle", "3000"],
-                                       env=dict(os.environ, GATBOX_LIB=os.path.join(REPO, "backend"), GATBOX_DISKS=FD.store,
+                                       env=dict(os.environ, PATH=f"{fstub}:" + os.environ["PATH"], GATBOX_LIB=os.path.join(REPO, "backend"), GATBOX_DISKS=FD.store,
                                                 GATBOX_MOUNTINFO=FD.mountinfo, GATBOX_BROWSE_DIR=f"{FD.store}/_browse",
                                                 GATBOX_DISK_SPOOL=f"{T}/dspool"), stderr=subprocess.DEVNULL, start_new_session=True)
     subprocess.run([sys.executable, os.path.join(REPO, "tools/gatbox-mame-roms"), "--titles", f"{T}/mame-titles.json"], check=True,
@@ -1598,10 +1612,25 @@ def main():
             ftree = f"{T}/ftree"
             os.makedirs(ftree)
             fakeimage.sample_tree(ftree, many=230)
+            # three files that are deleted in the image (F4b): a photo and a text file that read back, and a photo the drive cleared
+            from PIL import Image as _Img
+            _Img.new("RGB", (240, 160), (30, 160, 60)).save(f"{ftree}/Photos/2019/old.png")
+            open(f"{ftree}/Docs/old-notes.txt", "w").write("Widget Wars deleted notes\n" * 40)
+            _Img.effect_noise((300, 200), 60).convert("RGB").save(f"{ftree}/Docs/lost.jpg", "JPEG", quality=85)
+            # files that may be copies of each other (F4c), under names no other check looks for: a photo twice (the same bytes), and a
+            # 2 MB file twice (the same name and size, different bytes: possible, not certain)
+            os.makedirs(f"{ftree}/Copies/Sub")
+            _Img.effect_noise((320, 240), 60).convert("RGB").save(f"{ftree}/Copies/zeta.jpg", "JPEG", quality=85)
+            shutil.copy(f"{ftree}/Copies/zeta.jpg", f"{ftree}/Copies/Sub/zeta.jpg")
+            open(f"{ftree}/Copies/zeta.dat", "wb").write(os.urandom(2 * MiB))
+            open(f"{ftree}/Copies/Sub/zeta.dat", "wb").write(os.urandom(2 * MiB))
             fimg = f"{T}/fimg.img"
             fakeimage.ext4_image(fimg, ftree)
+            fakeimage.ext4_delete(fimg, "/Photos/2019/old.png", offset_sectors=2048)
+            fakeimage.ext4_delete(fimg, "/Docs/old-notes.txt", offset_sectors=2048)
+            fakeimage.ext4_delete(fimg, "/Docs/lost.jpg", clear=True, offset_sectors=2048)
             frel = fakeimage.put_in_store(FD.store, "gauntlet-legends", "BROWSE-EXT", fimg)
-            nfiles = sum(1 for d, _, fs in os.walk(ftree) for f in fs if not os.path.islink(os.path.join(d, f)))
+            nfiles = sum(1 for d, _, fs in os.walk(ftree) for f in fs if not os.path.islink(os.path.join(d, f))) - 3     # the three deleted ones are not files
 
             def fb_row(name):
                 return f"[...document.querySelectorAll('#dk-body .dk-frow')].find(b => b.querySelector('b').textContent === {json.dumps(name)})"
@@ -1696,6 +1725,40 @@ def main():
                   settles(c, "document.querySelector('#vw-title').textContent === 'red.png' && document.querySelector('#vw-page').textContent === '2 / 2' && document.querySelector('#vw-img').complete", 40))
             q("document.querySelector('#vw-close').click()")
             check("CLOSE: the grid again", settles(c, f"{imgs_js}.length === 2", 15))
+            # F4b: a deleted photo in the grid, and the warning that follows it through the viewer
+            tog = "document.querySelector('#dk-body .dk-count button')"
+            check("DELETED is off to begin with: two photos, the line says one deleted is not shown, the toggle is a finger tall and not pressed",
+                  "1 deleted not shown" in text("#dk-body") and q(f"{tog}.getBoundingClientRect().height") >= 55.5 and q(f"{tog}.getAttribute('aria-pressed')") == "false" and q(f"{tog}.textContent") == "DELETED")
+            q(tog + ".click()")
+            check("DELETED: the deleted photo joins the grid, dashed and tagged in words, the live ones carry no tag, the toggle shows it is on",
+                  settles(c, "document.querySelectorAll('#dk-body .dk-cell').length === 3", 15)
+                  and q("[...document.querySelectorAll('#dk-body .dk-cell.gone .dk-cn')].map(n => n.textContent)") == ["old.png"]
+                  and q("[...document.querySelectorAll('#dk-body .dk-cell.gone .tag')].map(t => t.textContent)") == ["DELETED"]
+                  and q("document.querySelectorAll('#dk-body .dk-cell:not(.gone) .tag').length") == 0
+                  and q(f"{tog}.getAttribute('aria-pressed')") == "true" and "1 deleted, dashed" in text("#dk-body")
+                  and q("getComputedStyle(document.querySelector('#dk-body .dk-cell.gone')).borderStyle") == "dashed")
+            check("... its thumbnail is really drawn (the deleted file's data was still there), and nothing is under 14 px",
+                  settles(c, "[...document.querySelectorAll('#dk-body .dk-cell.gone img')].every(i => i.complete && i.naturalWidth > 0)", 40) and not q(BOX_SMALL))
+            shot("27b-files-deleted-grid")
+            q("[...document.querySelectorAll('#dk-body .dk-cell')].find(b => b.querySelector('.dk-cn').textContent === 'IMG_0001.jpg').click()")
+            note = "document.querySelector('#vw-note')"
+            check("a live photo in a folder that also shows deleted ones: the viewer has no warning, and it is one of three",
+                  settles(c, "!document.querySelector('#viewer').classList.contains('hide') && document.querySelector('#vw-img').complete && document.querySelector('#vw-page').textContent === '1 / 3'", 40)
+                  and q(f"{note}.classList.contains('hide')"))
+            q("document.querySelector('#vw-next').click()")
+            check("NEXT to the deleted photo: the title follows, and the warning is shown, in words, above the photo",
+                  settles(c, "document.querySelector('#vw-title').textContent === 'old.png' && document.querySelector('#vw-img').complete", 40)
+                  and not q(f"{note}.classList.contains('hide')") and q(f"{note}.textContent").startswith("DELETED.") and "another file's data" in q(f"{note}.textContent")
+                  and q(f"parseFloat(getComputedStyle({note}).fontSize)") >= 14 and not q(BOX_SMALL))
+            shot("27c-files-deleted-viewer")
+            q("document.querySelector('#vw-next').click()")
+            check("NEXT again to a live photo: the warning goes away with it",
+                  settles(c, "document.querySelector('#vw-title').textContent === 'red.png'", 40) and q(f"{note}.classList.contains('hide')"))
+            q("document.querySelector('#vw-close').click()")
+            q(tog + ".click()")
+            check("DELETED off again: the two live photos only, and the line says one is not shown",
+                  settles(c, "document.querySelectorAll('#dk-body .dk-cell').length === 2 && document.querySelectorAll('#dk-body .dk-cell.gone').length === 0", 15)
+                  and "1 deleted not shown" in text("#dk-body"))
             fb_btn("ALL", 15, exact=True)
             fb_wait_row("red.png")
             q("[...document.querySelectorAll('#dk-body .dk-crumbs button')][2].click()")      # the volume's crumb: the root again
@@ -1712,9 +1775,151 @@ def main():
             check("a text file: its text, in a block, with its encoding", dk_has("Widget Wars cabinet notes", 30) and "UTF-8" in text("#dk-body"))
             shot("25e-files-text")
             fb_btn("BACK TO THE FOLDER", 15)
+            # F4b: deleted files in a folder of documents
+            fb_wait_row("notes.txt")
+            check("Docs, DELETED off: no deleted file is a row, and the line says two are not shown",
+                  q("!(" + fb_row("old-notes.txt") + ") && !(" + fb_row("lost.jpg") + ")") and "2 deleted not shown" in text("#dk-body"))
+            fb_btn("DELETED", 15, exact=True)
+            check("DELETED on: both are rows, dashed, each tagged DELETED in words beside its kind, sorted in with the live ones",
+                  fb_wait_row("old-notes.txt") and fb_wait_row("lost.jpg")
+                  and q(fb_row("old-notes.txt") + ".classList.contains('gone')") and q(fb_row("lost.jpg") + ".classList.contains('gone')")
+                  and "DELETED" in q(fb_row("old-notes.txt") + ".textContent") and "DELETED" in q(fb_row("lost.jpg") + ".textContent")
+                  and not q(fb_row("notes.txt") + ".classList.contains('gone')") and "DELETED" not in q(fb_row("notes.txt") + ".textContent")
+                  and q("[...document.querySelectorAll('#dk-body .dk-frow b')].map(b => b.textContent)") == ["budget.xlsx", "lost.jpg", "manual.pdf", "notes.txt", "old-notes.txt"])
+            fb_tap("old-notes.txt")
+            check("a deleted text file: the warning first, then what could be read back, and the same BACK",
+                  dk_has("Widget Wars deleted notes", 30) and "DELETED. Read from space the drive has marked free" in text("#dk-body .dk-gonenote")
+                  and "another file's data" in text("#dk-body .dk-gonenote") and not q(BOX_SMALL))
+            shot("27d-files-deleted-text")
+            fb_btn("BACK TO THE FOLDER", 15)
+            fb_tap("lost.jpg")
+            check("a deleted photo the drive cleared (size 0): the warning, and a plain sentence that nothing is left, not a blank page",
+                  dk_has("Nothing to read back", 30) and "DELETED. Read from space" in text("#dk-body .dk-gonenote"))
+            fb_btn("BACK TO THE FOLDER", 15)
+            fb_btn("DELETED", 15, exact=True)
+            check("DELETED off again: the folder is as it was", settles(c, "!(" + fb_row("old-notes.txt") + ") && !(" + fb_row("lost.jpg") + ")", 15)
+                  and "2 deleted not shown" in text("#dk-body"))
+            # an entry whose inode another file now holds: its name only, never read, never drawn
+            open(f"{T}/flsbin/ghost", "w").close()
+            q("[...document.querySelectorAll('#dk-body .dk-crumbs button')][2].click()")           # the volume's crumb: the root again
+            fb_wait_row("empty")
+            fb_tap("empty")
+            check("a folder whose only entry is deleted and reused: nothing without DELETED, and the line says one is not shown",
+                  settles(c, "document.querySelector('#dk-body .dk-none') !== null", 15) and "1 deleted not shown" in text("#dk-body"))
+            fb_btn("DELETED", 15, exact=True)
+            check("DELETED: the row is tagged DELETED, NAME ONLY, and says in words that only the name is left",
+                  fb_wait_row("ghost.png") and "DELETED, NAME ONLY" in q(fb_row("ghost.png") + ".textContent")
+                  and "only the name is left" in q(fb_row("ghost.png") + ".textContent"))
+            fb_tap("ghost.png")
+            check("tapping it opens nothing: a notice says why, and the folder stays",
+                  settles(c, "!document.querySelector('#toast').classList.contains('hide') && document.querySelector('#toast').textContent.includes('only the name is left')", 10)
+                  and q("document.querySelector('#viewer').classList.contains('hide')") and "empty" in text("#dk-body .dk-crumbs") and q("!!(" + fb_row("ghost.png") + ")"))
+            fb_btn("PHOTOS", 15, exact=True)
+            check("in the grid: a cell with the name and NAME ONLY, and no thumbnail is asked for (it would draw the other file's picture)",
+                  settles(c, "document.querySelectorAll('#dk-body .dk-cell').length === 1", 15)
+                  and "NAME ONLY" in text("#dk-body .dk-cell") and q("[...document.querySelectorAll('#dk-body .dk-cell img')].every(i => !i.getAttribute('src'))"))
+            q("document.querySelector('#dk-body .dk-cell').click()")
+            check("... and tapping the cell opens no viewer", q("document.querySelector('#viewer').classList.contains('hide')"))
+            os.remove(f"{T}/flsbin/ghost")
+            fb_btn("ALL", 15, exact=True)
+            fb_btn("DELETED", 15, exact=True)
+            q("[...document.querySelectorAll('#dk-body .dk-crumbs button')][2].click()")
+            fb_wait_row("Docs")
+            fb_tap("Docs")
+            fb_wait_row("manual.pdf")
             fb_tap("budget.xlsx")
             check("a file with no preview says so, in words", dk_has("no preview for this kind of file", 30))
             fb_btn("BACK TO THE FOLDER", 15)
+            # F4d: COPY TO THE STORE (the only write in FILES: into the store's _exports folder, after a question, with a progress strip)
+            exports = f"{FD.store}/_exports"
+            fb_tap("notes.txt")
+            dk_has("Widget Wars cabinet notes", 30)
+            fb_btn("COPY TO THE STORE", 15, exact=True)
+            ask = "#dk-body .dk-ask"
+            check("a file: COPY TO THE STORE asks first, in words (what, from which image, into _exports, a new folder, nothing overwritten, read back with its SHA-1), and nothing is copied yet",
+                  settles(c, f"!!document.querySelector('{ask}')", 10) and 'Copy "notes.txt" to the store?' in text(ask) and "BROWSE-EXT" in text(ask)
+                  and "_exports" in text(ask) and "nothing already there is overwritten" in text(ask) and "SHA-1" in text(ask) and not os.path.exists(exports))
+            check("... the question's text is 14 px or more and its buttons are a finger tall", not q(BOX_SMALL)
+                  and q(f"[...document.querySelectorAll('{ask} button')].every(b => b.getBoundingClientRect().height >= 55.5)") and q(f"document.querySelector('{ask}').scrollWidth <= document.querySelector('{ask}').clientWidth + 1"))
+            shot("29a-files-copy-ask")
+            fb_btn("CANCEL", 15, exact=True)
+            check("CANCEL: the question goes, and nothing was copied (no _exports folder at all)", settles(c, f"!document.querySelector('{ask}')", 10) and not os.path.exists(exports))
+            fb_btn("COPY TO THE STORE", 15, exact=True)
+            fb_btn("COPY", 15, exact=True)
+            strip = "#dk-body .dk-exp"
+            check("COPY: it says COPIED, with the count and size, where it is (a folder under the store's _exports) and that each file was read back",
+                  settles(c, f"!!document.querySelector('{strip}') && document.querySelector('{strip}').textContent.includes('COPIED')", 40)
+                  and 'COPIED "notes.txt": 1 file' in text(strip) and "read back from the store" in text(strip) and "_exports" in text(strip) and "_export.json" in text(strip))
+            done = sorted(n for n in os.listdir(exports) if not n.endswith(".partial"))
+            check("... the copy is on the store, byte for byte, with its list: the SHA-1 of the file, and the image it came from",
+                  len(done) == 1 and open(f"{exports}/{done[0]}/notes.txt", "rb").read() == b"Widget Wars cabinet notes\nline two\n"
+                  and json.load(open(f"{exports}/{done[0]}/_export.json"))["files"][0]["sha1"] == __import__("hashlib").sha1(b"Widget Wars cabinet notes\nline two\n").hexdigest()
+                  and json.load(open(f"{exports}/{done[0]}/_export.json"))["image"]["label"] == "BROWSE-EXT")
+            shot("29b-files-copy-done")
+            fb_btn("BACK TO THE FOLDER", 15)
+            check("the strip stays on screen in the folder view until it is dismissed, and OK dismisses it",
+                  settles(c, f"!!document.querySelector('{strip}')", 10) and fb_btn("OK", 15, exact=True) and settles(c, f"!document.querySelector('{strip}')", 10))
+            fb_btn("COPY FOLDER", 15, exact=True)
+            check("a folder: COPY FOLDER asks about the folder and says every live file in it is copied",
+                  settles(c, f"!!document.querySelector('{ask}')", 10) and 'Copy the folder "Docs" to the store?' in text(ask) and "Every live file in it is copied" in text(ask))
+            fb_btn("COPY", 15, exact=True)
+            check("... COPIED, the three live files (the deleted ones are not copied)",
+                  settles(c, f"!!document.querySelector('{strip}') && document.querySelector('{strip}').textContent.includes('COPIED')", 60) and 'COPIED "Docs": 3 files' in text(strip))
+            done2 = sorted(n for n in os.listdir(exports) if not n.endswith(".partial") and n not in done)
+            m2 = json.load(open(f"{exports}/{done2[0]}/_export.json"))
+            check("... the folder's copy: exactly budget.xlsx, manual.pdf and notes.txt; no deleted file; recovered is false",
+                  sorted(r_["path"] for r_ in m2["files"]) == ["budget.xlsx", "manual.pdf", "notes.txt"] and m2["recovered"] is False)
+            fb_btn("OK", 15, exact=True)
+            fb_btn("DELETED", 15, exact=True)
+            fb_wait_row("old-notes.txt")
+            fb_tap("old-notes.txt")
+            dk_has("Widget Wars deleted notes", 30)
+            fb_btn("COPY TO THE STORE", 15, exact=True)
+            check("a deleted file: the question carries the warning and says the copy is marked as a recovery",
+                  settles(c, f"!!document.querySelector('{ask}')", 10) and "DELETED. Read from space the drive has marked free" in text(ask) and "marked as a recovery" in text(ask))
+            fb_btn("COPY", 15, exact=True)
+            check("... COPIED, and the strip repeats that it is a recovery",
+                  settles(c, f"!!document.querySelector('{strip}') && document.querySelector('{strip}').textContent.includes('COPIED')", 40)
+                  and "marked as a recovery" in text(strip))
+            done3 = sorted(n for n in os.listdir(exports) if not n.endswith(".partial") and n not in done + done2)
+            m3 = json.load(open(f"{exports}/{done3[0]}/_export.json"))
+            check("... the copy is the deleted file's bytes, and its list says recovered, on the file and on the copy",
+                  open(f"{exports}/{done3[0]}/old-notes.txt", "rb").read() == b"Widget Wars deleted notes\n" * 40 and m3["recovered"] is True and m3["files"][0]["deleted"] is True)
+            fb_btn("OK", 15, exact=True)
+            fb_btn("BACK TO THE FOLDER", 15)
+            fb_btn("DELETED", 15, exact=True)
+            # a disk job holds it back: the question is asked, the answer is a notice, and nothing is made
+            open(f"{T}/dspool/request.json", "w").write("{}")
+            fb_tap("notes.txt")
+            dk_has("Widget Wars cabinet notes", 30)
+            n_before = len(os.listdir(exports))
+            fb_btn("COPY TO THE STORE", 15, exact=True)
+            fb_btn("COPY", 15, exact=True)
+            check("with a disk job queued: a notice says copying waits for it, and no folder is made",
+                  settles(c, "!document.querySelector('#toast').classList.contains('hide') && document.querySelector('#toast').textContent.includes('a disk job is running')", 10)
+                  and len(os.listdir(exports)) == n_before and not q("!!document.querySelector('#dk-body .dk-exp')"))
+            os.remove(f"{T}/dspool/request.json")
+            fb_btn("BACK TO THE FOLDER", 15)
+            # a photo in the viewer has COPY too: it closes the viewer and asks on the screen behind
+            q("[...document.querySelectorAll('#dk-body .dk-crumbs button')][2].click()")
+            fb_wait_row("Photos")
+            fb_tap("Photos")
+            fb_wait_row("2019")
+            fb_tap("2019")
+            fb_wait_row("IMG_0001.jpg")
+            fb_tap("IMG_0001.jpg")
+            settles(c, "!document.querySelector('#viewer').classList.contains('hide') && document.querySelector('#vw-img').complete && document.querySelector('#vw-img').naturalWidth > 0", 40)
+            check("the photo viewer has a COPY button, a finger tall", not q("document.querySelector('#vw-copy').classList.contains('hide')")
+                  and q("document.querySelector('#vw-copy').getBoundingClientRect().height") >= 55.5)
+            q("document.querySelector('#vw-copy').click()")
+            check("COPY in the viewer closes it and asks, on the screen behind, about that photo",
+                  q("document.querySelector('#viewer').classList.contains('hide')") and settles(c, f"!!document.querySelector('{ask}')", 10)
+                  and 'Copy "IMG_0001.jpg" to the store?' in text(ask))
+            fb_btn("CANCEL", 15, exact=True)
+            q("[...document.querySelectorAll('#dk-body .dk-crumbs button')][2].click()")
+            fb_wait_row("Docs")
+            fb_tap("Docs")
+            fb_wait_row("manual.pdf")
             q("[...document.querySelectorAll('#dk-body .dk-crumbs button')][2].click()")
             fb_wait_row("huge.pdf")
             fb_tap("huge.pdf")
@@ -1807,6 +2012,45 @@ def main():
                   settles(c, "!document.querySelector('#viewer').classList.contains('hide') && document.querySelector('#vw-img').complete && document.querySelector('#vw-img').naturalWidth > 0", 40))
             q("document.querySelector('#vw-close').click()")
             check("... the results, not the folder", dk_has("FIND: IMG", 15) and q("!!document.querySelector('#dk-body .dk-hit')"))
+            fb_btn("ALL IMAGES", 15, exact=True)
+            # F4c: possible duplicates, from the names in the index (this image is indexed here; two others in the store are not)
+            check("ALL IMAGES has a DUPLICATES button beside SEARCH", q("[...document.querySelectorAll('#dk-body .btnrow button')].map(b => b.textContent)").count("DUPLICATES") == 1)
+            fb_btn("DUPLICATES", 15, exact=True)
+            check("DUPLICATES: it says what it is, in words: the same name and size, nothing read, so only POSSIBLE, and that nothing here deletes",
+                  dk_has("Possible duplicates", 25) and "only possible duplicates" in text("#dk-body") and "Nothing is read to compare them" in text("#dk-body")
+                  and "a copy under another name is not found" in text("#dk-body") and "Nothing here can delete anything" in text("#dk-body"))
+            fb_btn("4 KB UP", 15, exact=True)
+            gh = "[...document.querySelectorAll('#dk-body .dk-gh b')].map(b => b.textContent)"
+            check("4 KB UP: the two groups, each with its name, tag, how many copies, the size of each and the space the extras take",
+                  settles(c, f"{gh}.length === 2", 20) and sorted(q(gh)) == ["zeta.dat", "zeta.jpg"]
+                  and "2 copies" in text("#dk-body .dk-gh") and "extra" in text("#dk-body .dk-gh"))
+            check("... the line says how many groups, how much is in the extra copies, and that only 1 of 3 images was compared and why the others were not",
+                  "2 groups" in text("#dk-body") and "in extra copies" in text("#dk-body") and "compared 1 of 3 images" in text("#dk-body")
+                  and "INDEX it on ALL IMAGES" in text("#dk-body"))
+            check("... each group lists where its copies are (path, image, volume), and a big file and a photo are not mixed up",
+                  sorted(q("[...document.querySelectorAll('#dk-body .dk-mem .dk-path')].map(p => p.textContent)")) == ["Copies/Sub/zeta.dat", "Copies/Sub/zeta.jpg", "Copies/zeta.dat", "Copies/zeta.jpg"]
+                  and "BROWSE-EXT" in text("#dk-body .dk-mem"))
+            check("... on the 7\": no text under 14 px, a place is as tall as a finger, nothing wider than the screen, and each filter label is on one line",
+                  not q(BOX_SMALL) and q("[...document.querySelectorAll('#dk-body button.dk-mem')].every(b => b.getBoundingClientRect().height >= 55.5)")
+                  and q("document.querySelector('#dk-body').scrollWidth <= document.querySelector('#dk-body').clientWidth + 1")
+                  and q("""[...document.querySelectorAll('#dk-body .seg button')].every(x => { const g = document.createRange(); g.selectNodeContents(x); return g.getClientRects().length === 1; })"""))
+            shot("28a-files-duplicates")
+            fb_btn("PHOTOS", 15, exact=True)
+            check("PHOTOS: only the photo's group", settles(c, f"{gh}.length === 1 && {gh}[0] === 'zeta.jpg'", 20))
+            fb_btn("OTHER", 15, exact=True)
+            check("OTHER: only the big file's group", settles(c, f"{gh}.length === 1 && {gh}[0] === 'zeta.dat'", 20))
+            fb_btn("DOCS", 15, exact=True)
+            check("DOCS: no groups, said plainly", settles(c, f"{gh}.length === 0 && document.querySelector('#dk-body').textContent.includes('No groups')", 20))
+            fb_btn("ALL", 15, exact=True)
+            check("ALL again: both groups are back", settles(c, f"{gh}.length === 2", 20))
+            fb_btn("10 MB UP", 15, exact=True)
+            check("10 MB UP: nothing is that big, and it says so", settles(c, f"{gh}.length === 0 && document.querySelector('#dk-body').textContent.includes('No groups')", 20))
+            fb_btn("1 MB UP", 15, exact=True)
+            check("1 MB UP: the 2 MB file only (the photo is far under 1 MB)", settles(c, f"{gh}.length === 1 && {gh}[0] === 'zeta.dat'", 20))
+            q("[...document.querySelectorAll('#dk-body button.dk-mem')].find(b => b.querySelector('.dk-path').textContent === 'Copies/Sub/zeta.dat').click()")
+            check("a place is a SHOW IN FOLDER: the folder it is in (Copies / Sub), on the page that holds it, with the row marked",
+                  settles(c, "!![...document.querySelectorAll('#dk-body .dk-frow.hit')].find(b => b.querySelector('b').textContent === 'zeta.dat')", 25)
+                  and "Copies" in text("#dk-body .dk-crumbs") and "Sub" in text("#dk-body .dk-crumbs"))
             fb_btn("ALL IMAGES", 15, exact=True)
             q("document.querySelector('#dk-body button.dk-idx').click()")
             check("tap to remove: this image's names and its text are gone (the first row, not just any: the others were never indexed)",

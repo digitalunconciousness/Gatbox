@@ -722,8 +722,43 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           PREV and NEXT step through the folder's photos with the title following. No new unit, user or system config.
           `test-browse.sh`: 81, `test-dash.sh`: 281. **Not on a real photo drive yet:** the first look at a folder of large photos
           fills in one thumbnail at a time (a read out of the image each), the second is instant.
-    - [ ] F4's other pieces (deleted files, HEIC, OCR, duplicates, copy out, a phone with a PIN) wait for her answers in
-          `docs/plans/2026-11-15-drive-browser-f4.md` §9. Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
+    - [x] Her answers to the F4 note's six questions, 2026-11-15 ("Fine" to 1, 3, 4, 5 and 6; to 2, "no HEIC photos"): deleted files
+          shown with a warning and kept out of search; HEIC skipped (nothing to look at); OCR left for a drive of scans; duplicates from names
+          and sizes first and hashing only on a tap; COPY TO THE STORE built, and a write into the store's exports folder is inside hard rule 6's
+          intent; no phone, FILES stays on the Pi's own screen. Order: deleted files, possible duplicates, COPY TO THE STORE.
+    - [x] F4b built, 2026-11-15, **not installed**: a DELETED toggle on the folder view (`ls(..., deleted=1)`, `/api/browse/ls?deleted=1`). A deleted
+          entry is a dashed row or grid cell with a DELETED tag in words; opening one shows "DELETED. Read from space the drive has marked free: it
+          may be incomplete, damaged, or another file's data" (above the text, and above each photo in the viewer, following PREV and NEXT).
+          An entry whose inode another file now holds (sleuthkit's "deleted-realloc") is NAME ONLY and is never read or drawn. A deleted
+          folder can be opened and what is in it is shown as deleted. Deleted entries are never indexed or counted as files.
+          Checked on images where files were really deleted (`mdel`, `mdeltree`, `debugfs`): a deleted FAT file reads back byte for byte;
+          once something is written over its space it reads back as the new bytes; a cleared ext4 inode lists as empty and says so.
+          FAT keeps no first letter for a deleted short name (`a.txt` comes back as `_.txt`) and the row says so. Also fixed: the volume
+          label entry on FAT was counted as a file by COUNT WHAT'S ON IT. `test-browse-deleted.sh`: 32. No system config. **Not on a real
+          drive yet:** a real NTFS volume and a card from a camera, where recovery is most likely to work.
+    - [x] F4c built, 2026-11-15, **not installed**: possible duplicates from the name index alone (`browseindex.duplicates`, `/api/browse/duplicates`;
+          DUPLICATES on ALL IMAGES). Files with the same name (capitals ignored) and exactly the same size, across every image whose names are
+          indexed, the groups wasting the most space first, with where each copy is (a tap is SHOW IN FOLDER). Nothing is read from an image and
+          nothing is hashed, so the screen says "possible": two different files can match, and a copy under another name is not found. Files under 4 KB are left out, and there
+          is a minimum-size chooser (4 KB, 1 MB, 10 MB up) and a kind chooser. A comparison that takes over 30 s is stopped in words, and a disk job holds it back.
+          Nothing here can delete anything. `test-browse-duplicates.sh`: 32, `test-dash.sh`: 311. No system config, no schema change (no re-index). Hashing the candidates on a tap is
+          not built (the note's §5 step 2). Also fixed: a stale answer to an earlier tap could overwrite a newer one in the search and the folder list (the new
+          screen showed it as a flaky check); the three now ignore a response a newer request has replaced.
+    - [x] F4d built, 2026-11-15, **not installed**: COPY TO THE STORE. A file (COPY TO THE STORE in the file view, or COPY in the photo and PDF viewer) or a folder
+          (COPY FOLDER) from an image into `/srv/gatbox/disks/_exports/<time>_<image>_<name>/`: a new folder each time, made as `.partial` and renamed when whole,
+          so nothing already there is ever overwritten or mixed with. The screen asks first, then shows how far it is, then where it ended up. Every file is read
+          out of the image with `icat`, hashed (SHA-1) as it is written, read back from the store and hashed again; a mismatch stops the copy. `_export.json` lists
+          every file with its size and SHA-1, the image's SHA-1, the volume, and whether it is a recovery (a deleted file: the question warns, and the list marks it).
+          A folder copy takes live files only; links are skipped and listed; names out of an image are made safe and two that collide are kept apart; a file the image
+          will not give up is listed as failed and the rest is copied. It checks the free space (keeps 2 GB or 2% free), stands still while a disk job runs and carries
+          on after it, stops when asked, and does one copy at a time.
+          **It runs inside `gatbox-browse` and not in a new job with its own user (the note's §6 suggested one):** that service is already sandboxed (no network, no
+          devices, no capabilities, the store read-only), so the system change is two lines in its unit, which is not installed yet either:
+          `ReadWritePaths=-/srv/gatbox/disks/_browse -/srv/gatbox/disks/_exports`, and the same `ExecStartPre` line also makes `_exports` (owner `gatbox-browse`, group
+          `gatbox-disk-queue`, mode 2775, so a member of that group, the owner, can delete a copy). No new user, group, spool or unit. If you want it as a separate
+          job with its own user after all, say so. Your reading of hard rule 6 (2026-11-15) is recorded in CLAUDE.md, in the rule's own list of decisions.
+          `test-browse-copy.sh`: 38, `test-browse.sh`: 87, `test-bootstrap.sh`: 148, `test-dash.sh`: 326. **Not on a real drive yet:** a large folder, and copy speed
+          from an image over USB (F3's rates apply: 6 to 11 MB/s for big files). Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4

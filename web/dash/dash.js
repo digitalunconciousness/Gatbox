@@ -2244,7 +2244,7 @@
   const snapW = px => [800, 1200, 1600, 2400].find(w => w >= px) || 2400;
   function openViewer(slug, doc, page) {
     if (!doc) return toast("That document isn't on the Pi yet", "warn");
-    Object.assign(V, {slug, doc, page: Math.max(1, Math.min(page || 1, doc.pages || 1)), z: 1, tx: 0, ty: 0, w: 0, url: null, titles: null});
+    Object.assign(V, {slug, doc, page: Math.max(1, Math.min(page || 1, doc.pages || 1)), z: 1, tx: 0, ty: 0, w: 0, url: null, titles: null, notes: null, copy: null});
     $("#vw-search").classList.remove("hide");
     $("#vw-title").textContent = doc.title;
     const a = $("#vw-pdf");
@@ -2259,7 +2259,9 @@
   // opts.titles: a name for each page (a folder's photos are the pages, and the title follows the photo); opts.start: the page to open on
   function openFileViewer(title, pages, urlFn, opts) {
     const o = opts || {};
-    Object.assign(V, {slug: null, doc: {title, pages}, page: o.start || 1, z: 1, tx: 0, ty: 0, w: 0, url: urlFn, titles: o.titles || null});
+    V.copy = o.copy || null;                                           // FILES: the item to copy for a page (or null)
+    Object.assign(V, {slug: null, doc: {title, pages}, page: o.start || 1, z: 1, tx: 0, ty: 0, w: 0, url: urlFn, titles: o.titles || null,
+                      notes: o.notes || null});
     $("#vw-title").textContent = o.titles ? o.titles[V.page - 1] : title;
     $("#vw-pdf").classList.add("hide");
     $("#vw-search").classList.add("hide");
@@ -2272,6 +2274,10 @@
     const w = snapW(st.clientWidth * (window.devicePixelRatio || 1) * V.z);
     $("#vw-page").textContent = `${V.page} / ${V.doc.pages}`;
     if (V.titles) $("#vw-title").textContent = V.titles[V.page - 1];
+    $("#vw-copy").classList.toggle("hide", !V.copy);
+    const note = V.notes ? V.notes[Math.min(V.page, V.notes.length) - 1] : "";           // a deleted file's warning follows its page
+    $("#vw-note").textContent = note || "";
+    $("#vw-note").classList.toggle("hide", !note);
     $("#vw-prev").disabled = V.page <= 1; $("#vw-next").disabled = V.page >= V.doc.pages;
     if (w > V.w || img.dataset.page !== String(V.page)) {
       V.w = Math.max(w, img.dataset.page === String(V.page) ? V.w : 0);
@@ -2346,6 +2352,12 @@
     $("#vw-out").addEventListener("click", () => vwZoom(1 / 1.5, st.clientWidth / 2, st.clientHeight / 2));
     $("#vw-fit").addEventListener("click", () => { V.z = 1; V.tx = V.ty = 0; vwApply(); });
     $("#vw-close").addEventListener("click", () => $("#viewer").classList.add("hide"));
+    $("#vw-copy").addEventListener("click", () => {                      // close the viewer, and ask on the FILES screen behind it
+      const item = V.copy && V.copy(V.page);
+      if (!item) return;
+      $("#viewer").classList.add("hide");
+      fbCopyAsk(item);
+    });
     $("#vw-page").addEventListener("click", async () => {
       const n = await keypad({title: `Go to page (1 to ${V.doc.pages})`, number: true, max: 5});
       if (n) vwGo(parseInt(n, 10));
@@ -2864,9 +2876,9 @@
   const K = {st: null, sig: null, images: null, imgSig: null, list: null, cap: null, listFor: undefined, mode: "read",
              src: null, media: null, machine: null, machineName: null, label: null, image: null, target: null,
              ackFor: null, holding: false, pending: false, expT: null, info: false, swap: null, rec: null,
-             fb: {view: "images", img: null, label: "", vols: null, vol: null, volName: "", path: [], sort: "name", order: "asc", kind: "all",
+             fb: {view: "images", img: null, label: "", vols: null, vol: null, volName: "", path: [], sort: "name", order: "asc", kind: "all", deleted: false,
                   page: 0, ls: null, file: null, info: null, text: null, err: null, busy: null, stats: {}, poll: null,
-                  index: null, ixPoll: null, q: "", scope: "names", skind: "all", syear: null, spage: 0, sres: null, from: null, at: null, hit: null, hitRow: null}};
+                  index: null, ixPoll: null, dmin: 1048576, dkind: "all", dpage: 0, dres: null, exp: null, expPoll: null, ask: null, q: "", scope: "names", skind: "all", syear: null, spage: 0, sres: null, from: null, at: null, hit: null, hitRow: null}};
   const GB = n => n >= 1e12 ? (n / 1e12).toFixed(2) + " TB" : n >= 1e9 ? (n / 1e9).toFixed(1) + " GB"
                 : n >= 1e6 ? Math.round(n / 1e6) + " MB" : (n || 0).toLocaleString("en-US") + " bytes";
   const exact = n => (n || 0).toLocaleString("en-US") + " bytes";
@@ -3420,6 +3432,11 @@
                          .map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
   const fbDir = () => FB.path.length ? FB.path[FB.path.length - 1].inode : null;
   const FB_TAG = {folder: ["FOLDER", "cy"], photo: ["PHOTO", "ok"], document: ["DOCUMENT", "warn"], link: ["LINK", "mut"]};
+  // A deleted entry is read from space the drive has marked free: its name may be all that is true. Said wherever one is shown.
+  const FB_GONE = "DELETED. Read from space the drive has marked free: it may be incomplete, damaged, or another file's data.";
+  const FB_REUSED = "Deleted, and its space now holds another file: only the name is left.";
+  const FB_EMPTY = "Nothing to read back: this deleted file was empty, or the drive cleared it when it was deleted.";
+  const fbInGone = () => FB.path.some(p => p.deleted);
   const num = n => (n || 0).toLocaleString("en-US");
   const fbDur = s => s < 90 ? `${Math.max(1, Math.round(s))} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`;
   async function fbGo(promise, what) {
@@ -3428,7 +3445,7 @@
     catch (e) { FB.err = String(e.message || e); return null; }
     finally { FB.busy = null; renderDisk(); }
   }
-  function fbImages() { clearTimeout(FB.poll); Object.assign(FB, {view: "images", err: null, from: null, hit: null}); fbIndexLoad(); renderDisk(); }
+  function fbImages() { clearTimeout(FB.poll); Object.assign(FB, {view: "images", err: null, from: null, hit: null, ask: null}); fbIndexLoad(); fbExpLoad(); renderDisk(); }
   async function fbOpenImage(x) {
     Object.assign(FB, {view: "volumes", img: x.image, label: x.label || base(x.image), vols: null, vol: null, path: [], ls: null,
                        file: null, info: null, text: null, stats: {}, from: null, hit: null});
@@ -3438,15 +3455,17 @@
   }
   async function fbOpenVolume(v) {
     clearTimeout(FB.poll);
-    Object.assign(FB, {view: "folder", vol: v.start, path: [], sort: "name", order: "asc", kind: "all", page: 0, ls: null, file: null,
+    Object.assign(FB, {view: "folder", vol: v.start, path: [], sort: "name", order: "asc", kind: "all", deleted: false, page: 0, ls: null, file: null,
                        from: null, hit: null, volName: v.fs ? v.fs.type + (v.fs.label ? ` '${v.fs.label}'` : "") : v.desc});
     await fbLoad();
   }
   async function fbLoad() {
     const at = FB.at;                                                // SHOW IN FOLDER: the page that holds this entry
     FB.at = null;
+    const seq = FB.lseq = (FB.lseq || 0) + 1;
     const r = await fbGo(api("GET", "/api/browse/ls?" + fbQ({image: FB.img, vol: FB.vol, dir: fbDir(), sort: FB.sort, order: FB.order,
-                                                            kind: FB.kind, page: FB.page, at})), "reading the folder…");
+                                                            kind: FB.kind, page: FB.page, at, deleted: FB.deleted ? 1 : ""})), "reading the folder…");
+    if (seq !== FB.lseq) return;                                     // a newer look at a folder was asked for while this one was away
     if (r) { FB.ls = r; FB.page = r.page; }
     FB.hit = at && r && r.at ? r.at : null;
     renderDisk();
@@ -3464,6 +3483,76 @@
     try { FB.index = await api("POST", "/api/browse/index", {action, image}); } catch (e) { return fail(e); }
     fbIndexLoad();
   }
+  // --- COPY TO THE STORE (F4d): a file or a folder out of an image into the store's _exports folder -----------------------------
+  // The one thing in FILES that writes, and only there. gatbox-browse does it (a new folder per copy, every file read back and its SHA-1
+  // written down); the screen asks first, shows how far it is, and says where it ended up.
+  const FB_LIVE = ["queued", "planning", "copying", "waiting"];
+  async function fbExpLoad() {
+    clearTimeout(FB.expPoll);
+    try { FB.exp = await api("GET", "/api/browse/export"); } catch (e) { FB.exp = {state: "idle"}; }
+    renderDisk();
+    if (FB_LIVE.includes(FB.exp.state) && S.view === "disk" && K.mode === "files") FB.expPoll = setTimeout(fbExpLoad, 1500);
+  }
+  async function fbExpDo(action) {
+    try { FB.exp = await api("POST", "/api/browse/export", {action}); } catch (e) { return fail(e); }
+    fbExpLoad();
+  }
+  // the thing to copy: a list entry (a file), or the folder being looked at
+  const fbCopyFile = e => ({kind: "file", name: e.name, inode: e.inode, size: e.size, deleted: !!e.deleted});
+  function fbCopyFolder() {
+    const last = FB.path[FB.path.length - 1];
+    return {kind: "folder", name: last ? last.name : FB.volName, inode: fbDir(), size: 0, deleted: !!(last && last.deleted)};
+  }
+  function fbCopyAsk(item) {
+    FB.ask = {item, image: FB.img, vol: FB.vol, label: FB.label};
+    renderDisk();
+  }
+  async function fbCopyGo() {
+    const a = FB.ask;
+    FB.ask = null;
+    try { FB.exp = await api("POST", "/api/browse/export", {action: "start", image: a.image, vol: a.vol, kind: a.item.kind, inode: a.item.inode,
+                                                              name: a.item.name, size: a.item.size, deleted: a.item.deleted}); }
+    catch (e) { renderDisk(); return fail(e); }
+    fbExpLoad();
+  }
+  function fbAskCard(c) {
+    const a = FB.ask;
+    if (!a) return;
+    const it = a.item, card = el("div", "dk-ask"), row = el("div", "btnrow"), go = el("button", "primary", "COPY"), no = el("button", null, "CANCEL");
+    go.addEventListener("click", fbCopyGo);
+    no.addEventListener("click", () => { FB.ask = null; renderDisk(); });
+    add(row, go, no);
+    add(card, el("b", null, it.kind === "folder" ? `Copy the folder "${it.name}" to the store?` : `Copy "${it.name}" to the store?`),
+        el("div", "mut", `From ${a.label}, into the store's _exports folder, as a new folder: nothing already there is overwritten. `
+                         + (it.kind === "folder" ? "Every live file in it is copied, with its sub-folders. " : "")
+                         + "Each file is read back from the store and its SHA-1 is written down beside it."));
+    if (it.deleted) card.appendChild(el("div", "warn", FB_GONE + " The copy is marked as a recovery."));
+    card.appendChild(row);
+    c.appendChild(card);
+  }
+  function fbExpStrip(c) {
+    const x = FB.exp;
+    if (!x || x.state === "idle") return;
+    const live = FB_LIVE.includes(x.state), box = el("div", "dk-exp");
+    if (x.state === "queued" || x.state === "planning") box.appendChild(el("div", "cy", `Getting ready to copy "${x.name}"…`));
+    else if (live) {
+      box.appendChild(el("div", x.state === "waiting" ? "warn" : "cy", x.state === "waiting"
+        ? `The copy of "${x.name}" is standing still: a disk job is running. It carries on when that is over.`
+        : `COPYING "${x.name}": ${num(x.files_done)} of ${num(x.files_total)} file${x.files_total === 1 ? "" : "s"} · ${GB(x.bytes_done)} of ${GB(x.bytes_total)}`));
+      const bar = el("div", "dk-bar"), fill = el("div");
+      fill.style.width = (x.bytes_total ? Math.min(100, 100 * x.bytes_done / x.bytes_total) : 0) + "%";
+      add(bar, fill);
+      add(box, bar, x.current ? el("div", "mut dk-path", x.current) : null);
+    } else if (x.state === "done") {
+      add(box, el("div", "ok", `COPIED "${x.name}": ${num(x.files_done)} file${x.files_done === 1 ? "" : "s"}, ${GB(x.bytes_done)}, each read back from the store and checked.`),
+          el("div", "mut dk-path", `In the store's _exports folder, as ${x.dest}. The SHA-1 of every file is in its _export.json.`),
+          x.failed ? el("div", "warn", `${num(x.failed)} file${x.failed === 1 ? "" : "s"} could not be read out of the image and ${x.failed === 1 ? "is" : "are"} listed as failed.`) : null,
+          x.deleted ? el("div", "warn", "A copy of a deleted file: marked as a recovery. It may be incomplete, damaged or another file's data.") : null);
+    } else box.appendChild(el("div", "bad", x.error || "The copy did not finish."));
+    const row = el("div", "btnrow"), b = el("button", null, live ? "STOP" : "OK");
+    b.addEventListener("click", () => fbExpDo(live ? "stop" : "dismiss"));
+    c.appendChild(add(box, add(row, b)));
+  }
   function fbSearchOpen() {
     Object.assign(FB, {view: "search", err: null, from: null});
     fbIndexLoad();
@@ -3478,9 +3567,20 @@
   }
   async function fbSearch() {
     if (!FB.q) { FB.sres = null; renderDisk(); return; }
+    const seq = FB.sseq = (FB.sseq || 0) + 1;
     const r = await fbGo(api("GET", "/api/browse/search?" + fbQ({q: FB.q, kind: FB.scope === "text" ? "all" : FB.skind, year: FB.syear, page: FB.spage,
                                                                  in: FB.scope === "text" ? "text" : ""})), "searching…");
+    if (seq !== FB.sseq) return;                                       // a newer search was asked for while this one was away: that one answers
     if (r) { FB.sres = r; FB.spage = r.page; }
+    renderDisk();
+  }
+  // POSSIBLE DUPLICATES (F4c): the same name and exactly the same size, from the name index alone. Nothing is read from an image.
+  async function fbDups() {
+    Object.assign(FB, {view: "dups", err: null, from: null});
+    const seq = FB.dseq = (FB.dseq || 0) + 1;
+    const r = await fbGo(api("GET", "/api/browse/duplicates?" + fbQ({min: FB.dmin, kind: FB.dkind, page: FB.dpage})), "comparing the names and sizes…");
+    if (seq !== FB.dseq) return;                                       // a newer look was asked for while this one was away: that one answers
+    if (r) { FB.dres = r; FB.dpage = r.page; }
     renderDisk();
   }
   // a result: its file opens as it does from a folder; a folder result opens that folder
@@ -3521,12 +3621,12 @@
     } else if (info.kind === "photo" || info.kind === "pdf") {
       FB.view = back; FB.file = null;                                // closing the viewer lands on the folder (or the results)
       // a photo in a folder: PREV and NEXT step through the folder's photos (this page of it), and the title follows
-      const set = info.kind === "photo" && back === "folder" && FB.ls ? FB.ls.entries.filter(x => x.kind === "photo") : [];
+      const set = info.kind === "photo" && back === "folder" && FB.ls ? FB.ls.entries.filter(x => x.kind === "photo" && !x.reused) : [];
       const at = set.findIndex(x => x.inode === e.inode), img = FB.img, vol = FB.vol;
       if (set.length > 1 && at >= 0)
         openFileViewer(e.name, set.length, (page, w) => "/api/browse/preview?" + fbQ({image: img, vol, inode: set[page - 1].inode, size: set[page - 1].size, w}),
-                       {titles: set.map(x => x.name), start: at + 1});
-      else openFileViewer(e.name, info.pages || 1, (page, w) => "/api/browse/preview?" + fbQ(Object.assign({page, w}, q)));
+                       {titles: set.map(x => x.name), notes: set.map(x => x.deleted ? FB_GONE : ""), start: at + 1, copy: page => fbCopyFile(set[page - 1])});
+      else openFileViewer(e.name, info.pages || 1, (page, w) => "/api/browse/preview?" + fbQ(Object.assign({page, w}, q)), {notes: [e.deleted ? FB_GONE : ""], copy: () => fbCopyFile(e)});
     }
     renderDisk();
   }
@@ -3538,6 +3638,9 @@
       return c;
     }
     if (FB.busy) c.appendChild(el("div", "dk-busy cy", FB.busy));
+    if (FB.exp === null) { FB.exp = {state: "idle"}; fbExpLoad(); }                // first look: what is the copy doing?
+    fbExpStrip(c);
+    fbAskCard(c);
     if (FB.err) {
       if (FB.view === "file" && FB.file) c.appendChild(el("h2", null, FB.file.name));           // which file the refusal is about
       c.appendChild(el("div", "bad dk-err", FB.err));
@@ -3552,6 +3655,7 @@
     else if (FB.view === "folder") fbFolder(c);
     else if (FB.view === "file") fbFileView(c);
     else if (FB.view === "search") fbSearchView(c);
+    else if (FB.view === "dups") fbDupsView(c);
     else fbImageList(c);
     return c;
   }
@@ -3594,6 +3698,9 @@
     const bar = el("div", "btnrow"), sb = el("button", "primary", "SEARCH");
     sb.addEventListener("click", fbSearchOpen);
     bar.appendChild(sb);
+    const db = el("button", null, "DUPLICATES");
+    db.addEventListener("click", () => { FB.dpage = 0; fbDups(); });
+    bar.appendChild(db);
     if (states.some(s => s === "none" || s === "error" || s === "partial")) {
       const b = el("button", null, "INDEX ALL");
       b.addEventListener("click", () => fbIndexDo("all"));
@@ -3615,6 +3722,54 @@
           el("div", "mut", `${x.machine} · ${GB(x.bytes)} · ${stamp(x.started)}${x.source ? " · from " + x.source : ""}`));
       r.addEventListener("click", () => fbOpenImage(x));
       add(row, r, fbIdxCell(x), fbTextCell(x));
+      c.appendChild(row);
+    }
+  }
+  function fbDupsView(c) {
+    c.appendChild(add(el("div", "btnrow"), fbBack("ALL IMAGES", fbImages)));
+    c.appendChild(el("h2", null, "Possible duplicates"));
+    c.appendChild(el("div", "mut", "The same name and exactly the same size, in every image that has been indexed. Nothing is read to compare them, so these are only "
+                                   + "possible duplicates: two different files can match, and a copy under another name is not found. Nothing here can delete anything."));
+    const sizes = el("div", "seg"), kinds = el("div", "seg");
+    for (const [n, t] of [[4096, "4 KB UP"], [1048576, "1 MB UP"], [10485760, "10 MB UP"]]) {
+      const b = el("button", FB.dmin === n ? "on" : null, t);
+      b.addEventListener("click", () => { FB.dmin = n; FB.dpage = 0; fbDups(); });
+      sizes.appendChild(b);
+    }
+    for (const [k, t] of [["all", "ALL"], ["photos", "PHOTOS"], ["documents", "DOCS"], ["other", "OTHER"]]) {
+      const b = el("button", FB.dkind === k ? "on" : null, t);
+      b.addEventListener("click", () => { FB.dkind = k; FB.dpage = 0; fbDups(); });
+      kinds.appendChild(b);
+    }
+    c.appendChild(sizes);
+    c.appendChild(kinds);
+    const R = FB.dres;
+    if (!R) return;
+    const cv = R.coverage;
+    c.appendChild(el("div", cv.indexed < cv.images ? "warn" : "mut",
+      `${R.total ? num(R.total) + (R.capped ? "+" : "") : "No"} group${R.total === 1 ? "" : "s"}` + (R.total ? ` · about ${GB(R.waste)} in extra copies` : "")
+      + (R.pages > 1 ? ` · page ${R.page + 1} of ${R.pages}` : "")
+      + ` · compared ${cv.indexed} of ${cv.images} image${cv.images === 1 ? "" : "s"}`
+      + (cv.indexed < cv.images ? ". One that is not indexed is not compared: INDEX it on ALL IMAGES." : ".")));
+    for (const g of R.groups) {
+      const tag = FB_TAG[(g.members[0] || {}).kind];
+      c.appendChild(add(el("div", "dk-gh"), add(el("div", "dk-fn"), el("b", null, g.name), tag ? el("span", "tag " + tag[1], tag[0]) : null),
+                        el("div", "mut", `${g.count} copies · ${GB(g.size)} each · ${GB(g.waste)} extra`)));
+      for (const m of g.members) {
+        const r = el("button", "row dk-frow dk-mem");
+        add(r, el("div", "dk-path", m.path), el("div", "mut", `${m.label} · ${m.volume}${m.mtime ? " · " + stamp(m.mtime) : ""}`));
+        if (m.image) r.addEventListener("click", () => fbShow(m));
+        else { r.disabled = true; r.appendChild(el("div", "warn", "this image is not in the store any more")); }
+        c.appendChild(r);
+      }
+      if (g.more) c.appendChild(el("div", "mut dk-mem", `and ${num(g.more)} more not listed`));
+    }
+    if (R.pages > 1) {
+      const row = el("div", "btnrow"), prev = el("button", null, "◀ PREV"), next = el("button", null, "NEXT ▶");
+      prev.disabled = R.page <= 0; next.disabled = R.page >= R.pages - 1;
+      prev.addEventListener("click", () => { FB.dpage = R.page - 1; fbDups(); });
+      next.addEventListener("click", () => { FB.dpage = R.page + 1; fbDups(); });
+      add(row, prev, next);
       c.appendChild(row);
     }
   }
@@ -3770,21 +3925,38 @@
     c.appendChild(add(el("div", "dk-sortkind"), s1, s2));                  // sort and kind side by side: a row of the 600 px is worth keeping
     const L = FB.ls;
     if (!L) return;
-    c.appendChild(el("div", "mut", `${num(L.total)} item${L.total === 1 ? "" : "s"}` + (L.pages > 1 ? ` · page ${L.page + 1} of ${L.pages}` : "")
-                                    + (L.deleted_hidden ? ` · ${num(L.deleted_hidden)} deleted not shown` : "")));
+    // the count, and the DELETED toggle beside it
+    const gb = el("button", FB.deleted ? "on" : null, "DELETED");
+    gb.setAttribute("aria-pressed", FB.deleted ? "true" : "false");
+    gb.addEventListener("click", () => { FB.deleted = !FB.deleted; FB.page = 0; fbLoad(); });
+    const cp = el("button", null, "COPY FOLDER");                                   // this folder and its live files, to the store (asks first)
+    cp.addEventListener("click", () => fbCopyAsk(fbCopyFolder()));
+    c.appendChild(add(el("div", "dk-count"),
+      el("span", "mut", `${num(L.total)} item${L.total === 1 ? "" : "s"}` + (L.pages > 1 ? ` · page ${L.page + 1} of ${L.pages}` : "")
+                        + (L.deleted_hidden ? ` · ${num(L.deleted_hidden)} deleted not shown`
+                           : FB.deleted ? (L.deleted_total ? ` · ${num(L.deleted_total)} deleted, dashed` : " · nothing deleted in this folder") : "")), gb, cp));
+    if (fbInGone()) c.appendChild(el("div", "warn dk-gonenote", "This folder was deleted. " + FB_GONE.replace(/^DELETED\. /, "")));
     if (L.capped) c.appendChild(el("div", "warn", "Only the first 100,000 entries of this folder are listed."));
     if (!L.entries.length) c.appendChild(el("div", "mut dk-none", "Nothing here."));
     // with the PHOTOS filter on, the photos are a grid of thumbnails (made once, kept on the store) and the folders stay rows above it
     const grid = FB.kind === "photos" ? L.entries.filter(x => x.kind === "photo") : [];
     for (const e of L.entries) {
       if (grid.length && e.kind === "photo") continue;
-      const r = el("button", "row dk-frow" + (FB.hit && e.inode === FB.hit ? " hit" : "")), tag = FB_TAG[e.kind];
+      const r = el("button", "row dk-frow" + (FB.hit && e.inode === FB.hit ? " hit" : "") + (e.deleted ? " gone" : "")), tag = FB_TAG[e.kind];
       if (FB.hit && e.inode === FB.hit) requestAnimationFrame(() => r.scrollIntoView({block: "center"}));
-      const meta = e.kind === "folder" ? (e.mtime ? stamp(e.mtime) : "folder") : e.kind === "link" ? `points to ${e.target || "?"}`
+      const meta = e.reused ? "its space now holds another file: only the name is left"
+                 : e.name_cut ? "FAT keeps no first letter for a deleted short name: the _ stands for it"
+                 : e.kind === "folder" ? (e.mtime ? stamp(e.mtime) : "folder") : e.kind === "link" ? `points to ${e.target || "?"}`
                  : `${GB(e.size)}${e.mtime ? " · " + stamp(e.mtime) : ""}`;
-      add(r, add(el("div", "dk-fn"), el("b", null, e.name), tag ? el("span", "tag " + tag[1], tag[0]) : null), el("div", "mut", meta));
+      add(r, add(el("div", "dk-fn"), el("b", null, e.name), tag ? el("span", "tag " + tag[1], tag[0]) : null,
+                 e.deleted ? el("span", "tag bad", e.reused ? "DELETED, NAME ONLY" : "DELETED") : null), el("div", "mut", meta));
       r.addEventListener("click", () => {
-        if (e.kind === "folder") { FB.path.push({name: e.name, inode: e.inode}); FB.page = 0; fbLoad(); }
+        if (e.reused) toast(FB_REUSED, "warn", 6000);
+        else if (e.kind === "folder") {
+          FB.path.push({name: e.name, inode: e.inode, deleted: !!e.deleted});
+          if (e.deleted) FB.deleted = true;                              // what is inside a deleted folder is deleted too: show it
+          FB.page = 0; fbLoad();
+        }
         else if (e.kind === "link") toast(`A link: it points to ${e.target || "somewhere else"}`, "warn", 5000);
         else fbOpenFile(e);
       });
@@ -3793,13 +3965,13 @@
     if (grid.length) {
       const g = el("div", "dk-grid");
       for (const e of grid) {
-        const cell = el("button", "dk-cell" + (FB.hit && e.inode === FB.hit ? " hit" : "")), img = el("img");
+        const cell = el("button", "dk-cell" + (FB.hit && e.inode === FB.hit ? " hit" : "") + (e.deleted ? " gone" : "")), img = el("img");
         img.loading = "lazy";
         img.alt = "";
         img.addEventListener("error", () => img.remove());               // a photo that cannot be drawn, or a disk job: the name is still there
-        img.src = "/api/browse/thumb?" + fbQ({image: FB.img, vol: FB.vol, inode: e.inode, size: e.size});
-        add(cell, img, el("div", "dk-cn", e.name));
-        cell.addEventListener("click", () => fbOpenFile(e));
+        if (!e.reused) img.src = "/api/browse/thumb?" + fbQ({image: FB.img, vol: FB.vol, inode: e.inode, size: e.size});   // a reused inode would draw another file's picture
+        add(cell, img, el("div", "dk-cn", e.name), e.deleted ? el("span", "tag bad", e.reused ? "NAME ONLY" : "DELETED") : null);
+        cell.addEventListener("click", () => e.reused ? toast(FB_REUSED, "warn", 6000) : fbOpenFile(e));
         if (FB.hit && e.inode === FB.hit) requestAnimationFrame(() => cell.scrollIntoView({block: "center"}));
         g.appendChild(cell);
       }
@@ -3819,8 +3991,10 @@
     const top = el("div", "btnrow");
     top.appendChild(fbBack(fromSearch ? "BACK TO THE RESULTS" : "BACK TO THE FOLDER", () => { FB.view = fromSearch ? "search" : "folder"; FB.file = null; renderDisk(); }));
     if (fromSearch && FB.hitRow) top.appendChild(fbBack("SHOW IN FOLDER", () => fbShow(FB.hitRow)));
+    if (!e.reused) top.appendChild(fbBack("COPY TO THE STORE", () => fbCopyAsk(fbCopyFile(e))));
     c.appendChild(top);
     add(c, el("h2", null, e.name || "file"), el("div", "mut", `${GB(e.size)}${e.mtime ? " · modified " + stamp(e.mtime) : ""}`));
+    if (e.deleted) c.appendChild(el("div", "warn dk-gonenote", FB_GONE));
     const i = FB.info;
     if (!i) return;
     if (i.kind === "text" && FB.text) {
@@ -3829,7 +4003,7 @@
     } else if (i.kind === "text") {
       c.appendChild(el("div", "mut", "Reading the text…"));
     } else {
-      c.appendChild(el("div", "mut", i.message || "no preview for this kind of file"));
+      c.appendChild(el("div", "mut", e.deleted && !e.size ? FB_EMPTY : i.message || "no preview for this kind of file"));
     }
   }
 

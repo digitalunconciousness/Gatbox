@@ -101,6 +101,7 @@ backend/gatboxlib/disks.py                      /usr/local/lib/gatbox/gatboxlib/
 backend/gatboxlib/browse.py                     /usr/local/lib/gatbox/gatboxlib/browse.py             644
 backend/gatboxlib/browseindex.py                /usr/local/lib/gatbox/gatboxlib/browseindex.py        644
 backend/gatboxlib/browsetext.py                 /usr/local/lib/gatbox/gatboxlib/browsetext.py         644
+backend/gatboxlib/browsecopy.py                 /usr/local/lib/gatbox/gatboxlib/browsecopy.py         644
 backend/gatboxweb/__init__.py                   /usr/local/lib/gatbox/gatboxweb/__init__.py           644
 backend/gatboxweb/config.py                     /usr/local/lib/gatbox/gatboxweb/config.py             644
 backend/gatboxweb/server.py                     /usr/local/lib/gatbox/gatboxweb/server.py             644

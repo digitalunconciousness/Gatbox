@@ -582,6 +582,10 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         LIST searchable without a text box; SYSTEM → TOUCH TEST (`/api/touchtest` keeps the runs).
         dash 96 → 125, web api 181 → 185.
   - [x] Installed 2026-10-26 (#17; program files only)
+  - [x] Pinch to zoom the whole 7″ page (the owner, 2026-11-16: "the screen needs to be able to pinch and pull to zoom"), **not installed**:
+        the kiosk started Chromium with `--disable-pinch`, put there when the graph got its own pinch. It is gone from `gatbox-kiosk-launch`.
+        The graph and the manual and photo viewer keep their own pinch (`touch-action:none` on them), so a pinch there zooms them, not the
+        page. `test-kiosk.sh`: 33 (it now checks the flag is absent). Takes effect when the kiosk restarts (EXIT KIOSK and log in, or a reboot).
   - [ ] ⏸ Owner: the 7" in use, and TOUCH TEST run on it. First runs, 2026-10-26 23:42 / 23:43: mean offsets
         (−7, 0) and (+6, +11) px, spread ±6–9 px — the two disagree, so no calibration; re-run once the panel
         is in its box (the viewing angle changes). A steady offset → a libinput calibration

@@ -614,7 +614,34 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       - so whether the drive hides area above 156,250,000 sectors (an HPA) **cannot be read through this dock**. IDENTIFY gives
         the visible size only. A drive on a direct SATA port, or the LBA count printed on its label, would settle it. It does
         not stop imaging, which reads what the drive shows.
-    - Still to read: the empty dock, a card auto-mounting
+    - Read on the Pi, 2026-11-15 night (the dock on `1-2`, a USB 2-only port; the Pi on its wall supply; `throttled=0x0`, EXT5V
+      5.14–5.17 V throughout; kernel, udev and journal recorded):
+      - **Two supplies on the card side wedge the dock.** A CF-to-IDE adapter on the IDE ribbon, fed from a USB charger, with the
+        dock's barrel plug also in: 1 of 6 power-ups good. The rest: no reconnect at all; connected but not answering
+        (`device descriptor read/64, error -110`, `device not accepting address, error -62`, `unable to enumerate USB device`); or
+        up with no card (`Media removed`). Without the feed: 2 of 2 good. Feed on, barrel plug out (the bridge on the Pi's USB power,
+        the card on its feed): a USB replug brought the card back 5 of 5. The mechanism is not measured; with no feed the adapter's
+        light flashes at the dock's switch-on, so the dock puts power onto the adapter through the ribbon.
+      - **One supply fixes it (the owner's re-test, 2026-11-16).** The dock has a Molex output that is live only with the barrel plug in.
+        With the adapter fed from that Molex alone and the USB charger feed removed, the power-cycle re-test passed. The cycles were not
+        counted in what was reported to me. Whether the dock's switch cuts the Molex is not measured.
+      - In the stuck state the bridge kept its USB line up with the dock switched off (root hub port status `0x0501`: connect,
+        high-speed, not enabled): the dock's switch does not take the bridge down. Pulling the barrel plug, the USB cable and the
+        feed cleared it; so did pulling the Pi's power. No reboot needed.
+      - The bridge runs on the Pi's USB power alone (barrel plug out; it declares `bMaxPower 500mA`).
+      - At attach: the kernel's SCSI scan; `ata_id` IDENTIFY only for a disk the dock reports as fixed; udisks' own IDENTIFY when
+        `ID_ATA=1`, answered with empty sense data (an error line, no reset); the desktop's mount for a removable card (the udev
+        rule did not cover partitions: see the fix under Task 4's notes). No reset has followed an attach in any boot on record.
+      - A CF card on the IDE side: the INQUIRY is the card's own model with its bytes swapped (`ASSMNU G` / `FCA/AT` for
+        `SAMSUNG` / `CF/ATA`), there is no serial, and the card is reported removable, so `ata_id` does not run and the identity is
+        that INQUIRY. The empty dock is `XinTop XT-U33502` with `Media removed`.
+      - `power/level is deprecated` (2026-11-14) was a read: `udevadm info -a` reads every attribute; it prints once per boot.
+      - On 2026-11-05/06 the dock ran SuperSpeed on `4-1`; since then it has been on `1-2`: another socket, not a fallback.
+      - First WRITE from the 7" on real media, 2026-11-15: a 65 MB card image onto the WD800JD, armed on the screen, read back
+        twice, verified, the 79,934,988,288 bytes beyond it untouched.
+    - Still to read: whether the dock's switch cuts its Molex; one `reset high-speed USB device` with `error -71` while a USB cable was
+      being replugged (a contact, or the bridge on the Pi's USB power alone being marginal); the bridge on the cabinet's 12 V buck; the
+      dock on another port, after the MEGA4 routing.
   - [x] Task 1, the test doubles: a fake sysfs tree, plain files as devices, a fake mount table, `tests/fake-ddrescue`
   - [x] Task 2, `tools/gatbox-disk` (list, read, retry, check, write), not installed: identity from sysfs, the
         refusals, the store's mount and marker guard, READ (one pass, RETRY on bad areas, a second read for flash,
@@ -765,8 +792,19 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           the library, hub-sending and archive-sync files (Phases B, C and D) were already current. The logger was left running (up to date);
           `gatbox-web` and `gatbox-disk.path` restarted; `gatbox-browse.socket` is listening; `/run/gatbox-browse` is `root:root` 0755; `_browse` is
           `gatbox-browse:gatbox-browse` 0700 and `_exports` is `gatbox-browse:gatbox-disk-queue` 2775, as the unit makes them. The service ran under its
-          sandbox (the journal shows its requests) and a first COPY TO THE STORE completed. **Open from that run:** `dmesg` shows
-          `usb 1-2: reset high-speed USB device` at 5786 s, 5847 s and 7140 s of uptime, not yet placed against what was being done.
+          sandbox (the journal shows its requests) and a first COPY TO THE STORE completed, and `systemd-analyze security gatbox-browse.service`
+          says **0.8 SAFE**. The service leaves after its 300 s idle, as designed (`Deactivated successfully`). The 80 GB donor drive had been READ
+          from the 7″ earlier the same day (the first real READ), and FILES opened its volume, counted it, listed folders and showed a text file.
+    - [x] The three `usb 1-2` resets in that `dmesg` are placed (2026-11-15, the owner's `dmesg -T` and `lsusb`): `usb 1-2` is the **XinTop XT-U33502
+          dock** (1f75:0611), not the store, and the resets are on the evening of 2026-11-14 (18:29, 18:30 and 18:52 by the Pi's clock), before any of
+          today's browsing or copying; none since. That matches the hangs the DISK notes already record that evening (smartd's SMART ENABLE twice, and
+          `hdparm -N`), so I take them for those. A recheck after the second bootstrap run showed no new reset.
+    - [x] Second bootstrap run on the Pi, 2026-11-15 (main a692799: the duplicate check across the store, the WRITE progress bar and the copy-folder
+          fix): **3 files**, `/usr/local/bin/gatbox-disk`, `gatboxlib/browsecopy.py` and the dashboard's `dash.js`; the logger left running;
+          `gatbox-web`, `gatbox-disk.path` and `gatbox-browse.socket` restarted. **Checked on the Pi that night:** a new COPY's folder lists with a plain
+          `ls -l`, no sudo (`drwxrwsr-x`, group `gatbox-disk-queue`, its files `-rw-rw-r--`, with `_export.json`), and the first WRITE from the 7″ ran (see
+          Task 0's 2026-11-15 night notes). **Not yet checked:** a READ of a drive already in the store under another machine (the new
+          "already stored under ..." line), and how the WRITE bar's proportions looked on the screen.
     - [x] F4d fix found by that run (2026-11-15): the finished copy's folder was **unreadable to the owner** (`Permission denied`). The unit has
           `RestrictSUIDSGID=yes`, which refuses any chmod that names the setgid bit; the copy asked for `chmod 2775` on each folder it made and
           swallowed the refusal, leaving the folders 0700 (the service's umask is 0077). Outside the sandbox nothing refuses it, so no test saw it.

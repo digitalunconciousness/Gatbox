@@ -15,5 +15,9 @@
   space, which is in it, changes with every thumbnail written, so each redraw made new blank `<img>` elements. Fixed in the dashboard (the
   free space is compared in 256 MB steps, and a thumbnail's element is kept across redraws); not seen on the Pi yet. The owner's laptop gave a `chdman info -i` output (MAME 0.289, a regression-test CHD with a
   `GDDD` CHS metadata line), which is the format Task 3's parser was waiting for.
+- The first real RESTORE ran that night on the 80 GB donor: image check 32.7 min, write 36.7 min, then two read-backs at about 33 MB/s when last
+  seen (about 40 minutes each, estimated), so about 2.5 hours against a unit timeout of 3. The owner's screenshots of the disk spool were what showed the job was alive and what it was. The
+  timeout is too tight for a drive of any size beyond this; the fix is a unit change and comes to her as a diff. Thumbnails may now be made
+  while a write is in its read-back, when the store is idle.
 - Approved, queued: the CF card's model name read byte-swapped (`ASSMNU G` for `SAMSUNG`), shown de-swapped; hashing the possible
   duplicates on a tap; a list of earlier copies on the 7″.

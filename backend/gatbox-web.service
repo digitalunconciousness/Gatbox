@@ -42,6 +42,10 @@ ReadWritePaths=-/var/spool/gatbox-wifi
 # (gatbox-disk) and never opens a drive: its /dev is empty (PrivateDevices above). "-": start anyway before the spool exists.
 SupplementaryGroups=gatbox-disk-queue
 ReadWritePaths=-/var/spool/gatbox-disk
+# FIND A MANUAL: the 7" writes a request into the manuals job's spool (group gatbox-fetch, setgid) and reads its status. This service
+# still never contacts the internet for it: gatbox-manuals.service does, as its own user. "-": start anyway before the spool exists.
+SupplementaryGroups=gatbox-fetch
+ReadWritePaths=-/var/spool/gatbox-manuals
 # The drive browser (FILES on the 7"): gatbox-web asks gatbox-browse over its socket (group gatbox-browse, mode 660) and passes
 # the answer on, to the Pi's own screen only. It reads nothing out of an image itself.
 SupplementaryGroups=gatbox-browse

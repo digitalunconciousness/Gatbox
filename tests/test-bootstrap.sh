@@ -169,8 +169,26 @@ check "the job runs as gatbox-disk with the queue group" \
     'grep -qx "User=gatbox-disk" "$DISKU" && grep -qx "SupplementaryGroups=gatbox-disk-queue" "$DISKU"'
 check "the job is ordered after the store's mount and never requires it (an unplugged drive must not jam the spool)" \
     'grep -qx "After=srv-gatbox-disks.mount" "$DISKU" && ! grep -qE "^(Requires|RequiresMountsFor|BindsTo)=" "$DISKU"'
-check "gatbox-disk.path is enabled and --check lists it" 'grep -q "svc gatbox-disk.path" "$BOOT" && grep -q "gatbox-disk.path gatbox-browse.socket; do" "$BOOT"'
+check "gatbox-disk.path is enabled and --check lists it" 'grep -q "svc gatbox-disk.path" "$BOOT" && grep -q "gatbox-disk.path gatbox-manuals.path gatbox-browse.socket; do" "$BOOT"'
 all_in() { local f=$1 w; shift; for w in "$@"; do grep -qF -- "$w" "$f" || return 1; done; }     # every string is in the file
+# FIND A MANUAL (the owner, 2026-11-16): the manuals job, which was written in the repo (2026-11-05) and never wired into the bootstrap, so
+# nothing on the Pi made its user, its spool or its units. It is installed the way the disk job is, and the owner reads the diff first.
+MANU="$REPO/backend/gatbox-manuals.service"
+for f in "backend/gatbox-manuals.service +/etc/systemd/system/gatbox-manuals.service +644" \
+         "backend/gatbox-manuals.path +/etc/systemd/system/gatbox-manuals.path +644"; do
+    check "MANIFEST installs ${f%% *}"             "grep -qE '^$f' \"\$BOOT\""
+done
+check "sysusers: the manuals job's own user, in the manuals folder's group" \
+    'grep -qE "^u gatbox-fetch - " "$SYSU" && grep -qx "m gatbox-fetch gatbox-manuals" "$SYSU"'
+check "tmpfiles: the manuals spool is 2770 gatbox-fetch:gatbox-fetch" 'grep -qE "^d /var/spool/gatbox-manuals +2770 +gatbox-fetch +gatbox-fetch" "$TMPF"'
+check "gatbox-web holds the spool's group and may write the spool, starting anyway before it exists" \
+    'grep -qx "SupplementaryGroups=gatbox-fetch" "$WEBU" && grep -qx "ReadWritePaths=-/var/spool/gatbox-manuals" "$WEBU"'
+check "the job runs as gatbox-fetch with the manuals group, no capabilities, and may write only the manuals folder and its spool" \
+    'grep -qx "User=gatbox-fetch" "$MANU" && grep -qx "SupplementaryGroups=gatbox-manuals" "$MANU" && grep -qx "CapabilityBoundingSet=" "$MANU" && grep -qx "ReadWritePaths=/srv/gatbox/manuals /var/spool/gatbox-manuals" "$MANU"'
+check "the user is made before gatbox-web restarts with that group (a missing group would stop it starting), and the sysusers step runs when the user is missing" \
+    '[ "$(grep -n "systemd-sysusers /etc/sysusers.d" "$BOOT" | head -1 | cut -d: -f1)" -lt "$(grep -n "^svc gatbox-web.service" "$BOOT" | head -1 | cut -d: -f1)" ] && grep -q "! getent passwd gatbox-fetch" "$BOOT"'
+check "gatbox-manuals.path is enabled and --check lists it, the user and the spool" \
+    'grep -q "^svc gatbox-manuals.path" "$BOOT" && grep -q "gatbox-manuals.path gatbox-browse.socket; do" "$BOOT" && all_in "$BOOT" "user gatbox-fetch" "/var/spool/gatbox-manuals"'
 check "--check reports the user, group, spool, mountpoint and the owner's group" \
     'all_in "$BOOT" "user gatbox-disk" "group gatbox-disk-queue (sysusers" "/var/spool/gatbox-disk" "/srv/gatbox/disks" "+= gatbox-disk-queue"'
 # udev works out GROUP= when it loads a rule. On the Pi (2026-11-14) telling the running udevd to reload did not make it see the
@@ -266,8 +284,10 @@ if command -v systemd-analyze >/dev/null 2>&1; then
     # the unit files read cleanly: no unknown directive and no syntax error (an unknown user or a missing program is fine here)
     out=$(systemd-analyze verify "$BRK" "$BRS" 2>&1 | grep -iE "unknown (key|section|lvalue)|failed to parse|bad (unit|setting)|invalid" | head -3)
     check "systemd-analyze reads both units with no unknown directive or syntax error" '[ -z "$out" ]'
+    out=$(systemd-analyze verify "$REPO/backend/gatbox-manuals.path" "$MANU" 2>&1 | grep -iE "unknown (key|section|lvalue)|failed to parse|bad (unit|setting)|invalid" | head -3)
+    check "systemd-analyze reads the manuals job's units with no unknown directive or syntax error" '[ -z "$out" ]'
 else
-    echo "  skip  systemd-analyze verify of the drive browser's units (systemd-analyze not installed)"
+    echo "  skip  systemd-analyze verify of the drive browser's and the manuals job's units (systemd-analyze not installed)"
 fi
 # The store's mount unit
 UUID=3F2A7C19-8D4E-4B60-9A15-6E0C2B7D4F83; uuid=${UUID,,}

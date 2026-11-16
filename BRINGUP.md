@@ -812,6 +812,14 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           2775), and a file whose mode cannot be set stops the copy with a sentence instead of being ignored. `test-browse-copy.sh`: 41, with the
           sandbox's refusal emulated; 3 breakages fail a test (a fourth is equivalent). A copy made before the fix is 0700 and needs `sudo` to read
           or delete, once.
+  - [x] **RESTORE TO THE ORIGINAL** (the owner, 2026-11-16: "I should be able to put an image back onto the disk I pull it from also
+        with an arming button"; built the same day, **not installed**; `docs/plans/2026-11-16-restore-and-format.md`). The refusal "this is the
+        drive the image came from" is lifted only by a deliberate RESTORE CHECK (`gatbox-disk check|write --restore`, the 7″'s RESTORE CHECK
+        beside TARGET CHECK): another serial, another model or another size is still refused; the image must be a complete read (no unread
+        areas, and a card read twice with both matching); the overwrite is **always** acknowledged, even for a blank-looking drive; the same
+        5-minute check, 3 s hold, identity re-check and two read-backs; a drive that already holds the image offers VERIFY ONLY; the
+        `writes.jsonl` line and the job record say `restore`. `test-disk.sh`: 173 (was 160), `test-dash.sh`: 331 (was 327); 11 breakages
+        each fail a test (see the PR). Repo-only: no unit, udev or `/etc` change.
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4

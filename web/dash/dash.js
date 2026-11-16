@@ -3182,11 +3182,18 @@
         driveInfoBlock(st));
     if (tgt && !tgt.rotational) p.appendChild(cfWarning(true));
     add(p, el("h2", null, "3 · TARGET CHECK"));
-    const chk = el("button", null, "TARGET CHECK");
-    chk.disabled = !(K.image && tgt && st.store.mounted && st.spool && !st.busy);
-    chk.addEventListener("click", () => api("POST", "/api/disk/check", {image: K.image.image, device: tgt.name, identity: tgt.identity})
-      .then(() => toast(`TARGET CHECK queued: ${tgt.name}`)).catch(fail));
-    add(p, chk, el("span", "mut", "  the drive's identity, its size and what's on it now: nothing is written"));
+    // RESTORE CHECK is the owner's deliberate way to put an image back on the drive it came from (2026-11-16): the same check,
+    // with the one refusal ("this is the drive the image came from") lifted and the overwrite always acknowledged.
+    const askCheck = restore => api("POST", "/api/disk/check", Object.assign({image: K.image.image, device: tgt.name, identity: tgt.identity},
+                                                                           restore ? {restore: true} : {}))
+      .then(() => toast(`${restore ? "RESTORE" : "TARGET"} CHECK queued: ${tgt.name}`)).catch(fail);
+    const chk = el("button", null, "TARGET CHECK"), rst = el("button", null, "RESTORE CHECK"), cr = el("div", "btnrow");
+    chk.disabled = rst.disabled = !(K.image && tgt && st.store.mounted && st.spool && !st.busy);
+    chk.addEventListener("click", () => askCheck(false));
+    rst.addEventListener("click", () => askCheck(true));
+    add(cr, chk, rst);
+    add(p, cr, el("div", "mut", "TARGET CHECK reads the drive's identity, its size and what's on it now: nothing is written. "
+                                + "RESTORE CHECK is the same for the drive this image came from, to put the image back on it."));
     add(p, el("h2", null, "4 · WRITE"));
     const now = (Date.now() + S.offset) / 1000;
     const ready = K.image && tgt && !st.busy && s.op === "check" && s.state === "done" && s.target_ok === true
@@ -3204,13 +3211,17 @@
       } else {
         const acked = K.ackFor === s.job;
         if (s.needs_ack) {
-          p.appendChild(el("div", "warn dk-over", `NOT BLANK. On ${tgt.name} now: ${contentsText(s.contents)}. Writing replaces all of it.`));
-          const ack = el("button", "dk-ack" + (acked ? " on" : ""), (acked ? "✓ " : "") + "OVERWRITE IT: I'M SURE");
+          p.appendChild(el("div", "warn dk-over", s.restore
+            ? `RESTORE. ${tgt.name} is the drive this image came from. Writing puts the image from ${stamp(K.image.started)} back and replaces `
+              + `everything on it now: ${contentsText(s.contents)}.`
+            : `NOT BLANK. On ${tgt.name} now: ${contentsText(s.contents)}. Writing replaces all of it.`));
+          const ack = el("button", "dk-ack" + (acked ? " on" : ""), (acked ? "✓ " : "") + (s.restore ? "OVERWRITE THE ORIGINAL: I'M SURE" : "OVERWRITE IT: I'M SURE"));
           ack.addEventListener("click", () => { K.ackFor = acked ? null : s.job; renderDisk(); });
           p.appendChild(ack);
         }
         if (!s.needs_ack || acked) {
-          const label = s.needs_ack ? `HOLD 3 S TO OVERWRITE ${tgt.name} WITH ${K.image.label}` : `HOLD 3 S TO WRITE ${K.image.label} → ${tgt.name}`;
+          const label = s.restore ? `HOLD 3 S TO RESTORE ${K.image.label} → ${tgt.name}`
+                      : s.needs_ack ? `HOLD 3 S TO OVERWRITE ${tgt.name} WITH ${K.image.label}` : `HOLD 3 S TO WRITE ${K.image.label} → ${tgt.name}`;
           add(p, holdButton(label, 3000, () => diskWrite(!!s.needs_ack && acked, false), K, renderDisk),
               el("div", "mut", "The hold arms it for 30 s. The drive is written, then read back twice."));
         }

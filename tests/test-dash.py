@@ -1425,8 +1425,37 @@ def main():
                 " return !!t && t.tagName === 'DIV' && t.textContent.includes('TOO SMALL'); })()") and small is not None)
         dk_tile("sda")
         dk_tap("TARGET CHECK")
-        check("TARGET CHECK on the drive the image came from: TARGET REFUSED, it says why",
-              dk_has("TARGET REFUSED", 30) and "the drive the image came from" in text("#dk-body"))
+        check("TARGET CHECK on the drive the image came from: TARGET REFUSED, it says why, and that RESTORE is the way",
+              dk_has("TARGET REFUSED", 30) and "the drive the image came from" in text("#dk-body") and "use RESTORE" in text("#dk-body"))
+        check("RESTORE CHECK sits beside TARGET CHECK, and the words under them say what it is for",
+              q("[...document.querySelectorAll('#dk-body .btnrow button')].map(b => b.textContent).join('|').includes('TARGET CHECK|RESTORE CHECK')")
+              and "RESTORE CHECK is the same for the drive this image came from" in text("#dk-body"))
+        dk_tap("RESTORE CHECK")
+        dk_has("TARGET OK", 30)
+        check("RESTORE CHECK on the original while it still holds the image: it says so and offers VERIFY ONLY, nothing to restore",
+              "sda already holds this image" in text("#dk-body")
+              and q("[...document.querySelectorAll('#dk-body button')].some(b => b.textContent === 'VERIFY ONLY')"))
+        dk_tap("TARGET CHECK")                                     # back to a refusal, so the next wait is not met by this result
+        dk_has("TARGET REFUSED", 30)
+        sda_path = f"{FD.dev}/sda"
+        with open(sda_path, "r+b") as f:                           # a game has written to the original since the read
+            sda_head = f.read(4096)
+            f.seek(0)
+            f.write(os.urandom(4096))
+        dk_tap("RESTORE CHECK")
+        dk_has("TARGET OK", 30)
+        check("RESTORE CHECK on the original after something wrote to it: it says RESTORE, what is on it is replaced, and there is no hold "
+              "before the acknowledgement",
+              "RESTORE. sda is the drive this image came from" in text("#dk-body") and "replaces everything on it now" in text("#dk-body")
+              and "NOT BLANK" not in text("#dk-body")
+              and not q("[...document.querySelectorAll('#dk-body button')].some(b => b.textContent.startsWith('HOLD'))"))
+        dk_tap("OVERWRITE THE ORIGINAL")
+        check("... after the acknowledgement the hold names the restore, the image and the drive",
+              settles(c, "[...document.querySelectorAll('#dk-body button')].some(b => b.textContent.startsWith('HOLD 3 S TO RESTORE WW-HDD → sda'))", 10))
+        with open(sda_path, "r+b") as f:                           # the original as it was, for the checks that follow
+            f.write(sda_head)
+        dk_tap("TARGET CHECK")                                     # back to the refusal, so the next check's wait is not met by this one
+        dk_has("TARGET REFUSED", 30)
         dk_tile("sdh")
         dk_tap("TARGET CHECK")
         dk_has("TARGET OK", 30)

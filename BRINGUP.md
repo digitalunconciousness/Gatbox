@@ -744,7 +744,21 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
           Nothing here can delete anything. `test-browse-duplicates.sh`: 32, `test-dash.sh`: 311. No system config, no schema change (no re-index). Hashing the candidates on a tap is
           not built (the note's §5 step 2). Also fixed: a stale answer to an earlier tap could overwrite a newer one in the search and the folder list (the new
           screen showed it as a flaky check); the three now ignore a response a newer request has replaced.
-    - [ ] F4d (COPY TO THE STORE) is next. Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
+    - [x] F4d built, 2026-11-15, **not installed**: COPY TO THE STORE. A file (COPY TO THE STORE in the file view, or COPY in the photo and PDF viewer) or a folder
+          (COPY FOLDER) from an image into `/srv/gatbox/disks/_exports/<time>_<image>_<name>/`: a new folder each time, made as `.partial` and renamed when whole,
+          so nothing already there is ever overwritten or mixed with. The screen asks first, then shows how far it is, then where it ended up. Every file is read
+          out of the image with `icat`, hashed (SHA-1) as it is written, read back from the store and hashed again; a mismatch stops the copy. `_export.json` lists
+          every file with its size and SHA-1, the image's SHA-1, the volume, and whether it is a recovery (a deleted file: the question warns, and the list marks it).
+          A folder copy takes live files only; links are skipped and listed; names out of an image are made safe and two that collide are kept apart; a file the image
+          will not give up is listed as failed and the rest is copied. It checks the free space (keeps 2 GB or 2% free), stands still while a disk job runs and carries
+          on after it, stops when asked, and does one copy at a time.
+          **It runs inside `gatbox-browse` and not in a new job with its own user (the note's §6 suggested one):** that service is already sandboxed (no network, no
+          devices, no capabilities, the store read-only), so the system change is two lines in its unit, which is not installed yet either:
+          `ReadWritePaths=-/srv/gatbox/disks/_browse -/srv/gatbox/disks/_exports`, and the same `ExecStartPre` line also makes `_exports` (owner `gatbox-browse`, group
+          `gatbox-disk-queue`, mode 2775, so a member of that group, the owner, can delete a copy). No new user, group, spool or unit. If you want it as a separate
+          job with its own user after all, say so. Your reading of hard rule 6 (2026-11-15) is recorded in CLAUDE.md, in the rule's own list of decisions.
+          `test-browse-copy.sh`: 38, `test-browse.sh`: 87, `test-bootstrap.sh`: 148, `test-dash.sh`: 326. **Not on a real drive yet:** a large folder, and copy speed
+          from an image over USB (F3's rates apply: 6 to 11 MB/s for big files). Nothing drains `archive-queue.jsonl` today (checked 2026-11-15): no disk image has left the Pi.
   - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4

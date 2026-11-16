@@ -145,6 +145,14 @@ rule 6's intent, but **that is her call**, because the rule says "the only hardw
 two options, or the drive in her hand: the store is a USB drive and it can be plugged into any computer. For many archive jobs that
 is the whole answer: copy what she wants to the store, take the store to the machine.
 
+**Built as F4d (2026-11-15), after her "Fine" to both parts of question 5.** One difference from the recommendation above: it is not a separate job with its own user and a
+spool. It runs as a thread inside `gatbox-browse`, which is already a sandboxed user with no network, no devices and no capabilities and the store read-only, so
+the system change is `ReadWritePaths=-/srv/gatbox/disks/_exports` and one more `install -d` on the unit's existing `ExecStartPre` line (the unit is not installed yet). The
+destination is `<store>/_exports/<time>_<image>_<name>/`, made as `.partial` and renamed when whole; every file is written new (`O_EXCL`), hashed as it is written,
+flushed, read back from the store and hashed again, and listed with its SHA-1 in `_export.json`. A folder copy takes live files only; a deleted file or folder is copied when it
+is the thing asked for and is marked as a recovery. The directories are group-writable by `gatbox-disk-queue` (setgid) so the owner can delete a copy. Getting a copy off the
+store is, as said above, taking the drive.
+
 ## 7. A phone, with a pairing PIN
 
 **What it is.** Today FILES answers the Pi's own screen only; gatbox-web refuses a phone with a 403 (her answer on 2026-11-15: "the 7"

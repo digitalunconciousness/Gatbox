@@ -1830,6 +1830,96 @@ def main():
             fb_tap("budget.xlsx")
             check("a file with no preview says so, in words", dk_has("no preview for this kind of file", 30))
             fb_btn("BACK TO THE FOLDER", 15)
+            # F4d: COPY TO THE STORE (the only write in FILES: into the store's _exports folder, after a question, with a progress strip)
+            exports = f"{FD.store}/_exports"
+            fb_tap("notes.txt")
+            dk_has("Widget Wars cabinet notes", 30)
+            fb_btn("COPY TO THE STORE", 15, exact=True)
+            ask = "#dk-body .dk-ask"
+            check("a file: COPY TO THE STORE asks first, in words (what, from which image, into _exports, a new folder, nothing overwritten, read back with its SHA-1), and nothing is copied yet",
+                  settles(c, f"!!document.querySelector('{ask}')", 10) and 'Copy "notes.txt" to the store?' in text(ask) and "BROWSE-EXT" in text(ask)
+                  and "_exports" in text(ask) and "nothing already there is overwritten" in text(ask) and "SHA-1" in text(ask) and not os.path.exists(exports))
+            check("... the question's text is 14 px or more and its buttons are a finger tall", not q(BOX_SMALL)
+                  and q(f"[...document.querySelectorAll('{ask} button')].every(b => b.getBoundingClientRect().height >= 55.5)") and q(f"document.querySelector('{ask}').scrollWidth <= document.querySelector('{ask}').clientWidth + 1"))
+            shot("29a-files-copy-ask")
+            fb_btn("CANCEL", 15, exact=True)
+            check("CANCEL: the question goes, and nothing was copied (no _exports folder at all)", settles(c, f"!document.querySelector('{ask}')", 10) and not os.path.exists(exports))
+            fb_btn("COPY TO THE STORE", 15, exact=True)
+            fb_btn("COPY", 15, exact=True)
+            strip = "#dk-body .dk-exp"
+            check("COPY: it says COPIED, with the count and size, where it is (a folder under the store's _exports) and that each file was read back",
+                  settles(c, f"!!document.querySelector('{strip}') && document.querySelector('{strip}').textContent.includes('COPIED')", 40)
+                  and 'COPIED "notes.txt": 1 file' in text(strip) and "read back from the store" in text(strip) and "_exports" in text(strip) and "_export.json" in text(strip))
+            done = sorted(n for n in os.listdir(exports) if not n.endswith(".partial"))
+            check("... the copy is on the store, byte for byte, with its list: the SHA-1 of the file, and the image it came from",
+                  len(done) == 1 and open(f"{exports}/{done[0]}/notes.txt", "rb").read() == b"Widget Wars cabinet notes\nline two\n"
+                  and json.load(open(f"{exports}/{done[0]}/_export.json"))["files"][0]["sha1"] == __import__("hashlib").sha1(b"Widget Wars cabinet notes\nline two\n").hexdigest()
+                  and json.load(open(f"{exports}/{done[0]}/_export.json"))["image"]["label"] == "BROWSE-EXT")
+            shot("29b-files-copy-done")
+            fb_btn("BACK TO THE FOLDER", 15)
+            check("the strip stays on screen in the folder view until it is dismissed, and OK dismisses it",
+                  settles(c, f"!!document.querySelector('{strip}')", 10) and fb_btn("OK", 15, exact=True) and settles(c, f"!document.querySelector('{strip}')", 10))
+            fb_btn("COPY FOLDER", 15, exact=True)
+            check("a folder: COPY FOLDER asks about the folder and says every live file in it is copied",
+                  settles(c, f"!!document.querySelector('{ask}')", 10) and 'Copy the folder "Docs" to the store?' in text(ask) and "Every live file in it is copied" in text(ask))
+            fb_btn("COPY", 15, exact=True)
+            check("... COPIED, the three live files (the deleted ones are not copied)",
+                  settles(c, f"!!document.querySelector('{strip}') && document.querySelector('{strip}').textContent.includes('COPIED')", 60) and 'COPIED "Docs": 3 files' in text(strip))
+            done2 = sorted(n for n in os.listdir(exports) if not n.endswith(".partial") and n not in done)
+            m2 = json.load(open(f"{exports}/{done2[0]}/_export.json"))
+            check("... the folder's copy: exactly budget.xlsx, manual.pdf and notes.txt; no deleted file; recovered is false",
+                  sorted(r_["path"] for r_ in m2["files"]) == ["budget.xlsx", "manual.pdf", "notes.txt"] and m2["recovered"] is False)
+            fb_btn("OK", 15, exact=True)
+            fb_btn("DELETED", 15, exact=True)
+            fb_wait_row("old-notes.txt")
+            fb_tap("old-notes.txt")
+            dk_has("Widget Wars deleted notes", 30)
+            fb_btn("COPY TO THE STORE", 15, exact=True)
+            check("a deleted file: the question carries the warning and says the copy is marked as a recovery",
+                  settles(c, f"!!document.querySelector('{ask}')", 10) and "DELETED. Read from space the drive has marked free" in text(ask) and "marked as a recovery" in text(ask))
+            fb_btn("COPY", 15, exact=True)
+            check("... COPIED, and the strip repeats that it is a recovery",
+                  settles(c, f"!!document.querySelector('{strip}') && document.querySelector('{strip}').textContent.includes('COPIED')", 40)
+                  and "marked as a recovery" in text(strip))
+            done3 = sorted(n for n in os.listdir(exports) if not n.endswith(".partial") and n not in done + done2)
+            m3 = json.load(open(f"{exports}/{done3[0]}/_export.json"))
+            check("... the copy is the deleted file's bytes, and its list says recovered, on the file and on the copy",
+                  open(f"{exports}/{done3[0]}/old-notes.txt", "rb").read() == b"Widget Wars deleted notes\n" * 40 and m3["recovered"] is True and m3["files"][0]["deleted"] is True)
+            fb_btn("OK", 15, exact=True)
+            fb_btn("BACK TO THE FOLDER", 15)
+            fb_btn("DELETED", 15, exact=True)
+            # a disk job holds it back: the question is asked, the answer is a notice, and nothing is made
+            open(f"{T}/dspool/request.json", "w").write("{}")
+            fb_tap("notes.txt")
+            dk_has("Widget Wars cabinet notes", 30)
+            n_before = len(os.listdir(exports))
+            fb_btn("COPY TO THE STORE", 15, exact=True)
+            fb_btn("COPY", 15, exact=True)
+            check("with a disk job queued: a notice says copying waits for it, and no folder is made",
+                  settles(c, "!document.querySelector('#toast').classList.contains('hide') && document.querySelector('#toast').textContent.includes('a disk job is running')", 10)
+                  and len(os.listdir(exports)) == n_before and not q("!!document.querySelector('#dk-body .dk-exp')"))
+            os.remove(f"{T}/dspool/request.json")
+            fb_btn("BACK TO THE FOLDER", 15)
+            # a photo in the viewer has COPY too: it closes the viewer and asks on the screen behind
+            q("[...document.querySelectorAll('#dk-body .dk-crumbs button')][2].click()")
+            fb_wait_row("Photos")
+            fb_tap("Photos")
+            fb_wait_row("2019")
+            fb_tap("2019")
+            fb_wait_row("IMG_0001.jpg")
+            fb_tap("IMG_0001.jpg")
+            settles(c, "!document.querySelector('#viewer').classList.contains('hide') && document.querySelector('#vw-img').complete && document.querySelector('#vw-img').naturalWidth > 0", 40)
+            check("the photo viewer has a COPY button, a finger tall", not q("document.querySelector('#vw-copy').classList.contains('hide')")
+                  and q("document.querySelector('#vw-copy').getBoundingClientRect().height") >= 55.5)
+            q("document.querySelector('#vw-copy').click()")
+            check("COPY in the viewer closes it and asks, on the screen behind, about that photo",
+                  q("document.querySelector('#viewer').classList.contains('hide')") and settles(c, f"!!document.querySelector('{ask}')", 10)
+                  and 'Copy "IMG_0001.jpg" to the store?' in text(ask))
+            fb_btn("CANCEL", 15, exact=True)
+            q("[...document.querySelectorAll('#dk-body .dk-crumbs button')][2].click()")
+            fb_wait_row("Docs")
+            fb_tap("Docs")
+            fb_wait_row("manual.pdf")
             q("[...document.querySelectorAll('#dk-body .dk-crumbs button')][2].click()")
             fb_wait_row("huge.pdf")
             fb_tap("huge.pdf")

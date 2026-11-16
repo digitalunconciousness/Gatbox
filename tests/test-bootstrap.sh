@@ -243,8 +243,8 @@ check "the socket: listens under /run/gatbox-browse, mode 660, for the group gat
     'grep -qx "ListenStream=/run/gatbox-browse/browse.sock" "$BRK" && grep -qx "SocketMode=0660" "$BRK" && grep -qx "SocketGroup=gatbox-browse" "$BRK" && grep -qx "WantedBy=sockets.target" "$BRK"'
 check "the service has no network, no devices, no capabilities, and only the unix socket" \
     'all_in "$BRS" "PrivateNetwork=yes" "PrivateDevices=yes" "RestrictAddressFamilies=AF_UNIX" "NoNewPrivileges=yes" && grep -qx "CapabilityBoundingSet=" "$BRS" && grep -qx "AmbientCapabilities=" "$BRS"'
-check "... it sees the image store read-only, with its own folder the only writable place there" \
-    'grep -qx "ProtectSystem=strict" "$BRS" && grep -qx "ReadOnlyPaths=/srv/gatbox/disks" "$BRS" && grep -qx "ReadWritePaths=-/srv/gatbox/disks/_browse" "$BRS" && ! grep -qE "^ReadWritePaths=.*(/srv/gatbox/disks( |$)|/var/spool)" "$BRS"'
+check "... it sees the image store read-only, with its own two folders (_browse and _exports) the only writable places there" \
+    'grep -qx "ProtectSystem=strict" "$BRS" && grep -qx "ReadOnlyPaths=/srv/gatbox/disks" "$BRS" && grep -qx "ReadWritePaths=-/srv/gatbox/disks/_browse -/srv/gatbox/disks/_exports" "$BRS" && ! grep -qE "^ReadWritePaths=.*(/srv/gatbox/disks( |$)|/var/spool|/srv/gatbox/disks/[^_])" "$BRS"'
 check "... it runs as its own user, joins the disk queue group to read images and never the devices' group" \
     'grep -qx "User=gatbox-browse" "$BRS" && grep -qx "SupplementaryGroups=gatbox-disk-queue" "$BRS" && ! grep -qE "^(Supplementary)?Groups?=.*gatbox-disk( |$)" "$BRS"'
 check "... a syscall filter, a memory ceiling and a task ceiling" 'grep -qx "SystemCallFilter=@system-service" "$BRS" && grep -qE "^MemoryMax=" "$BRS" && grep -qE "^TasksMax=" "$BRS"'
@@ -252,6 +252,8 @@ check "... ordered after the store's mount and never requiring it (an unplugged 
     'grep -qx "After=srv-gatbox-disks.mount" "$BRS" && ! grep -qE "^(Requires|RequiresMountsFor|BindsTo)=.*(srv-gatbox-disks|/srv/gatbox/disks)" "$BRS"'
 check "... its folder on the store is made only when the store is mounted and marked, and by the one line that runs outside the sandbox" \
     'grep -qE "^ExecStartPre=\+/bin/sh -c .mountpoint -q /srv/gatbox/disks && \[ -f /srv/gatbox/disks/.gatbox-image-store \] && install -d -o gatbox-browse" "$BRS"'
+check "... the exports folder is made by the same line, group-writable by the spool's group (setgid) so the owner can delete a copy, and the browser's own library file is installed" \
+    'grep -q "install -d -o gatbox-browse -g gatbox-disk-queue -m 2775 /srv/gatbox/disks/_exports" "$BRS" && grep -q "^backend/gatboxlib/browsecopy.py " "$BOOT"'
 check "the bootstrap enables and starts the socket, and --check lists it and the user" \
     'grep -q "^svc gatbox-browse.socket" "$BOOT" && grep -q "gatbox-browse.socket; do" "$BOOT" && grep -q "create     user gatbox-browse" "$BOOT"'
 if command -v systemd-analyze >/dev/null 2>&1; then

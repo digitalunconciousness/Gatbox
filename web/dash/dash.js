@@ -3021,9 +3021,10 @@
   const DISK_MEDIA = [["hdd", "HDD"], ["cf", "CF"], ["sd", "SD"], ["ssd", "SSD"]];
   const DISK_LABEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
   const DISK_DOING = {read: "READING", retry: "RETRYING", check: "CHECKING", write: "WRITING", format_check: "CHECKING", format: "FORMATTING", mame: "MAME CHECK OF",
-                      file: "FILING"};
+                      file: "FILING", import: "IMPORTING"};
 
-  const loadImages = () => api("GET", "/api/disk/images").then(r => { K.images = r.images; K.send = r.send; renderDisk(); }).catch(() => {});
+  const loadImages = () => Promise.all([api("GET", "/api/disk/images"), api("GET", "/api/disk/incoming").catch(() => null)])
+    .then(([r, inc]) => { K.images = r.images; K.send = r.send; K.incoming = inc; renderDisk(); }).catch(() => {});
   async function loadDisk() {
     let st;
     try { st = await api("GET", "/api/disk"); } catch (e) { return; }
@@ -3147,6 +3148,7 @@
     const c = el("div", "card");
     const what = r.op === "check" || r.op === "format_check" || r.op === "format" ? r.device : r.op === "write" ? `${base(r.image)} → ${r.device}`
                : r.op === "mame" ? base(r.image) : r.op === "file" ? `${base(r.image)} under ${machineWord(r.machine)}`
+               : r.op === "import" ? `${r.file} as ${machineWord(r.machine)}/${r.label}`
                : `${r.label || ""}${r.device ? " · " + r.device : ""}`;
     c.appendChild(el("h2", null, `${s.verify_only ? "VERIFYING" : DISK_DOING[r.op] || "WORKING"} ${what}`));
     const bar = el("div", "dk-bar"), fill = el("div");
@@ -3212,6 +3214,10 @@
       line(m.why, m.state === "match" ? "mut" : "warn");
       if (m.where && m.where.length) line("Where: " + m.where.slice(0, 6).map(([o, n]) => `${GB(o)} (${n.toLocaleString("en-US")} bytes)`).join(", ")
                                           + (m.places > 6 ? ` and ${m.places - 6} more` : ""), "mut");
+    } else if (s.op === "import" && s.state === "done") {
+      big("IMPORTED", "ok");
+      line(base((s.stored || {}).path || ""));
+      line(`${machineWord(s.machine)} · ${GB(s.bytes)} · SHA-1 ${(s.sha1 || "").slice(0, 8)} · queued for the archive`, "mut");
     } else if (s.op === "file" && s.state === "done") {
       big(`FILED UNDER ${machineWord(s.machine)}`, "ok");
       line(base(s.image));
@@ -3489,6 +3495,18 @@
           : `stopped: ${r.error || "no reason recorded"}${r.written ? " (the format had started)" : " (nothing was written)"}`)));
     B.appendChild(log);
   }
+  async function importFile(f) {
+    const m = await pickRosterMachine(`Which machine is ${f.name} from?`, null, true);
+    if (!m) return;
+    const media = await choose(`${f.name}: what is it an image of?`, "It is filed like a READ of that kind of drive.",
+                               DISK_MEDIA.map(([k, t], i) => [k, t, i === 0]));
+    if (!media) return;
+    const label = await keypad({title: "Its label (it becomes the file's name)", max: 40, value: f.label});
+    if (!label) return;
+    if (!DISK_LABEL.test(label)) return toast("A label is letters, digits, '.', '_' and '-' (up to 40)", "warn", 6000);
+    api("POST", "/api/disk/import", {file: f.name, machine: m.slug, label, media})
+      .then(() => toast(`IMPORT queued: ${f.name} → ${machineWord(m.slug)}/${label}`)).catch(fail);
+  }
   // The MAME CHD check (Task 3): what the sidecar's "mame" says, as a tag on the image and as the verdict's big word.
   const MAME_WORD = {match: ["MAME DISK: MATCH", "ok"], written: ["MAME DISK, WRITTEN TO", "cy"], other: ["NOT MAME'S DISK", "warn"],
                      shorter: ["SHORTER THAN MAME'S DISK", "warn"], no_reference: ["NO REFERENCE CHD", "mut"], no_disk: ["NO MAME DISK", "mut"]};
@@ -3498,14 +3516,33 @@
     c.appendChild(el("h2", null, "Images in the store"));
     if (!st.store.mounted) { c.appendChild(el("div", "mut", "Plug in the image store to see its images.")); return c; }
     if (!imgs) { c.appendChild(el("div", "mut", "Reading the store's list…")); return c; }
-    if (!imgs.length) { c.appendChild(el("div", "mut", "None yet: READ a drive and its image lands here.")); return c; }
+    // IMPORT: image files copied into the store's _incoming folder from a laptop (the owner, 2026-11-17)
+    const inc = (K.incoming && K.incoming.files) || [];
+    if (inc.length) {
+      const box = el("div", "dk-incoming");
+      box.appendChild(el("h3", null, `Waiting to import (${inc.length})`));
+      for (const f of inc) {
+        const r = el("div", "dk-img");
+        add(r, el("b", null, f.name + " "), el("span", "mut", GB(f.bytes)),
+            f.settled ? null : el("span", "tag warn", "STILL ARRIVING"));
+        if (S.local && f.settled) {
+          const b = el("button", "mini primary", "IMPORT");
+          b.disabled = st.busy;
+          b.addEventListener("click", () => importFile(f));
+          r.appendChild(b);
+        }
+        box.appendChild(r);
+      }
+      c.appendChild(box);
+    }
+    if (!imgs.length) { c.appendChild(el("div", "mut", inc.length ? "None in the store yet." : "None yet: READ a drive and its image lands here.")); return c; }
     for (const x of imgs.slice(0, 20)) {
       const sp = x.sending || {}, pct = sp.parts ? Math.floor(100 * (sp.have || 0) / sp.parts) : 0;
       const r = el("div", "dk-img"), arch = {pending: ["ARCHIVE PENDING", "mut"], uploaded: ["ARCHIVED", "ok"], none: ["NOT QUEUED (FILE UNDER queues it)", "mut"],
                                              sending: [sp.checking ? "ARCHIVE CHECKING IT" : `SENDING ${pct} %`, "cy"]}[x.archive];
       add(r, el("b", null, (x.label || base(x.image)) + " "),
           x.media ? el("span", "tag cy", x.media.toUpperCase()) : null,
-          el("span", "tag " + (x.reads === 2 ? "ok" : "mut"), x.reads === 2 ? "READ TWICE, MATCH" : "READ ONCE"),
+          x.imported ? el("span", "tag cy", "IMPORTED") : el("span", "tag " + (x.reads === 2 ? "ok" : "mut"), x.reads === 2 ? "READ TWICE, MATCH" : "READ ONCE"),
           arch ? el("span", "tag " + arch[1], arch[0]) : null,
           MAME_WORD[x.mame] ? el("span", "tag " + MAME_WORD[x.mame][1], MAME_WORD[x.mame][0]) : null,
           el("div", "mut", `${machineWord(x.machine)} · ${GB(x.bytes)} · ${stamp(x.started)} · SHA-1 ${(x.sha1 || "").slice(0, 8)}`

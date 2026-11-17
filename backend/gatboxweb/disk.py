@@ -347,6 +347,48 @@ def mame_request(body):
     return _queue({"op": "mame", "image": path, "machine": machine, "disks": disks})
 
 
+def incoming():
+    """GET /api/disk/incoming: the files waiting in the store's _incoming folder for IMPORT, and a label made from each name."""
+    if not dl.store_mounted():
+        return {"mounted": False, "files": []}
+    from gatboxlib import disks as D
+    rows = D.incoming()
+    for r in rows:
+        r["label"] = _import_label(r["name"])
+    return {"mounted": True, "folder": D.incoming_dir(), "files": rows}
+
+
+def _import_label(name):
+    stem = re.sub(r"\.(img|bin|raw|dd|iso)$", "", name, flags=re.I)
+    lab = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-._")[:40].rstrip("-._")
+    return lab if LABEL.match(lab or "") else "IMPORTED"
+
+
+def import_request(body):
+    """POST /api/disk/import {file, machine, label, media, note?}: IMPORT a waiting file, filed like a READ. A disk job: it hashes
+    the file and moves it into the store (the store is the job's to write)."""
+    body = _obj(body)
+    _store()
+    from gatboxlib import disks as D
+    name = body.get("file")
+    row = next((r for r in D.incoming() if r["name"] == name), None) if isinstance(name, str) else None
+    if row is None:
+        raise Bad(404, f"{name!r} isn't waiting in {D.INCOMING}")
+    if not row["settled"]:
+        raise Bad(409, f"{name} changed {row['age']:.0f} s ago: it may still be arriving")
+    if not body.get("machine"):
+        raise Bad(400, "machine: a roster slug, or unassigned")
+    machine = _machine(body)
+    label = body.get("label") or _import_label(name)
+    if not isinstance(label, str) or not LABEL.match(label):
+        raise Bad(400, "label: 1-40 of letters, digits, '.', '_', '-'")
+    media = body.get("media") or "hdd"
+    if media not in MEDIA:
+        raise Bad(400, "media: hdd, cf, sd or ssd")
+    return _queue({"op": "import", "file": name, "machine": machine, "label": label, "media": media,
+                   "realm": _realm(machine) if machine != "unassigned" else None, "note": str(body.get("note") or "")[:500]})
+
+
 def file_request(body):
     """POST /api/disk/file {image, machine}: FILE UNDER. Which machine a stored image is for, or "unassigned" (NOT ARCADE).
     A disk job, because the store is the job's to write; it changes the image's sidecar only."""
@@ -460,6 +502,8 @@ def _took(start, end):
 
 def _drive_text(i):
     i = i or {}
+    if i.get("imported"):
+        return f"imported from a file: {i['imported']}"
     name = f"{i.get('vendor') or ''} {i.get('model') or ''}".strip()
     if not name:
         return None

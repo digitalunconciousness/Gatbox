@@ -273,6 +273,51 @@ def main():
         check(f"FILE UNDER refuses: {why_}", code != 0 and why_ in out)
     code, out = disk("file", "-i", fu, "-m", "unassigned")          # leave it as it was for what follows
 
+    print("IMPORT (the owner, 2026-11-17: an image on the laptop, onto the box and the archive):")
+    inc = f"{STORE}/_incoming"
+    os.makedirs(inc, exist_ok=True)
+    cv = os.urandom(3 * MiB + 77)
+    open(f"{inc}/CarnEvil v1.0.3 HDD.img", "wb").write(cv)
+    open(f"{inc}/.partial-copy", "wb").write(b"x")
+    open(f"{inc}/still.img.part", "wb").write(b"x")
+    code, out = disk("import", "--json", GATBOX_IMPORT_SETTLE="0")
+    check("import with no file: lists what is waiting (hidden files and .part copies are not)",
+          code == 0 and [r["name"] for r in json.loads(out)] == ["CarnEvil v1.0.3 HDD.img"])
+    code, out = disk("import", "CarnEvil v1.0.3 HDD.img", "-m", "widget-wars", GATBOX_IMPORT_SETTLE="3600")
+    check("a file that changed within the settle time (a copy still arriving): refused, nothing moved",
+          code != 0 and "may still be arriving" in out and os.path.exists(f"{inc}/CarnEvil v1.0.3 HDD.img"))
+    code, out = disk("import", "CarnEvil v1.0.3 HDD.img", "-m", "widget-wars", "--json", GATBOX_IMPORT_SETTLE="0")
+    j = json.loads(out) if code == 0 else {}
+    stored = (j.get("stored") or {}).get("path", "")
+    day = time.strftime("%Y%m%d")
+    check("IMPORT: the label from the file's name, dated and named by its SHA-1 in the machine's folder; the file moved, not copied",
+          code == 0 and stored.endswith(f"/widget-wars/CarnEvil-v1.0.3-HDD_{day}_{hashlib.sha1(cv).hexdigest()[:8]}.img")
+          and open(stored, "rb").read() == cv and not os.path.exists(f"{inc}/CarnEvil v1.0.3 HDD.img"))
+    side_i = json.load(open(stored[:-4] + ".json")) if stored else {}
+    check("... its sidecar: imported from a file (no drive), both hashes, a fingerprint, archive pending",
+          side_i.get("source") == {"imported": "CarnEvil v1.0.3 HDD.img", "bytes": len(cv)} and side_i.get("imported") is True
+          and side_i.get("sha1") == hashlib.sha1(cv).hexdigest() and side_i.get("sha256") == hashlib.sha256(cv).hexdigest()
+          and side_i["fingerprint"]["nonzero"] > 0 and side_i["archive"] == {"state": "pending"} and side_i["media"] == "hdd")
+    check("... and queued for the archive like a READ",
+          any(json.loads(l)["sha256"] == side_i.get("sha256") for l in open(f"{STORE}/archive-queue.jsonl")))
+    _, lst_ = disk("list", "--json")
+    check("... the store's list shows it, marked imported", any(i.get("imported") == "CarnEvil v1.0.3 HDD.img" for i in json.loads(lst_)["images"]))
+    open(f"{inc}/again.img", "wb").write(cv)
+    code, out = disk("import", "again.img", "-m", "unassigned", GATBOX_IMPORT_SETTLE="0")
+    check("the same bytes imported again: refused, saying where they are, and the file left in _incoming",
+          code != 0 and "in the store already" in out and "widget-wars/CarnEvil-v1.0.3-HDD_" in out and os.path.exists(f"{inc}/again.img"))
+    os.remove(f"{inc}/again.img")
+    for args_, why_ in ((["../archive-queue.jsonl"], "isn't a file in the store's _incoming folder"),
+                        ([".partial-copy"], "isn't a file"), (["nope.img"], "isn't a file"),
+                        (["still.img.part", "-l", "bad label!"], "label:")):
+        code, out = disk("import", *args_, GATBOX_IMPORT_SETTLE="0")
+        check(f"IMPORT refuses {args_[0]!r}: {why_}", code != 0 and why_ in out)
+    os.symlink(f"{STORE}/archive-queue.jsonl", f"{inc}/link.img")
+    code, out = disk("import", "link.img", GATBOX_IMPORT_SETTLE="0")
+    check("IMPORT refuses a symlink (it could point anywhere)", code != 0 and "isn't a file" in out)
+    for n_ in ("link.img", ".partial-copy", "still.img.part"):
+        os.remove(f"{inc}/{n_}")
+
     print("the drive's own identity (Task 0, 2026-11-06: the dock's INQUIRY names the dock):")
     usb_disk("sdk", 3 * MiB, "XinTop", "XT-U33502", port=11, devnum="8:160", data=os.urandom(3 * MiB),
              ata=("WDC WD800JD-75MSA1", "WD-WIDGET0001"))
@@ -1080,7 +1125,7 @@ def web_side(image):
     wenv = dict(env(), GATBOX_WEB_PORT=str(port), STATE_DIRECTORY=f"{w}/ctrl", CACHE_DIRECTORY=f"{w}/cache",
                 GATBOX_LOGDIR=f"{w}/log", GATBOX_RUNDIR=f"{w}/run", GATBOX_DATA=f"{w}/data",
                 GATBOX_SYNC_STATE=f"{w}/sync", GATBOX_DISK_SPOOL=f"{w}/spool", GATBOX_DUMP_SPOOL=f"{w}/nodump",
-                MPLCONFIGDIR=f"{w}/cache/mpl", GATBOX_MAME_ROMS=f"{w}/data/mame-roms.json")
+                MPLCONFIGDIR=f"{w}/cache/mpl", GATBOX_MAME_ROMS=f"{w}/data/mame-roms.json", GATBOX_IMPORT_SETTLE="2")
     web = subprocess.Popen(["python3", os.path.join(REPO, "backend/gatbox-web")], env=wenv,
                            stdout=open(f"{w}/web.log", "w"), stderr=subprocess.STDOUT)
     stop = threading.Event()
@@ -1091,7 +1136,7 @@ def web_side(image):
                 bad = {"FAKE_DDRESCUE_BAD": "0:512"} if os.path.exists(f"{w}/bad") else {}
                 heal = {"FAKE_DDRESCUE_HEAL": "1"} if os.path.exists(f"{w}/heal") else {}
                 subprocess.run(["python3", TOOL, "--job", f"{w}/spool/request.json", "--status", f"{w}/spool/status.json"],
-                               env=env(GATBOX_API=B, **bad, **heal), capture_output=True, timeout=120, check=False)
+                               env=env(GATBOX_API=B, GATBOX_IMPORT_SETTLE="2", **bad, **heal), capture_output=True, timeout=120, check=False)
             time.sleep(0.2)
     threading.Thread(target=runner, daemon=True).start()
 
@@ -1370,6 +1415,32 @@ def web_side(image):
         ff = done()
         check("... and back under widget-wars", code == 202 and ff.get("state") == "done"
               and any(i["image"] == image and i["machine"] == "widget-wars" for i in call("GET", "/api/disk/images")[1]["images"]))
+        # IMPORT through gatbox-web (the owner, 2026-11-17)
+        inc_ = f"{STORE}/_incoming"
+        os.makedirs(inc_, exist_ok=True)
+        blob = os.urandom(MiB + 3)
+        open(f"{inc_}/Gizmo Racer.bin", "wb").write(blob)
+        code, r = call("GET", "/api/disk/incoming")
+        row = next((x for x in r.get("files", []) if x["name"] == "Gizmo Racer.bin"), {})
+        check("GET /api/disk/incoming: the waiting file, its size, a label made from its name, not settled yet",
+              code == 200 and row.get("bytes") == len(blob) and row.get("label") == "Gizmo-Racer" and row.get("settled") is False)
+        check("POST /api/disk/import while it is still arriving: 409", call("POST", "/api/disk/import", {"file": "Gizmo Racer.bin", "machine": "unassigned"})[0] == 409)
+        time.sleep(2.2)
+        check("POST /api/disk/import: a file that isn't waiting 404, no machine 400, a bad label 400, a bad media 400",
+              [call("POST", "/api/disk/import", {"file": "nope.bin", "machine": "unassigned"})[0],
+               call("POST", "/api/disk/import", {"file": "Gizmo Racer.bin"})[0],
+               call("POST", "/api/disk/import", {"file": "Gizmo Racer.bin", "machine": "unassigned", "label": "a b"})[0],
+               call("POST", "/api/disk/import", {"file": "Gizmo Racer.bin", "machine": "unassigned", "media": "tape"})[0]] == [404, 400, 400, 400])
+        code, r = call("POST", "/api/disk/import", {"file": "Gizmo Racer.bin", "machine": "unassigned", "media": "cf"})
+        im = done()
+        check("POST /api/disk/import -> 202; the job imports it as NOT ARCADE, and the list shows it imported",
+              code == 202 and r["op"] == "import" and im.get("op") == "import" and im.get("state") == "done"
+              and any(i.get("imported") == "Gizmo Racer.bin" and i["machine"] == "unassigned" and i["media"] == "cf"
+                      for i in call("GET", "/api/disk/images")[1]["images"])
+              and call("GET", "/api/disk/incoming")[1]["files"] == [])
+        gi = next(i for i in call("GET", "/api/disk/images")[1]["images"] if i.get("imported") == "Gizmo Racer.bin")
+        code, rec_i = call("GET", f"/api/disk/record?image={gi['image']}")
+        check("... its job record says where it came from: imported from a file", code == 200 and "imported from a file: Gizmo Racer.bin" in json.dumps(rec_i))
         mount_table(store=False)
         code, _ = call("GET", f"/api/disk/record?image={image}")
         mount_table()

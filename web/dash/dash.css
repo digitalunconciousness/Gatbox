@@ -16,7 +16,9 @@ body::before{content:"";position:fixed;inset:0;z-index:50;pointer-events:none;
 button{font:600 17px/1.1 var(--disp);color:var(--fg);background:var(--panel);border:1px solid var(--line);
   border-radius:8px;min-height:var(--tap);padding:6px 14px;cursor:pointer;letter-spacing:.03em}
 button:active{border-color:var(--mag)}
-button:disabled,button.off{opacity:.38;cursor:default}
+button:disabled,button.off{opacity:.38;cursor:not-allowed}
+/* a keyboard or a phone's tab key shows where it is (the 7" is touch, so it never sees this) */
+button:focus-visible,a:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
 a{color:var(--cyan)}
 .mut{color:var(--mut)}.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.cy{color:var(--cyan)}
 .hide{display:none!important}
@@ -46,7 +48,9 @@ nav button{width:100%;min-height:64px;font-size:14px;padding:4px;display:flex;fl
   justify-content:center;gap:2px}
 nav button small{font:11px var(--mono);color:var(--mut);letter-spacing:0}
 nav button.on{border-color:var(--mag);color:var(--mag);box-shadow:0 0 10px rgba(255,46,159,.35) inset}
-nav button.dim{opacity:.4}
+/* DUMP and DISK when their hardware isn't there: still a tab that opens, so it keeps its full button and says why in its
+   status line; only the name goes quiet. (It was faded to 40 %, which read as a disabled button: 2026-11-17's review.) */
+nav button.dim{color:var(--mut)}
 main{position:relative;overflow:hidden;padding:10px 12px}
 .view{display:none;height:100%}
 .view.on{display:flex;flex-direction:column;gap:8px}
@@ -142,7 +146,8 @@ ul.plain{margin:4px 0;padding-left:18px}
 .seg button{flex:1}
 .seg button.on{color:var(--mag);border-color:var(--mag);box-shadow:0 0 10px rgba(255,46,159,.35) inset}
 .idline{font:15px var(--mono);min-height:22px}
-button.primary{border-color:var(--mag)}
+/* the one action a card is for: filled, so it stands apart from the plain buttons beside it */
+button.primary{border-color:var(--mag);background:rgba(255,46,159,.16)}
 /* MANUALS: the spec sheet and the page viewer */
 .spec-t td{vertical-align:top;padding-bottom:8px}
 .spec-t td.rail{font:600 17px/1.3 var(--disp);white-space:nowrap}
@@ -278,6 +283,7 @@ html.box table.cf-t{font-size:15px}
 /* hold-to-act (EXIT KIOSK, SHUT DOWN) */
 .hold{position:relative;overflow:hidden}
 .hold::after{content:"";position:absolute;left:0;bottom:0;height:4px;width:0;background:var(--bad)}
+.hold.bad{border-color:var(--bad)}
 .hold.arm{color:var(--bad);border-color:var(--bad);box-shadow:0 0 10px rgba(255,77,109,.45)}
 .hold.arm::after{width:100%;transition:width var(--ms,1500ms) linear}
 

@@ -3242,6 +3242,10 @@
     } else {
       big(s.op === "check" ? "TARGET REFUSED" : s.op === "format_check" ? "FORMAT REFUSED" : s.op === "format" ? (s.written ? "FAILED" : "NOT FORMATTED")
           : s.op === "write" ? (s.written ? "FAILED" : "NOT WRITTEN") : "STOPPED", "bad");
+      // When it happened: this card is the last job's until the next one, and "another disk read or write is running" an hour
+      // later read as busy now (the audit, 2026-11-17).
+      const when = s.finished_at || s.at;
+      if (when) line(`the last job, at ${hms(when, true)}`, "mut");
       line(s.error || "");
       if (s.hint) line("→ " + s.hint, "mut");
       if (s.op === "format" && s.written) line("The format had started: the drive has no usable filesystem now. Format it again.", "warn");

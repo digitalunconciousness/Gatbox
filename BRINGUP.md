@@ -67,6 +67,15 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       to the archive; NOT THIS sets it aside for good. Hard rule 12 holds: only a number read off the game's own manual can be confirmed
       this way (a made-up one is refused). System change: `tesseract-ocr` in the apt list and one MANIFEST line (`railread.py`); no unit
       changes. `test-railread.sh`: 34, `test-library-web.sh`: 140, `test-dash.sh`: 384, `test-bootstrap.sh`: 195.
+- [x] **IMPORT** (the owner, 2026-11-17: "an image for carnevil on my laptop that I want on the box and archive"; built that day,
+      **not installed**). Copy an image file into the store's `_incoming` folder (`scp FILE <user>@gatbox.local:/srv/gatbox/disks/_incoming/`;
+      the disk job makes the folder 2775, group gatbox-disk-queue, which the owner's login is in). The DISK tab lists what is waiting
+      (STILL ARRIVING until it has not changed for 60 s) with IMPORT: a machine or NOT ARCADE, what it is an image of, a label from the
+      file's name. The disk job (`op: import`; `gatbox-disk import [FILE] -m SLUG`) hashes it (SHA-1 and SHA-256), fingerprints its first
+      64 MiB, renames it into the machine's folder as `<label>_<date>_<sha1[:8]>.img` with a sidecar that says "imported from a file" (no
+      drive, so it can never be taken for the drive an image came from) and queues it for the archive. The same bytes already in the
+      store: nothing moves, and it says where. Hidden files, `.part` files and symlinks are not imports. No system config.
+      `test-disk.sh`: 216, `test-dash.sh`: 383.
 - [ ] **Owner requests (2026-09-29)**, off-spec, one at a time with her OK on each design:
       [x] + ADD MACHINE / EDIT / EXPORT ROSTER, and CAPTURE → SAVE READING (code + tests/test-roster.sh, test-dash)
       [x] installed (d578961) [x] each machine's ROM checklist from MAME's own hash data, no ROM sets downloaded

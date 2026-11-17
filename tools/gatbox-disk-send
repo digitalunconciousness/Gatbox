@@ -164,6 +164,13 @@ def send_one(arc, st, img, save):
     cur = {"sha256": sha, "image": img["image"], "bytes": size, "parts": b.get("parts"), "have": b.get("have", 0)}
     st["current"] = cur
     save(force=True)
+    # The journal shows the send moving, a line every 5 %: a run is one "Starting" line in systemd until it ends, which for an
+    # 80 GB image is hours (the Pi, 2026-11-17).
+    parts = max(cur["parts"] or 1, 1)
+    logged = [cur["have"] * 100 // parts // 5 * 5]
+    if b.get("state") != "stored":
+        log(f"sending {img['image']} ({size:,} bytes, {parts} part{'' if parts == 1 else 's'}"
+            + (f", {cur['have']} already there)" if cur["have"] else ")"))
     with open(path, "rb") as f:
         while b.get("state") in ("open", "failed"):
             missing = b.get("missing") or []
@@ -181,6 +188,10 @@ def send_one(arc, st, img, save):
                     break
                 cur["have"] += 1
                 save()
+                pct = cur["have"] * 100 // parts
+                if pct >= logged[0] + 5:
+                    logged[0] = pct // 5 * 5
+                    log(f"{img['image']}: {logged[0]} % ({cur['have']} of {parts} parts)")
             else:
                 code, b = arc.call("GET", f"/api/v1/disks/{sha}")
                 if code != 200:
@@ -193,6 +204,7 @@ def send_one(arc, st, img, save):
             raise Stop("error", f"finishing {img['image']}: HTTP {code}: {b.get('error', '')}")
         cur["checking"] = True
         save(force=True)
+        log(f"{img['image']}: every part sent; the archive is reading it back to check it")
         end = time.monotonic() + CHECK_WAIT
         while b.get("state") == "checking" and time.monotonic() < end:
             time.sleep(POLL)

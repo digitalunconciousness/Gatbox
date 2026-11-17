@@ -8,6 +8,13 @@ not started). These headings were called "Phase 1/2" until 2026-09-24.
 
 ## Phase 2 — progress (spec: `docs/phase2-handoff.md`)
 
+> **2026-11-17: everything on main is installed on the Pi.** The owner ran the bootstrap at main c0dc0bc (it found 10 files to
+> change, so all else was already in place). Every deck-side entry below still marked "built, not installed" is installed as of
+> that run: the drive browser's F2 to F4d and COMPARE, EARLIER COPIES, RESTORE (one real RESTORE done on the 7"), FORMAT (not
+> yet run on a drive), the MAME CHECK (`mame-tools` in; not yet run with a real CHD), NOT ARCADE and FILE UNDER, the ROM-list
+> job (`gatbox-mame-roms.path`) and `gatbox-disk-send`. The archive's disk images are installed on its container the same night.
+> The entries are left as written, as the record of when each was built.
+
 Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardware).
 
 - [x] **M0 orient** (2026-09-28): git repo + baseline `83ba066`; installed files == bootstrap payload (nothing to
@@ -926,13 +933,17 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         removed when the line goes), so no address range is typed into the repo. It waits for a disk job, stops between
         parts when one is queued, resumes at the parts the archive has, and keeps its own state, which the DISK tab reads (ARCHIVED, SENDING n %,
         and a line under the images). `test-disk-send.sh`: 25, `test-archive-disks.sh`: 29, `test-archive-install.sh`: 42, `test-bootstrap.sh`: 193,
-        `test-dash.sh`: 380; 6 breakages each fail a test (disk calls on the tunnel, no room check, no stop for a disk job, a public address
+        `test-dash.sh`: 380; 2026-11-17 after: a progress line every 5 % in its journal (`test-disk-send.sh`: 26), and the bootstrap's
+        `--check` under sudo is about the sudo user, not root (`test-bootstrap.sh`: 194). 6 breakages each fail a test (disk calls on the tunnel, no room check, no stop for a disk job, a public address
         allowed, FILE UNDER not queueing; and any address let into the drop-in).
   - [x] Fix from the owner's container (2026-11-17): with `ARCHIVE_DISKS` on a fresh Proxmox mount point (owned by root), the archive
         stopped answering at all, and install.sh still said it was running. install.sh now makes an existing folder the service's (not only
         a missing one) and asks the archive's health before it says "running"; and the server starts without disk images when it can't use
         the folder, the disk calls saying why. `test-archive-disks.sh`: 31.
-  - [ ] ⏸ Owner: the archive side first (`archive/RUNBOOK.md` step 6b: a folder for the images outside `/srv/archive`, `ARCHIVE_DISKS`
+  - [x] ⏸ Owner, done 2026-11-17: an 800 GB volume of its own for the images (`backup=0`), `ARCHIVE_DISKS` and the private
+        listener set, install.sh, the deck's token check (`{"images": []}`), `ARCHIVE_LAN_URL`, the bootstrap; the first send (the donor
+        drive's image) began that night. Found on the way: the new mount point was root's, so the archive could not start (fixed by
+        hand, and in install.sh by #87). The steps were: the archive side first (`archive/RUNBOOK.md` step 6b: a folder for the images outside `/srv/archive`, `ARCHIVE_DISKS`
         and the private listener in archive.conf, install.sh, the `curl` check from the deck), then `ARCHIVE_LAN_URL` in the deck's
         archive.conf, then the bootstrap (the diff is in the PR: a new user, a unit and its timer, the drop-in from ARCHIVE_LAN_URL, one line in gatbox-web.service).
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
@@ -1230,7 +1241,7 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         within a day) and `gatbox-mame-roms --job` answers from MAME's driver list, hashes only, no network; gatbox-web makes
         the game's `rom_list` (create-only). `test-library-web.sh` 121, `test-libsync.sh` 50, `test-sync-library.sh` 42,
         `test-mame.sh` 37, `test-dash.sh` 164 (needs matplotlib: run here in a venv; screenshots 31a-31f, 32a-32b); 15 of 15 guards broken on purpose fail a test (one first went uncaught and got a stricter test)
-  - [ ] ⏸ Owner: the D4 install diff. **Wired into the bootstrap 2026-11-16** (the owner: "wire in the ROM-list job"), not installed:
+  - [x] ⏸ Owner: the D4 install diff (installed with the bootstrap, 2026-11-17). **Wired into the bootstrap 2026-11-16** (the owner: "wire in the ROM-list job"), not installed:
         read the PR, then run the bootstrap. Items 1 to 4 below are now in it, plus the manifest lines for the two units,
         `svc gatbox-mame-roms.path`, and the `--check` lines for the group, the spool and the enable; the units lost their NOT INSTALLED
         header. `test-bootstrap.sh`: 172. Before that the unit list on the Pi had no `gatbox-mame-roms` unit. 1.

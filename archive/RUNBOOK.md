@@ -401,6 +401,34 @@ totals first (`dry run: push 118 rom_list, 2 rom_image; pull nothing; ...`), the
 and counts the rest, then how many files it would send and fetch. The files step can take a minute and says so.
 `GATBOX_SYNC_DRYRUN=full` names every record. The real run always names every record it moves, in the journal.
 
+## 6b. The deck's disk images (optional; the home network only)
+
+The deck sends every disk image it reads here, but only over the private listener (step 5), never the tunnel
+(`docs/plans/2026-11-17-disk-image-drain.md`). This side is off until you name a folder for them. On the container:
+
+1. **Pick the folder.** It holds every image the deck reads (the donor drive alone is 80 GB), so it wants the room. Keep it
+   **outside** `ARCHIVE_DATA` (`/srv/archive`) unless you want every Proxmox backup of the data to carry the images too:
+   a mount point of its own, e.g. `/srv/archive-disks`, from a Proxmox mount point you add the way step 1 added the data.
+2. **Set it** in `/etc/gatbox-archive/archive.conf` (an archive installed before this needs both lines added by hand):
+   ```
+   ARCHIVE_DISKS=/srv/archive-disks
+   ARCHIVE_DISK_RESERVE=21474836480
+   ```
+   The reserve is what the images must leave free there (20 GiB); an image that won't fit is refused, and the deck says so.
+   `ARCHIVE_PRIVATE_BIND` and `ARCHIVE_PRIVATE_ALLOW` (step 5) must be set too, and the deck must be inside `ARCHIVE_PRIVATE_ALLOW`.
+3. **Run `sudo bash archive/install.sh --check`, then without `--check`.** It creates the folder (owned by the service) and adds
+   `ReadWritePaths=` for it to the service's drop-in, beside `IPAddressAllow=`; the archive restarts because `archive.conf` changed.
+4. **Check it from the deck** (or any machine on the home network), with the deck's device token:
+   ```bash
+   read -rsp "deck token: " T; echo
+   curl -sS --max-time 10 -H "Authorization: Bearer $T" "http://<CONTAINER_IP>:8081/api/v1/disks"; echo; unset T
+   ```
+   `{"images": []}` is right. `503 ... disk images are off here` means `ARCHIVE_DISKS` isn't set or install.sh hasn't run
+   since. The same call to `https://<HOSTNAME>` answers 404: the tunnel never takes images.
+
+Nothing here deletes an image. A stored one is `<folder>/stored/<first two hex>/<sha256>.img`, with the deck's sidecar beside it
+as `.json`.
+
 ## 7. The apps (cabcrawl and the tracker)
 
 Each app has its own steps for this: the "game library" section of cabcrawl's `deploy/RUNBOOK.md`, and section 12 of the

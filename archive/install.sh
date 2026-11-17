@@ -49,6 +49,7 @@ archive/gatboxarchive/cli.py                   /usr/local/lib/gatbox/gatboxarchi
 archive/gatboxarchive/pages.py                 /usr/local/lib/gatbox/gatboxarchive/pages.py          644
 archive/gatboxarchive/server.py                /usr/local/lib/gatbox/gatboxarchive/server.py         644
 archive/gatboxarchive/tokens.py                /usr/local/lib/gatbox/gatboxarchive/tokens.py         644
+archive/gatboxarchive/diskstore.py             /usr/local/lib/gatbox/gatboxarchive/diskstore.py      644
 archive/static/archive.css                     /usr/local/share/gatbox-archive/static/archive.css    644
 archive/static/archive.js                      /usr/local/share/gatbox-archive/static/archive.js     644
 archive/gatbox-archive                         /usr/local/bin/gatbox-archive                         755
@@ -121,14 +122,27 @@ if [ "$WANT_FONTS" = 1 ]; then
 fi
 
 private_allow=""
+disks_dir=""
 if [ -f "$PREFIX$CONF" ]; then
     private_allow=$(sed -n 's/^ARCHIVE_PRIVATE_ALLOW=//p' "$PREFIX$CONF" | head -1 | tr -d ' "')
+    disks_dir=$(sed -n 's/^ARCHIVE_DISKS=//p' "$PREFIX$CONF" | head -1 | tr -d ' "')
 fi
+case "$disks_dir" in
+    "") ;;
+    /*) ;;
+    *) echo "ARCHIVE_DISKS must be an absolute path, got '$disks_dir'" >&2; exit 1 ;;
+esac
+# The drop-in: the private network the listener may answer, and the deck's disk images folder (the unit may write only /srv/archive).
 want_dropin=""
-[ -n "$private_allow" ] && want_dropin=$(printf '[Service]\nIPAddressAllow=%s\n' "$private_allow")
+if [ -n "$private_allow" ] || [ -n "$disks_dir" ]; then
+    want_dropin="[Service]"
+    [ -n "$private_allow" ] && want_dropin=$(printf '%s\nIPAddressAllow=%s' "$want_dropin" "$private_allow")
+    [ -n "$disks_dir" ] && want_dropin=$(printf '%s\nReadWritePaths=%s' "$want_dropin" "$disks_dir")
+fi
 have_dropin=""
 [ -f "$PREFIX$DROPIN" ] && have_dropin=$(cat "$PREFIX$DROPIN")
-[ "$want_dropin" = "$have_dropin" ] || DIFFS+=("drop-in    $DROPIN (${private_allow:-removed})")
+[ "$want_dropin" = "$have_dropin" ] || DIFFS+=("drop-in    $DROPIN (${want_dropin:+$(printf '%s' "$want_dropin" | tail -n +2 | tr '\n' ' ')}${want_dropin:-removed})")
+[ -n "$NO_SYSTEM" ] || [ -z "$disks_dir" ] || [ -d "$disks_dir" ] || DIFFS+=("create     $disks_dir (the deck's disk images)")
 ! conf_changed || DIFFS+=("restart    gatbox-archive (archive.conf changed since the service was last started)")
 
 if [ -z "$NO_SYSTEM" ]; then
@@ -158,6 +172,9 @@ if [ -z "$NO_SYSTEM" ]; then
     getent passwd gatbox-archive >/dev/null || {
         useradd --system --home-dir "$DATA" --no-create-home --shell /usr/sbin/nologin gatbox-archive && log "user gatbox-archive"; }
     install -d -m 0750 -o gatbox-archive -g gatbox-archive "$DATA"
+    if [ -n "$disks_dir" ] && [ ! -d "$disks_dir" ]; then
+        install -d -m 0750 -o gatbox-archive -g gatbox-archive "$disks_dir" && log "created $disks_dir (the deck's disk images)"
+    fi
 fi
 
 # --- 3: files -----------------------------------------------------------------------------------------------------------------
@@ -183,7 +200,7 @@ if [ ! -f "$PREFIX$CONF" ]; then
 fi
 if [ "$want_dropin" != "$have_dropin" ]; then
     if [ -n "$want_dropin" ]; then
-        mkdir -p "$(dirname "$PREFIX$DROPIN")" && printf '%s\n' "$want_dropin" > "$PREFIX$DROPIN" && log "drop-in $DROPIN: IPAddressAllow=$private_allow"
+        mkdir -p "$(dirname "$PREFIX$DROPIN")" && printf '%s\n' "$want_dropin" > "$PREFIX$DROPIN" && log "drop-in $DROPIN: $(printf '%s' "$want_dropin" | tail -n +2 | tr '\n' ' ')"
     else
         rm -f "$PREFIX$DROPIN" && log "removed $DROPIN"
     fi

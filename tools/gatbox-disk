@@ -475,16 +475,13 @@ class Read(Work):
         os.remove(part)
         os.replace(mapf, base + ".map")
         self.info["stored"] = {"path": base + ".img", "new": True}
-        # A drive that is not a machine's (an archive drive, a donor, someone's old disk) is never queued for the archive: the queue
-        # is how a machine's image would reach its hub, and a personal drive's image must never go anywhere without a yes. Nothing
-        # reads the queue today (checked 2026-11-15), and this keeps it that way for these.
-        for_machine = self.machine != "unassigned"
-        self.info["archive"] = {"state": "pending"} if for_machine else {"state": "none", "why": "not for a machine"}
+        # Every image is queued for the archive, a machine's or not (the owner, 2026-11-17: "everything", sent over the home
+        # network only: docs/plans/2026-11-17-disk-image-drain.md). It waited for that yes until then.
+        self.info["archive"] = {"state": "pending"}
         with open(os.open(base + ".json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644), "w") as f:
             json.dump(self.sidecar(), f, indent=1)
         os.remove(state)
-        if for_machine:
-            queue(sha1, self.info["sha256"], base + ".img", self.machine)
+        queue(sha1, self.info["sha256"], base + ".img", self.machine)
         self.step("store", base + ".img", progress=1.0)
 
     def sidecar(self):
@@ -1321,6 +1318,38 @@ def mame_check(image, disks, w):
         os.close(lock)
 
 
+def file_under(image, machine, realm, w):
+    """FILE UNDER: which machine a stored image is for, or none ("unassigned": NOT ARCADE on the DISK tab). Changes the sidecar
+    only: the image stays where it is (its folder is where it was read, and the drive browser's index and thumbnails are keyed by
+    it). An image that was kept off the archive queue before 2026-11-17 is queued now. -> the sidecar's new fields."""
+    if machine != "unassigned" and not SLUG.match(machine):
+        raise Stop(f"machine: not a roster slug: {machine!r}")
+    require_store()
+    lock = take_lock()
+    try:
+        img, side = image_in_store(image)
+        was = side.get("machine") or "unassigned"
+        if was == machine:
+            w.info.update(op="file", image=img, machine=machine, filed=None)
+            w.step("done", f"already filed under {machine}", progress=1.0)
+            return {"machine": machine, "changed": False}
+        side["machine"], side["realm"] = machine, realm
+        side.setdefault("filed", []).append({"from": was, "to": machine, "at": round(time.time(), 3), "date": now_iso()})
+        if (side.get("archive") or {}).get("state") in (None, "none"):
+            side["archive"] = {"state": "pending"}
+        sp = img[:-4] + ".json"
+        with open(sp + ".tmp", "w") as f:
+            json.dump(side, f, indent=1)
+        os.replace(sp + ".tmp", sp)
+        if side["archive"]["state"] == "pending" and side.get("sha256"):
+            queue(side.get("sha1"), side["sha256"], img, machine)
+        w.info.update(op="file", image=img, machine=machine, filed={"from": was, "to": machine})
+        w.step("done", f"filed under {machine} (was {was})", progress=1.0)
+        return {"machine": machine, "changed": True, "from": was}
+    finally:
+        os.close(lock)
+
+
 # --- the terminal ---------------------------------------------------------------------------------------------------------
 
 def show_list(as_json):
@@ -1403,6 +1432,9 @@ def run_job(request, status):
                 w.info.update(base, image=req.get("image"))
                 disks = {k: v for k, v in (req.get("disks") or {}).items() if isinstance(v, dict)} if isinstance(req.get("disks"), dict) else {}
                 mame_check(str(req.get("image")), disks, w)
+            elif op == "file":
+                w.info.update(base, image=req.get("image"))
+                file_under(str(req.get("image")), machine, req.get("realm"), w)
             elif op == "format_check":
                 w.info.update(base, device=req.get("device"))
                 w.step("check", f"{req.get('device')} before a format", progress=0.1)
@@ -1465,6 +1497,10 @@ def main():
             p.add_argument("--verify-only", action="store_true", help="it already holds the image: read it back twice")
     p = sub.add_parser("mame", help="the MAME CHD check of an image (reads only)")
     p.add_argument("-i", "--image", required=True)
+    p.add_argument("--json", action="store_true")
+    p = sub.add_parser("file", help="which machine a stored image is for (only its sidecar changes)")
+    p.add_argument("-i", "--image", required=True)
+    p.add_argument("-m", "--machine", required=True, help="a roster slug, or unassigned (not an arcade drive)")
     p.add_argument("--json", action="store_true")
     p = sub.add_parser("chd", help="the reference CHDs in the store's _chd/ folder")
     p.add_argument("--json", action="store_true")
@@ -1534,6 +1570,14 @@ def main():
         except CHD.ChdError as e:
             return report_stop(Stop(str(e)), args.json)
         print(json.dumps(res) if args.json else f"\nMAME: {res['state'].upper()}: {res['why']}")
+        return 0
+    if args.cmd == "file":
+        try:
+            res = file_under(args.image, args.machine, None, Work(None, say))
+        except Stop as s:
+            return report_stop(s, args.json)
+        print(json.dumps(res) if args.json else (f"filed under {res['machine']} (was {res['from']})" if res["changed"]
+                                                  else f"already filed under {res['machine']}"))
         return 0
     if args.cmd in ("format-check", "format"):
         try:

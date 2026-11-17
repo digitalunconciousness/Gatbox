@@ -21,6 +21,13 @@ ARCHIVE_PEOPLE=
 # 2026-11-04) and the archive reads the email claim from it. A header holding a bare address works too.
 ARCHIVE_IDENTITY_HEADER=Cf-Access-Jwt-Assertion
 
+# Optional: the deck's disk images (docs/plans/2026-11-17-disk-image-drain.md). Empty = off. A folder for them, sent over the
+# private listener above only (never the tunnel): set ARCHIVE_PRIVATE_BIND too. Put it outside ARCHIVE_DATA unless the backups of
+# the data are meant to carry every image. install.sh creates it and lets the service write there. ARCHIVE_DISK_RESERVE: the bytes
+# the images must leave free in it (20 GiB).
+ARCHIVE_DISKS=
+ARCHIVE_DISK_RESERVE=21474836480
+
 # The largest file taken, in bytes (400 MB, the deck's own fetch limit).
 ARCHIVE_MAX_FILE=419430400
 

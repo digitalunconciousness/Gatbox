@@ -520,6 +520,34 @@ def main():
     check("search again: the game is already in the library, found by its MAME set; its natural key is taken, so a new one would get the maker",
           again["in_library"] == "pac-man" and again["key"] == "pac-man-namco-midway-license")
 
+    print("SET MAME SET: a game made without one gets one (the audit, 2026-11-17: carnevil could never be given its set):")
+    c, g = call("POST", "/api/library/games", {"title": "SegaSonic The Hedgehog", "key": "segasonic", "kind": "video"})
+    check("a game added by hand has no MAME set", c == 201 and g["mame"] is None)
+    c, g = call("PUT", "/api/library/games/segasonic/mame", {"set": "sonicp"})
+    mm = L.Library(LIB, create=False).get("mame", "segasonic")
+    check("SET MAME SET with a clone: 200, stored as its parent (as FIND GAME does), marked for a dump to settle",
+          c == 200 and g["mame"] == "sonic" and mm["data"]["set"] == "sonic" and mm["data"]["status"] == "check")
+    check("... and the ROM-list job is asked for it (the chips and disks MAME CHECK reads)",
+          {"key": "segasonic", "set": "sonic"} in get("/api/library/mame")["waiting"])
+    c, r = call("PUT", "/api/library/games/segasonic/mame", {"set": "area51"})
+    check("a game that already has a set keeps it: 409, naming it", c == 409 and "sonic" in r["error"]
+          and L.Library(LIB, create=False).get("mame", "segasonic")["data"]["set"] == "sonic")
+    call("POST", "/api/library/games", {"title": "Another Pac", "key": "another-pac", "kind": "video"})
+    check("a set that is another game's: 409, naming the game; a set MAME doesn't have: 400; no set: 400; no such game: 404",
+          [call("PUT", "/api/library/games/another-pac/mame", {"set": "pacman"})[0],
+           call("PUT", "/api/library/games/another-pac/mame", {"set": "nosuchset"})[0],
+           call("PUT", "/api/library/games/another-pac/mame", {})[0],
+           call("PUT", "/api/library/games/nope/mame", {"set": "area51"})[0]] == [409, 400, 400, 404]
+          and "pac-man" in call("PUT", "/api/library/games/another-pac/mame", {"set": "pacman"})[1]["error"])
+    import http.client as _hc
+    _o = _hc.HTTPConnection("127.0.0.1", PORT, timeout=20, source_address=("127.0.0.2", 0))
+    _o.request("PUT", "/api/library/games/another-pac/mame", body=json.dumps({"set": "area51"}), headers={"Content-Type": "application/json"})
+    _r = _o.getresponse()
+    _r.read()
+    _o.close()
+    check("from anywhere but the Pi's own screen: 403, nothing set", _r.status == 403
+          and L.Library(LIB, create=False).get("mame", "another-pac") is None)
+
     print("linking a machine to a game:")
     c, r = call("POST", "/api/library/games/widget-wars/machines", {"slug": "ws-9"})
     check("a machine already linked to another game: 409, naming it; nothing changed", c == 409 and "ws-9" in r["error"]

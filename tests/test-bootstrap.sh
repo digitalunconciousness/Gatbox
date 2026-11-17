@@ -394,6 +394,12 @@ check "--check: an empty disks.conf (the state before the drive is formatted): n
 
 bash "$BOOT" --check > "$T/check" 2>&1; rc=$?
 check "--check runs without root (exit 0 or 3)" '[ $rc = 0 ] || [ $rc = 3 ]'
+# Under sudo, --check is about the sudo user's account (as the real run is), not root's (the Pi, 2026-11-17: it listed
+# /root/.config/autostart files and "group root += ...").
+SUDO_USER=nobody bash "$BOOT" --check > "$T/check-sudo" 2>&1
+NOHOME=$(getent passwd nobody | cut -d: -f6)
+check "--check under sudo: the user files and groups are the sudo user's, never root's" \
+    '! grep -qE "/root/\.config|group      root \+=" "$T/check-sudo" && grep -qE "group      nobody \+= gatbox-disk-queue" "$T/check-sudo" && grep -qF "$NOHOME/.config/autostart/gatbox-kiosk.desktop" "$T/check-sudo"'
 # Without root the script refuses at its first check. As root it would go on and run for real (on a Pi, `sudo bash
 # tests/test-bootstrap.sh` has everything it asks for), so this is not run as root.
 if [ "$(id -u)" = 0 ]; then

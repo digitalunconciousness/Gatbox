@@ -128,6 +128,10 @@ def run(tmp):
     check("... the bytes on the archive are the store's", open(f"{tmp}/adisks/stored/{a_sha[:2]}/{a_sha}.img", "rb").read() == a
           and open(f"{tmp}/adisks/stored/{b_sha[:2]}/{b_sha}.img", "rb").read() == b)
     check("... oldest first", out.index("WW-HDD") < out.index("CAMERA-CARD"))
+    check("... the journal shows it moving: a start line, progress in 5 % steps, and the archive's check",
+          "sending widget-wars/WW-HDD.img (" in out and "widget-wars/WW-HDD.img: 100 % (3 of 3 parts)" in out
+          and "1 part)" in out
+          and "the archive is reading it back" in out)
     check("... NOT ARCADE ones too (the owner: everything)", stored[b_sha]["machine"] == "unassigned")
     side = json.load(open(f"{tmp}/adisks/stored/{a_sha[:2]}/{a_sha}.json"))
     check("... the archive keeps the sidecar's facts, not its bulky logs", side["label"] == "WW-HDD" and side["sha1"] == hashlib.sha1(a).hexdigest()

@@ -172,7 +172,7 @@ def main():
     check("queued for the archive: archive pending, one queue line keyed by SHA-256",
           side["archive"] == {"state": "pending"}
           and [json.loads(l)["sha256"] for l in open(f"{STORE}/archive-queue.jsonl")] == [side["sha256"]])
-    check("the MAME check isn't claimed (it's Task 3)", side["mame"]["state"] == "not run")
+    check("a READ does not run the MAME check (it is asked for): the sidecar says not run, and how to run it", side["mame"]["state"] == "not run" and "MAME CHECK" in side["mame"]["why"])
     check("sidecar: the image's own fingerprint, the bench number (non-zero bytes in the first 64 MiB) and a SHA-1",
           side.get("fingerprint") == {"bytes": len(src), "nonzero": len(src) - src.count(0), "sha1": sha})
     code, out = disk("list", "--json")
@@ -1043,7 +1043,7 @@ def web_side(image):
     wenv = dict(env(), GATBOX_WEB_PORT=str(port), STATE_DIRECTORY=f"{w}/ctrl", CACHE_DIRECTORY=f"{w}/cache",
                 GATBOX_LOGDIR=f"{w}/log", GATBOX_RUNDIR=f"{w}/run", GATBOX_DATA=f"{w}/data",
                 GATBOX_SYNC_STATE=f"{w}/sync", GATBOX_DISK_SPOOL=f"{w}/spool", GATBOX_DUMP_SPOOL=f"{w}/nodump",
-                MPLCONFIGDIR=f"{w}/cache/mpl")
+                MPLCONFIGDIR=f"{w}/cache/mpl", GATBOX_MAME_ROMS=f"{w}/data/mame-roms.json")
     web = subprocess.Popen(["python3", os.path.join(REPO, "backend/gatbox-web")], env=wenv,
                            stdout=open(f"{w}/web.log", "w"), stderr=subprocess.STDOUT)
     stop = threading.Event()
@@ -1298,6 +1298,27 @@ def web_side(image):
             code_r, rec_f = call("GET", f"/api/disk/record?image={image}")
             check("a format's line in writes.jsonl is not on any image's record", code_r == 200 and "FAT16" not in json.dumps(rec_f))
             F.unplug("sdf")
+        # the MAME CHD check through gatbox-web (Task 3; the tool's own tests are tests/test-disk-mame.py)
+        os.makedirs(f"{STORE}/_chd", exist_ok=True)
+        raw = f"{T}/ww.raw"
+        shutil.copyfile(f"{STORE}/{image}", raw)
+        json.dump({"raw": raw, "cyls": 100, "heads": 4, "secs": 26}, open(f"{STORE}/_chd/wwars.chd", "w"))
+        combined = hashlib.sha1(open(raw, "rb").read() + b"CYLS:100,HEADS:4,SECS:26,BPS:512").hexdigest()
+        json.dump({"meta": {}, "machines": {"widget-wars": {"set": "wwars", "versions": [
+            {"name": "wwars", "desc": "Widget Wars", "parent": True, "roms": [], "disks": [{"name": "wwars", "sha1": combined}]}]}}},
+                  open(f"{w}/data/mame-roms.json", "w"))
+        code, r = call("GET", "/api/disk/chd")
+        check("GET /api/disk/chd: the CHD in _chd/, named as MAME's disk for widget-wars", code == 200 and r["mounted"]
+              and r["chds"][0]["file"] == "wwars.chd" and r["chds"][0]["mame"]["set"] == "wwars" and r["chds"][0]["mame"]["machine"] == "widget-wars")
+        check("POST /api/disk/mame for an image that isn't in the store: 400", call("POST", "/api/disk/mame", {"image": "../x.img"})[0] == 400)
+        code, r = call("POST", "/api/disk/mame", {"image": image})
+        mm = done()
+        check("POST /api/disk/mame -> 202, the machine's MAME disks go with the request, and the job says MATCH with the set",
+              code == 202 and list(r["disks"].values())[0]["set"] == "wwars" and mm.get("op") == "mame" and mm["mame"]["state"] == "match"
+              and mm["mame"]["set"] == "wwars")
+        code, r = call("GET", "/api/disk/images")
+        check("... and GET /api/disk/images shows the image's MAME state from its sidecar", any(i["image"] == image and i["mame"] == "match" for i in r["images"]))
+        shutil.rmtree(f"{STORE}/_chd")
         mount_table(store=False)
         code, _ = call("GET", f"/api/disk/record?image={image}")
         mount_table()

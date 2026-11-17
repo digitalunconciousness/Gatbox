@@ -278,6 +278,40 @@ def formats():
                         for w in rows]}
 
 
+# --- the MAME CHD check (the plan's §7, Task 3) --------------------------------------------------------------------------
+def _mame_roms():
+    from . import libsource
+    try:
+        with open(config.MAME_ROMS, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = None
+    return libsource.mame_roms(data)
+
+
+def chds():
+    """GET /api/disk/chd: the reference CHDs in the store's _chd/ folder, each with the MAME disk it is (chdman info reads only a CHD's
+    header, so this is quick)."""
+    from gatboxlib import chd
+    if not dl.store_mounted():
+        return {"mounted": False, "chds": []}
+    return {"mounted": True, "chds": chd.list_chds(os.path.realpath(dl.DISKS), _mame_roms())}
+
+
+def mame_request(body):
+    """POST /api/disk/mame {image}: the MAME CHD check of one stored image, as a disk job (it reads the image, and may unpack a CHD
+    into the store to see where they differ). The machine's MAME disks go with the request: the library's lists, which the job can't
+    read itself. A hub's machine counts as the game it is linked to."""
+    from gatboxlib import chd
+    body = _obj(body)
+    _store()
+    path, img = _image(body.get("image"))
+    machine = img.get("machine") or "unassigned"
+    lib = roster.library(machine) if machine != "unassigned" else None
+    disks = chd.mame_disks(_mame_roms(), lib) if lib else {}
+    return _queue({"op": "mame", "image": path, "machine": machine, "disks": disks})
+
+
 # --- the swap checklist ------------------------------------------------------------------------------------------------
 # One record per write, made when the write is queued, and one per checklist started on its own (a drive written
 # somewhere else, an original put back). Kept in gatbox-web's state (the store is the job's to write), the newest 50.

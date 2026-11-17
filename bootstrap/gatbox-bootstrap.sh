@@ -110,6 +110,7 @@ backend/gatboxlib/browsetext.py                 /usr/local/lib/gatbox/gatboxlib/
 backend/gatboxlib/browsecopy.py                 /usr/local/lib/gatbox/gatboxlib/browsecopy.py         644
 backend/gatboxlib/rawpreview.py                 /usr/local/lib/gatbox/gatboxlib/rawpreview.py         644
 backend/gatboxlib/browsehash.py                 /usr/local/lib/gatbox/gatboxlib/browsehash.py         644
+backend/gatboxlib/chd.py                        /usr/local/lib/gatbox/gatboxlib/chd.py                644
 backend/gatboxweb/__init__.py                   /usr/local/lib/gatbox/gatboxweb/__init__.py           644
 backend/gatboxweb/config.py                     /usr/local/lib/gatbox/gatboxweb/config.py             644
 backend/gatboxweb/server.py                     /usr/local/lib/gatbox/gatboxweb/server.py             644
@@ -172,7 +173,8 @@ PKGS=(sigrok-cli python3-matplotlib python3-qrcode rsync git curl util-linux-ext
       libarchive-tools                                              # bsdtar: XGecu .rar -> T48 firmware (minipro's dump-alg script)
       poppler-utils                                                 # pdftoppm / pdftotext / pdfinfo: the manuals viewer
       hdparm smartmontools                                          # disk imaging: hdparm -I/-N and smartctl -i/-H, run on demand
-      gddrescue                                                     # ddrescue: the disk job's READ (mame-tools comes with Task 3)
+      gddrescue                                                     # ddrescue: the disk job's READ
+      mame-tools                                                    # chdman: the disk job's MAME CHD check (info and extracthd only; Task 3)
       dosfstools exfatprogs e2fsprogs                               # the disk job's FORMAT: mkfs and fsck for FAT, exFAT and ext4, run on a scratch file in the store, never on a drive
       catdoc                                                        # the drive browser's text search (F3): catdoc, xls2csv, catppt read old Word, Excel and PowerPoint files (poppler-utils reads PDFs)
       sleuthkit python3-pil                                         # the drive browser (docs/plans/2026-11-15-drive-browser.md): fls, fsstat, mmls, icat read a stored image, nothing is mounted; Pillow makes thumbnails

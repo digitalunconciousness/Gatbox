@@ -124,7 +124,8 @@ class FakeDisks:
         """gatbox-disk's and gatbox-web's environment for this fake machine."""
         e = dict(os.environ, GATBOX_SYSFS=self.sys, GATBOX_DEV=self.dev, GATBOX_MOUNTINFO=self.mountinfo, GATBOX_UDEV=self.udev,
                  GATBOX_DISKS=self.store, GATBOX_DDRESCUE=os.path.join(REPO, "tests/fake-ddrescue"),
-                 GATBOX_API="http://127.0.0.1:9", FAKE_DDRESCUE_LOG=self.log)
+                 GATBOX_API="http://127.0.0.1:9", FAKE_DDRESCUE_LOG=self.log,
+                 GATBOX_CHDMAN=os.path.join(REPO, "tests/fake-chdman"))
         e.update({k: str(v) for k, v in extra.items()})
         return e
 

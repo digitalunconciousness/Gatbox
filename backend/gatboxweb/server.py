@@ -612,6 +612,15 @@ def api_disk_retry(h, m, q):
     _disk_queued(h, req, f"retry {req['machine']}/{req['label']}")
 
 
+def api_disk_chd(h, m, q):
+    h.json(200, disk.chds())
+
+
+def api_disk_mame(h, m, q):
+    req = disk.mame_request(h.body())
+    _disk_queued(h, req, f"MAME check of {os.path.basename(req['image'])}")
+
+
 def api_disk_check(h, m, q):
     req = disk.check_request(h.body())
     _disk_queued(h, req, f"check {req['device']} for {os.path.basename(req['image'])}")
@@ -1110,6 +1119,8 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("POST", r"/api/disk/read", api_disk_read),
     ("POST", r"/api/disk/retry", api_disk_retry),
     ("POST", r"/api/disk/check", api_disk_check),
+    ("POST", r"/api/disk/mame", api_disk_mame),
+    ("GET", r"/api/disk/chd", api_disk_chd),
     ("POST", r"/api/disk/write", api_disk_write),
     ("POST", r"/api/disk/format-check", api_disk_format_check),
     ("POST", r"/api/disk/format", api_disk_format),

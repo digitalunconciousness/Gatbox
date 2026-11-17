@@ -1368,6 +1368,15 @@ def main():
         check("... and the image's fingerprint (non-zero bytes in its first 64 MiB, the bench number) is on the result card",
               f"fingerprint {side['fingerprint']['nonzero']:,} non-zero bytes in the first 64 MiB" in text("#dk-body"))
         shot("23c-disk-stored")
+        # the MAME CHD check (Task 3): a button on each stored image of a machine; with no reference CHD in _chd/ it says which to copy there
+        check("the images list has MAME CHECK on the image, and says how many reference CHDs the store has",
+              settles(c, "[...document.querySelectorAll('#dk-body .dk-img button')].some(b => b.textContent === 'MAME CHECK')", 10)
+              and settles(c, "document.querySelector('#dk-body .dk-chds') && document.querySelector('#dk-body .dk-chds').textContent.includes('0 in the store')", 10))
+        q("[...document.querySelectorAll('#dk-body .dk-img')].find(r => r.textContent.startsWith('WW-HDD')).querySelector('button').click()")
+        check("MAME CHECK with no reference CHD: NO REFERENCE CHD, naming the CHD to copy into _chd (gauntleg)",
+              dk_has("NO REFERENCE CHD", 30) and "gauntleg (gauntleg)" in text("#dk-body") and "Copy MAME's CHD" in text("#dk-body"))
+        check("... the image's tag says so, and its button now reads MAME CHECK AGAIN",
+              settles(c, "[...document.querySelectorAll('#dk-body .dk-img')].some(r => r.textContent.includes('NO REFERENCE CHD') && r.textContent.includes('MAME CHECK AGAIN'))", 15))
 
         FD.usb_disk("sde", MiB, "WIDGET", "OLDSPINNER 40", port=5, devnum="8:64", data=os.urandom(MiB))
         open(f"{T}/dk-bad", "w").close()

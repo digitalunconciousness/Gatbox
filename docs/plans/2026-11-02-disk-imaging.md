@@ -269,6 +269,9 @@ Each tick is saved with the write record, with its time. The checklist blocks no
 
 ## 7. The MAME CHD check (in v1; owner, 2026-11-02)
 
+**Status (2026-11-17):** tier 1 built (`gatboxlib/chd.py`, Task 3 in BRINGUP), not installed. Tier 2 is not built: the dock
+never reports a drive's CHS, so it has nothing to run on.
+
 **The facts behind it** (MAME source and the chdman docs; re-check the output format on the Pi):
 - A v5 CHD carries two SHA-1s.
   - The **SHA1** covers the raw data plus metadata.

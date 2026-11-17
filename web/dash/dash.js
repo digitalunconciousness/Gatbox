@@ -2988,6 +2988,9 @@
                   index: null, ixPoll: null, hres: null, hgroup: null, hPoll: null, dmin: 1048576, dkind: "all", dpage: 0, dres: null, exp: null, expPoll: null, ask: null, q: "", scope: "names", skind: "all", syear: null, spage: 0, sres: null, from: null, at: null, hit: null, hitRow: null}};
   const GB = n => n >= 1e12 ? (n / 1e12).toFixed(2) + " TB" : n >= 1e9 ? (n / 1e9).toFixed(1) + " GB"
                 : n >= 1e6 ? Math.round(n / 1e6) + " MB" : (n || 0).toLocaleString("en-US") + " bytes";
+  // What an image takes on the store, beside its size, once its zero blocks are holes (the owner, 2026-11-17). Only when it is
+  // less: an image that holds data all the way through needs no second number.
+  const takes = x => x.allocated != null && x.bytes && x.allocated < x.bytes * 0.95 ? `, takes ${GB(x.allocated)}` : "";
   const exact = n => (n || 0).toLocaleString("en-US") + " bytes";
   const base = p => String(p || "").split("/").pop();
   // A card on the dock's IDE side reaches us with each pair of bytes in its INQUIRY swapped, the order ATA's IDENTIFY words come in
@@ -3171,7 +3174,7 @@
       const sto = s.stored || {};
       big(sto.new ? "STORED" : "ALREADY IN THE STORE", "ok");
       line(base(sto.path));
-      line(`${s.label} · ${s.machine} · ${GB(s.bytes)} (${exact(s.bytes)}) · ${s.reads === 2 ? "read twice, both match" : "read once"}`, "mut");
+      line(`${s.label} · ${s.machine} · ${GB(s.bytes)} (${exact(s.bytes)})${takes(s)} · ${s.reads === 2 ? "read twice, both match" : "read once"}`, "mut");
       line(`SHA-1 ${s.sha1}`, "mut");
       if (s.fingerprint) line(`fingerprint ${s.fingerprint.nonzero.toLocaleString("en-US")} non-zero bytes in the first 64 MiB`, "mut");
       if (s.source) line(`from ${driveName(s.source)}`, "mut");
@@ -3217,7 +3220,7 @@
     } else if (s.op === "import" && s.state === "done") {
       big("IMPORTED", "ok");
       line(base((s.stored || {}).path || ""));
-      line(`${machineWord(s.machine)} · ${GB(s.bytes)} · SHA-1 ${(s.sha1 || "").slice(0, 8)} · queued for the archive`, "mut");
+      line(`${machineWord(s.machine)} · ${GB(s.bytes)}${takes(s)} · SHA-1 ${(s.sha1 || "").slice(0, 8)} · queued for the archive`, "mut");
     } else if (s.op === "file" && s.state === "done") {
       big(`FILED UNDER ${machineWord(s.machine)}`, "ok");
       line(base(s.image));
@@ -3545,7 +3548,7 @@
           x.imported ? el("span", "tag cy", "IMPORTED") : el("span", "tag " + (x.reads === 2 ? "ok" : "mut"), x.reads === 2 ? "READ TWICE, MATCH" : "READ ONCE"),
           arch ? el("span", "tag " + arch[1], arch[0]) : null,
           MAME_WORD[x.mame] ? el("span", "tag " + MAME_WORD[x.mame][1], MAME_WORD[x.mame][0]) : null,
-          el("div", "mut", `${machineWord(x.machine)} · ${GB(x.bytes)} · ${stamp(x.started)} · SHA-1 ${(x.sha1 || "").slice(0, 8)}`
+          el("div", "mut", `${machineWord(x.machine)} · ${GB(x.bytes)}${takes(x)} · ${stamp(x.started)} · SHA-1 ${(x.sha1 || "").slice(0, 8)}`
                            + (x.source ? " · from " + x.source : "")
                            + (x.fingerprint != null ? " · fingerprint " + x.fingerprint.toLocaleString("en-US") : "")
                            + (x.also_read ? ` · read again ${x.also_read} time${x.also_read > 1 ? "s" : ""}` : "")));

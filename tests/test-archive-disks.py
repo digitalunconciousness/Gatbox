@@ -197,6 +197,33 @@ def run(tmp):
         s.shutdown()
     shutil.rmtree(f"{disks}/incoming/{'e' * 64}")
 
+    print("zeros take no room (the owner, 2026-11-17: an image that is mostly an empty drive):")
+    zs = DS.DiskStore(f"{tmp}/zeros")
+    zimg = os.urandom(1000) + bytes(PART - 1000) + bytes(PART) + bytes(PART // 2) + os.urandom(4096)
+    zsha = hashlib.sha256(zimg).hexdigest()
+    zs.begin(zsha, len(zimg), {"label": "EMPTYISH"})
+    wrong = os.urandom(PART)
+    zs.put_part(zsha, 0, zimg[:PART])
+    zs.put_part(zsha, 1, wrong)                                # a part that arrived wrong the first time
+    zs.put_part(zsha, 2, zimg[2 * PART:])
+    zs.finish(zsha)
+    for _ in range(200):
+        if zs.state(zsha)["state"] != "checking":
+            break
+        time.sleep(0.05)
+    check("a wrong part: the check fails, as before", zs.state(zsha)["state"] == "failed")
+    for n in range(3):
+        zs.put_part(zsha, n, zimg[n * PART:(n + 1) * PART])    # sent again: part 1 is all zeros this time
+    zs.finish(zsha)
+    for _ in range(200):
+        if zs.state(zsha)["state"] != "checking":
+            break
+        time.sleep(0.05)
+    zp = f"{tmp}/zeros/stored/{zsha[:2]}/{zsha}.img"
+    check("the zero part sent again replaces the wrong bytes under it (a hole, not a skipped write): stored, and the bytes match",
+          zs.state(zsha)["state"] == "stored" and open(zp, "rb").read() == zimg)
+    check("... and the image takes about its data, not its size", os.stat(zp).st_blocks * 512 < 2 * MIB and os.path.getsize(zp) == len(zimg))
+
     print("the archive restarts in the middle of a check:")
     again = os.urandom(PART // 2)
     asha = hashlib.sha256(again).hexdigest()

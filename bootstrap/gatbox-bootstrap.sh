@@ -104,6 +104,7 @@ backend/gatboxlib/library.py                    /usr/local/lib/gatbox/gatboxlib/
 backend/gatboxlib/libview.py                    /usr/local/lib/gatbox/gatboxlib/libview.py            644
 backend/gatboxlib/seed.py                       /usr/local/lib/gatbox/gatboxlib/seed.py               644
 backend/gatboxlib/filestore.py                  /usr/local/lib/gatbox/gatboxlib/filestore.py          644
+backend/gatboxlib/sparse.py                     /usr/local/lib/gatbox/gatboxlib/sparse.py             644
 backend/gatboxlib/libsync.py                    /usr/local/lib/gatbox/gatboxlib/libsync.py            644
 backend/gatboxlib/csvlog.py                     /usr/local/lib/gatbox/gatboxlib/csvlog.py             644
 backend/gatboxlib/disks.py                      /usr/local/lib/gatbox/gatboxlib/disks.py              644

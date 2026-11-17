@@ -43,6 +43,7 @@ MANIFEST="
 backend/gatboxlib/__init__.py                  /usr/local/lib/gatbox/gatboxlib/__init__.py           644
 backend/gatboxlib/library.py                   /usr/local/lib/gatbox/gatboxlib/library.py            644
 backend/gatboxlib/filestore.py                 /usr/local/lib/gatbox/gatboxlib/filestore.py          644
+backend/gatboxlib/sparse.py                    /usr/local/lib/gatbox/gatboxlib/sparse.py             644
 archive/gatboxarchive/__init__.py              /usr/local/lib/gatbox/gatboxarchive/__init__.py       644
 archive/gatboxarchive/api.py                   /usr/local/lib/gatbox/gatboxarchive/api.py            644
 archive/gatboxarchive/cli.py                   /usr/local/lib/gatbox/gatboxarchive/cli.py            644

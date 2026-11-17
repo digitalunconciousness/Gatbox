@@ -11,6 +11,10 @@ longer than an HTTP request should; the deck asks again for the state.
     <root>/incoming/<sha256>/  meta.json, data (the image, filled part by part), have (one byte per part: 1 = written)
     <root>/stored/<sha256[:2]>/<sha256>.img  and  .json (the sidecar the deck sent, plus when it was stored)
 
+An all-zero part (most of a drive that was mostly empty) is not written: its place in the file is left as a hole, which reads back
+as zeros and takes no room, so an 80 GB image with 10 GB on it takes about 10 GB here (the owner, 2026-11-17). The check reads it
+back the same way, so the SHA-256 is still the one announced.
+
 Room: a new image is refused (507) when it would leave less than `reserve` bytes free, counting what the images still arriving
 have yet to write. Nothing here deletes a stored image.
 """
@@ -21,6 +25,8 @@ import re
 import shutil
 import threading
 import time
+
+from gatboxlib import sparse as SP
 
 PART_SIZE = 8 * 1024 * 1024
 SIDE_MAX = 64 * 1024                     # the sidecar the deck sends: JSON, at most this many bytes
@@ -145,7 +151,12 @@ class DiskStore:
             raise DiskError(f"part {n} must be exactly {want} bytes, got {len(data)}")
         fd = os.open(self._in(sha, "data"), os.O_WRONLY)
         try:
-            os.pwrite(fd, data, n * PART_SIZE)
+            # Zeros are left as a hole (punched, not just skipped: a part sent again after a failed check may land on bytes that
+            # are there from the first time); the rest is written, its own zero blocks left out the same way.
+            if not SP.punch(fd, n * PART_SIZE, len(data)):
+                os.pwrite(fd, data, n * PART_SIZE)          # a filesystem with no holes: written as it is
+            elif data != bytes(len(data)):
+                SP.write_sparse(fd, n * PART_SIZE, data)
             os.fsync(fd)
         finally:
             os.close(fd)

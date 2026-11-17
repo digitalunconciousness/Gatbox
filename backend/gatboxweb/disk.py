@@ -312,6 +312,18 @@ def mame_request(body):
     return _queue({"op": "mame", "image": path, "machine": machine, "disks": disks})
 
 
+def file_request(body):
+    """POST /api/disk/file {image, machine}: FILE UNDER. Which machine a stored image is for, or "unassigned" (NOT ARCADE).
+    A disk job, because the store is the job's to write; it changes the image's sidecar only."""
+    body = _obj(body)
+    _store()
+    path, img = _image(body.get("image"))
+    if not body.get("machine"):
+        raise Bad(400, "machine: a roster slug, or unassigned")
+    machine = _machine(body)
+    return _queue({"op": "file", "image": path, "machine": machine, "realm": _realm(machine) if machine != "unassigned" else None})
+
+
 # --- the swap checklist ------------------------------------------------------------------------------------------------
 # One record per write, made when the write is queued, and one per checklist started on its own (a drive written
 # somewhere else, an original put back). Kept in gatbox-web's state (the store is the job's to write), the newest 50.

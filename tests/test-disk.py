@@ -188,14 +188,15 @@ def main():
           and side["also_read"][0]["date"] == day)
     check("... and no second queue line", len(open(f"{STORE}/archive-queue.jsonl").read().splitlines()) == 1)
 
-    print("a drive that is not a machine's (the drive browser's note, 2026-11-15: a personal drive's image goes nowhere without a yes):")
+    print("a drive that is not a machine's (NOT ARCADE; the owner, 2026-11-17: every image goes to the archive, over the home network):")
     fam = os.urandom(2 * MiB)
     usb_disk("sdq", len(fam), "WIDGET", "FAMILYDRIVE 500", port=17, devnum="8:256", data=fam)
     code, out = disk("read", "-d", "sdq", "-m", "unassigned", "-l", "FAMILY-DISK", "--media", "hdd")
     side_u = json.load(open(f"{STORE}/unassigned/FAMILY-DISK_{day}_{hashlib.sha1(fam).hexdigest()[:8]}.json")) if code == 0 else {}
-    check("a READ for no machine: stored, its sidecar says archive 'none', not for a machine, and nothing is added to the queue",
-          code == 0 and side_u.get("archive") == {"state": "none", "why": "not for a machine"}
-          and len(open(f"{STORE}/archive-queue.jsonl").read().splitlines()) == 1)
+    q_ = [json.loads(l) for l in open(f"{STORE}/archive-queue.jsonl")]
+    check("a READ for no machine: stored, archive pending, and queued like any other (machine 'unassigned')",
+          code == 0 and side_u.get("archive") == {"state": "pending"} and len(q_) == 2
+          and q_[1]["sha256"] == side_u["sha256"] and q_[1]["machine"] == "unassigned")
     F.unplug("sdq")
 
     print("the same bytes under another machine, or none (2026-11-15, from the Pi: the check looked only in the machine's own folder):")
@@ -207,9 +208,9 @@ def main():
     check("the same drive read again for a machine: it is already in the store, under 'unassigned', and says so; no second copy is made",
           code == 0 and "ALREADY IN THE STORE" in out and f"unassigned/{fam_name}.img" in out and files("widget-wars") == ww_before
           and files("unassigned").count(fam_name + ".img") == 1)
-    check("... the existing sidecar notes this read, with the machine it was for, and is still 'not for a machine' (nothing moved, nothing queued)",
+    check("... the existing sidecar notes this read, with the machine it was for; nothing moved, no second queue line",
           [(r["label"], r.get("machine")) for r in side_u["also_read"]] == [("FAMILY-AGAIN", "widget-wars")]
-          and side_u["archive"] == {"state": "none", "why": "not for a machine"} and len(open(f"{STORE}/archive-queue.jsonl").read().splitlines()) == 1)
+          and side_u["machine"] == "unassigned" and len(open(f"{STORE}/archive-queue.jsonl").read().splitlines()) == 2)
     F.unplug("sdq")
     usb_disk("sdq", len(src), "WIDGET", "WIDGETDRIVE 1000", port=17, devnum="8:256", data=src)
     code, out = disk("read", "-d", "sdq", "-m", "unassigned", "-l", "WW-LATER", "--media", "hdd")
@@ -235,6 +236,42 @@ def main():
     for n_ in ("0-orphan.json", "0-broken.json", "0-broken.img", fam_name + ".img", fam_name + ".json"):
         os.remove(f"{STORE}/widget-wars/{n_}")
     F.unplug("sdq")
+
+    print("FILE UNDER (the owner, 2026-11-17: an easy way to say a drive is or isn't a machine's):")
+    fu = f"unassigned/{fam_name}.img"
+    snap = {e_: open(f"{STORE}/unassigned/{fam_name}{e_}", "rb").read() for e_ in (".img", ".map")}
+    code, out = disk("file", "-i", fu, "-m", "widget-wars", "--json")
+    side_f = json.load(open(f"{STORE}/unassigned/{fam_name}.json"))
+    check("file a NOT ARCADE image under a machine: only its sidecar changes (machine, and a 'filed' line); the image stays where it is",
+          code == 0 and json.loads(out) == {"machine": "widget-wars", "changed": True, "from": "unassigned"}
+          and side_f["machine"] == "widget-wars" and [(x["from"], x["to"]) for x in side_f["filed"]] == [("unassigned", "widget-wars")]
+          and all(open(f"{STORE}/unassigned/{fam_name}{e_}", "rb").read() == b for e_, b in snap.items())
+          and not os.path.exists(f"{STORE}/widget-wars/{fam_name}.img") and side_f["sha1"] == hashlib.sha1(fam).hexdigest())
+    _, lst_ = disk("list", "--json")
+    check("... the store's list shows it under the machine", any(i["image"] == fu and i["machine"] == "widget-wars"
+                                                               for i in json.loads(lst_)["images"]))
+    code, out = disk("file", "-i", fu, "-m", "widget-wars")
+    check("filing it again under the same machine: says so and changes nothing", code == 0 and "already filed under widget-wars" in out
+          and len(json.load(open(f"{STORE}/unassigned/{fam_name}.json"))["filed"]) == 1)
+    code, out = disk("file", "-i", fu, "-m", "unassigned")
+    side_f = json.load(open(f"{STORE}/unassigned/{fam_name}.json"))
+    check("and back to NOT ARCADE: a second 'filed' line", code == 0 and side_f["machine"] == "unassigned" and len(side_f["filed"]) == 2)
+    # an image kept off the queue before 2026-11-17 (archive 'none') is queued when it is filed
+    side_f["archive"] = {"state": "none", "why": "not for a machine"}
+    json.dump(side_f, open(f"{STORE}/unassigned/{fam_name}.json", "w"))
+    qf = f"{STORE}/archive-queue.jsonl"
+    q_keep = open(qf).read()
+    open(qf, "w").write("".join(l + "\n" for l in q_keep.splitlines() if json.loads(l)["sha256"] != side_f["sha256"]))
+    code, out = disk("file", "-i", fu, "-m", "widget-wars")
+    side_f = json.load(open(f"{STORE}/unassigned/{fam_name}.json"))
+    check("an older image that was never queued (archive 'none'): filing it makes it pending and adds its one queue line",
+          code == 0 and side_f["archive"] == {"state": "pending"}
+          and [json.loads(l)["machine"] for l in open(qf) if json.loads(l)["sha256"] == side_f["sha256"]] == ["widget-wars"])
+    for bad_, why_ in ((["-m", "Not A Slug"], "not a roster slug"), (["-m", "widget-wars", "-i", "../etc/passwd"], "isn't an image in the store")):
+        args_ = ["file", "-i", fu] + bad_ if "-i" not in bad_ else ["file"] + bad_
+        code, out = disk(*args_)
+        check(f"FILE UNDER refuses: {why_}", code != 0 and why_ in out)
+    code, out = disk("file", "-i", fu, "-m", "unassigned")          # leave it as it was for what follows
 
     print("the drive's own identity (Task 0, 2026-11-06: the dock's INQUIRY names the dock):")
     usb_disk("sdk", 3 * MiB, "XinTop", "XT-U33502", port=11, devnum="8:160", data=os.urandom(3 * MiB),
@@ -1319,6 +1356,20 @@ def web_side(image):
         code, r = call("GET", "/api/disk/images")
         check("... and GET /api/disk/images shows the image's MAME state from its sidecar", any(i["image"] == image and i["mame"] == "match" for i in r["images"]))
         shutil.rmtree(f"{STORE}/_chd")
+        # FILE UNDER through gatbox-web (the owner, 2026-11-17)
+        check("POST /api/disk/file: no machine -> 400; one not on the roster -> 404; an image not in the store -> 400",
+              [call("POST", "/api/disk/file", {"image": image})[0], call("POST", "/api/disk/file", {"image": image, "machine": "nope"})[0],
+               call("POST", "/api/disk/file", {"image": "../x.img", "machine": "unassigned"})[0]] == [400, 404, 400])
+        code, r = call("POST", "/api/disk/file", {"image": image, "machine": "unassigned"})
+        ff = done()
+        check("POST /api/disk/file {machine: unassigned} -> 202, the job files it as NOT ARCADE, and the list shows it",
+              code == 202 and r["op"] == "file" and r["realm"] is None and ff.get("op") == "file" and ff.get("state") == "done"
+              and ff["filed"] == {"from": "widget-wars", "to": "unassigned"}
+              and any(i["image"] == image and i["machine"] == "unassigned" for i in call("GET", "/api/disk/images")[1]["images"]))
+        code, r = call("POST", "/api/disk/file", {"image": image, "machine": "widget-wars"})
+        ff = done()
+        check("... and back under widget-wars", code == 202 and ff.get("state") == "done"
+              and any(i["image"] == image and i["machine"] == "widget-wars" for i in call("GET", "/api/disk/images")[1]["images"]))
         mount_table(store=False)
         code, _ = call("GET", f"/api/disk/record?image={image}")
         mount_table()

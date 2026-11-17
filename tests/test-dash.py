@@ -1377,6 +1377,35 @@ def main():
               dk_has("NO REFERENCE CHD", 30) and "gauntleg (gauntleg)" in text("#dk-body") and "Copy MAME's CHD" in text("#dk-body"))
         check("... the image's tag says so, and its button now reads MAME CHECK AGAIN",
               settles(c, "[...document.querySelectorAll('#dk-body .dk-img')].some(r => r.textContent.includes('NO REFERENCE CHD') && r.textContent.includes('MAME CHECK AGAIN'))", 15))
+        # NOT ARCADE and FILE UNDER (the owner, 2026-11-17: "an easy way to set the machine as unclassified or misc")
+        WWROW = "[...document.querySelectorAll('#dk-body .dk-img')].find(r => r.textContent.startsWith('WW-HDD'))"
+        check("each stored image has FILE UNDER", settles(c, f"!!{WWROW} && [...{WWROW}.querySelectorAll('button')].some(b => b.textContent === 'FILE UNDER')", 10))
+        q(f"[...{WWROW}.querySelectorAll('button')].find(b => b.textContent === 'FILE UNDER').click()")
+        c.wait("document.querySelectorAll('#pane .picklist .row').length > 1", 10)
+        check("FILE UNDER's list starts with NOT ARCADE, then the roster",
+              q("document.querySelector('#pane .picklist .row').textContent").startswith("NOT ARCADE"))
+        q("document.querySelector('#pane .picklist .row').click()")
+        check("picking NOT ARCADE files it there: FILED UNDER NOT ARCADE, and the image's line says NOT ARCADE",
+              dk_has("FILED UNDER NOT ARCADE", 30) and settles(c, f"!!{WWROW} && {WWROW}.textContent.includes('NOT ARCADE ·')", 15)
+              and json.load(open(f"{FD.store}/gauntlet-legends/{stored[0][:-4]}.json"))["machine"] == "unassigned")
+        shot("23d-disk-filed")
+        settles(c, f"!!{WWROW} && ![...{WWROW}.querySelectorAll('button')].find(b => b.textContent === 'FILE UNDER').disabled", 10)
+        q("document.querySelector('#pane h2').textContent = ''")       # the closed sheet keeps its rows: mark it, and wait for the new one
+        q(f"[...{WWROW}.querySelectorAll('button')].find(b => b.textContent === 'FILE UNDER').click()")
+        c.wait("!document.querySelector('#sheet').classList.contains('hide') && document.querySelector('#pane h2').textContent.startsWith('File')", 10)
+        q("[...document.querySelectorAll('#pane .picklist .row')].find(r => r.textContent.includes('Gauntlet Legends') || r.textContent.includes('gauntlet-legends')).click()")
+        check("... and FILE UNDER gauntlet-legends puts it back (its folder never moved)",
+              dk_has("FILED UNDER gauntlet-legends", 30)
+              and json.load(open(f"{FD.store}/gauntlet-legends/{stored[0][:-4]}.json"))["machine"] == "gauntlet-legends")
+        FORROW = "[...document.querySelectorAll('#dk-body .btnrow')].find(r => r.firstChild && r.firstChild.textContent === 'FOR')"
+        check("the READ's FOR row has NOT ARCADE beside OTHER MACHINE",
+              settles(c, f"!!{FORROW} && [...{FORROW}.querySelectorAll('button')].some(b => b.textContent === 'NOT ARCADE')", 10))
+        q(f"[...{FORROW}.querySelectorAll('button')].find(b => b.textContent === 'NOT ARCADE').click()")
+        check("one tap: FOR NOT ARCADE, the button gives way to CURRENT",
+              settles(c, f"{FORROW}.querySelector('.chip').textContent === 'NOT ARCADE' && [...{FORROW}.querySelectorAll('button')].some(b => b.textContent === 'CURRENT')"
+                         f" && ![...{FORROW}.querySelectorAll('button')].some(b => b.textContent === 'NOT ARCADE')", 10))
+        q(f"[...{FORROW}.querySelectorAll('button')].find(b => b.textContent === 'CURRENT').click()")
+        check("... CURRENT goes back to the session's machine", settles(c, f"{FORROW}.querySelector('.chip').textContent !== 'NOT ARCADE'", 10))
 
         FD.usb_disk("sde", MiB, "WIDGET", "OLDSPINNER 40", port=5, devnum="8:64", data=os.urandom(MiB))
         open(f"{T}/dk-bad", "w").close()

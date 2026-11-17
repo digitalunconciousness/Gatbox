@@ -1088,6 +1088,13 @@ def api_live(h, m, q):
             LIVE.clients -= 1
 
 
+# The changes a phone on the network may make (the owner, 2026-11-17: every other change is the Pi's own screen's). These are the
+# METER tab's at the cabinet (start and stop, a mark, a new file, the profile, the alarm, which machine, a capture), ADD PDF
+# (the dashboard tells her to add a manual from her phone) and a tick on the swap checklist (her 2026-11-03 answer: the
+# phone ticks the bench steps). Each is still refused when another site's page sends it.
+PHONE_WRITES = {post_control, api_mark, api_session_new, api_session_stop, api_profile_put, api_alarm_put, api_machine_put,
+                api_captures_post, api_manuals_upload, api_disk_checklist_post}
+
 ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     # phone view
     ("GET", r"/?", get_index),
@@ -1241,6 +1248,9 @@ class H(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Content-Type-Options", "nosniff")     # a file is only ever what its Content-Type says
+        self.send_header("X-Frame-Options", "DENY")               # no page of this server inside another site's frame
+        self.send_header("Referrer-Policy", "same-origin")
         self.send_header("Cache-Control", cache)
         for k, v in extra:
             self.send_header(k, v)
@@ -1258,6 +1268,18 @@ class H(BaseHTTPRequestHandler):
 
     def is_local(self):
         return self.client_address[0] in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
+    def cross_site(self):
+        """A browser's request sent from another site's page (a form or script on some web page the phone has open). The browser
+        says so in Sec-Fetch-Site, or in an Origin that names another host; a client with neither (curl, the deck's own
+        services) is not a browser being tricked, and the loopback and allowlist rules still apply to it."""
+        site = (self.headers.get("Sec-Fetch-Site") or "").lower()
+        if site in ("cross-site", "same-site"):
+            return True
+        origin = self.headers.get("Origin")
+        if origin and origin != "null":
+            return urlsplit(origin).netloc.lower() != (self.headers.get("Host") or "").lower()
+        return origin == "null"
 
     def body(self):
         """The request's JSON body ({} if empty). JSON content type required (see the module docstring)."""
@@ -1296,6 +1318,11 @@ class H(BaseHTTPRequestHandler):
         self.failed = code >= 400
         super().send_response(code, message)
 
+    def refuse(self, why):
+        if self.url.path.startswith("/api/"):
+            return self.json(403, {"error": why})
+        return self.send(403, phone.page("Not here", f"<h1>Not here</h1><p>{html.escape(why)}</p><a href='/'>Back</a>"))
+
     def route(self, method):
         self.url = urlsplit(self.path)
         q = parse_qs(self.url.query)
@@ -1307,6 +1334,13 @@ class H(BaseHTTPRequestHandler):
             if m != method:
                 allowed.append(m)
                 continue
+            # Every change is made on the Pi's own screen (the owner, 2026-11-17), except the few a tech makes from a phone at
+            # the cabinet (PHONE_WRITES). From the network, a change sent by another site's page is refused whatever it is.
+            if method != "GET" and not self.is_local():
+                if fn not in PHONE_WRITES:
+                    return self.refuse("changes are made on the Pi's own screen")
+                if self.cross_site():
+                    return self.refuse("refused: sent from another site's page")
             try:
                 return fn(self, mt.groupdict(), q)
             except Bad as e:

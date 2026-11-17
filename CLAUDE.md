@@ -177,7 +177,7 @@ folder each time, every file read back from the store and its SHA-1 listed in `_
 Camera raws (a Nikon NEF, 2026-11-16, not installed): the picture embedded in the file is drawn (`gatboxlib/rawpreview.py`), not tried on a real camera's file yet.
 The owner's answers on F4 (2026-11-15): HEIC is skipped, OCR waits for a drive of scans, and there is no phone (FILES stays on the Pi's own screen);
 `docs/plans/2026-11-15-drive-browser-f4.md`; spec `docs/plans/2026-11-15-drive-browser.md`, progress in BRINGUP.md.
-A READ for no machine no longer queues for the archive (nothing drains that queue yet).
+Every READ is queued for the archive, a machine's or not (the owner, 2026-11-17: "everything", sent over the home network only; nothing drains the queue yet: `docs/plans/2026-11-17-disk-image-drain.md`). NOT ARCADE on the DISK tab (the FOR row and FILE UNDER on each stored image) files a drive under no machine; FILE UNDER changes the image's sidecar only (built 2026-11-17, not installed).
 
 **Disk imaging (phase D2), built 2026-11-03, installed on the Pi 2026-11-14.** Hard disks, CF and SD cards on the
 USB dock or a reader: READ into the image store, TARGET CHECK, WRITE from the 7″ (a hold arms it, two read-backs verify

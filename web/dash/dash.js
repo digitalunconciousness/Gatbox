@@ -1118,7 +1118,10 @@
     api("DELETE", "/api/machine").then(() => loadMachine()).catch(fail);
   });
   // The roster as a pick list: a heading per hub when there are several (Phase 8), THIS PI for the rest. -> the entry
-  async function pickRosterMachine(title, cur) {
+  // misc: NOT ARCADE first in the list (the DISK tab: a drive that is no machine's, kept under "unassigned"; the owner, 2026-11-17)
+  const NOT_ARCADE = {slug: "unassigned", name: "NOT ARCADE"};
+  const machineWord = slug => !slug || slug === "unassigned" ? "NOT ARCADE" : slug;
+  async function pickRosterMachine(title, cur, misc) {
     let R;
     try { R = await api("GET", "/api/roster"); } catch (e) { fail(e); return null; }
     const item = m => ({
@@ -1128,8 +1131,13 @@
     // Several hubs (Phase 8): a heading per hub label, THIS PI for the rest. One hub or none: the flat list.
     const by = {};
     R.machines.forEach(m => { by[m.slug] = m; });
-    const items = R.groups ? R.groups.flatMap(g => [{head: g.label}].concat(g.slugs.filter(sl => by[sl]).map(sl => item(by[sl]))))
-                           : R.machines.map(item);
+    let items = R.groups ? R.groups.flatMap(g => [{head: g.label}].concat(g.slugs.filter(sl => by[sl]).map(sl => item(by[sl]))))
+                         : R.machines.map(item);
+    if (misc) {
+      by.unassigned = NOT_ARCADE;
+      items = [{key: "unassigned", title: "NOT ARCADE", find: ["not arcade", "misc", "unassigned"],
+                sub: "no machine's: a personal, donor or camera drive"}].concat(items);
+    }
     const pick = await pickFrom(title, items, cur);
     return pick ? by[pick] : null;
   }
@@ -2939,7 +2947,8 @@
                      mounted: ["MOUNTED", "warn"]};
   const DISK_MEDIA = [["hdd", "HDD"], ["cf", "CF"], ["sd", "SD"], ["ssd", "SSD"]];
   const DISK_LABEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
-  const DISK_DOING = {read: "READING", retry: "RETRYING", check: "CHECKING", write: "WRITING", format_check: "CHECKING", format: "FORMATTING", mame: "MAME CHECK OF"};
+  const DISK_DOING = {read: "READING", retry: "RETRYING", check: "CHECKING", write: "WRITING", format_check: "CHECKING", format: "FORMATTING", mame: "MAME CHECK OF",
+                      file: "FILING"};
 
   const loadImages = () => api("GET", "/api/disk/images").then(r => { K.images = r.images; renderDisk(); }).catch(() => {});
   async function loadDisk() {
@@ -3064,7 +3073,7 @@
     const s = st.status && st.status.state === "running" ? st.status : {}, r = st.request || s;
     const c = el("div", "card");
     const what = r.op === "check" || r.op === "format_check" || r.op === "format" ? r.device : r.op === "write" ? `${base(r.image)} → ${r.device}`
-               : r.op === "mame" ? base(r.image)
+               : r.op === "mame" ? base(r.image) : r.op === "file" ? `${base(r.image)} under ${machineWord(r.machine)}`
                : `${r.label || ""}${r.device ? " · " + r.device : ""}`;
     c.appendChild(el("h2", null, `${s.verify_only ? "VERIFYING" : DISK_DOING[r.op] || "WORKING"} ${what}`));
     const bar = el("div", "dk-bar"), fill = el("div");
@@ -3130,6 +3139,10 @@
       line(m.why, m.state === "match" ? "mut" : "warn");
       if (m.where && m.where.length) line("Where: " + m.where.slice(0, 6).map(([o, n]) => `${GB(o)} (${n.toLocaleString("en-US")} bytes)`).join(", ")
                                           + (m.places > 6 ? ` and ${m.places - 6} more` : ""), "mut");
+    } else if (s.op === "file" && s.state === "done") {
+      big(`FILED UNDER ${machineWord(s.machine)}`, "ok");
+      line(base(s.image));
+      line(s.filed ? `It was under ${machineWord(s.filed.from)}. Only its record changed: the image stays where it is.` : "It was already filed there.", "mut");
     } else if (s.op === "format_check" && s.state === "done") {
       big("FORMAT CHECK PASSED", "ok");
       line(`${s.device} · ${driveName(s.identity)} · ${exact((s.identity || {}).bytes)}`);
@@ -3158,10 +3171,15 @@
     const cur = K.machine ? K.machineName : ((S.st && (S.st.machine_name || S.st.machine)) || null);
     const other = el("button", null, "OTHER MACHINE");
     other.addEventListener("click", async () => {
-      const m = await pickRosterMachine("Which machine is this drive from?", K.machine || (S.st && S.st.machine));
+      const m = await pickRosterMachine("Which machine is this drive from?", K.machine || (S.st && S.st.machine), true);
       if (m) { K.machine = m.slug; K.machineName = m.name; renderDisk(); }
     });
-    add(row, el("b", null, "FOR"), el("span", "chip", cur || "unassigned"), other);
+    add(row, el("b", null, "FOR"), el("span", "chip", cur || "NOT ARCADE"), other);
+    if (K.machine !== "unassigned" && (K.machine || (S.st && S.st.machine))) {   // one tap for a drive that is no machine's
+      const misc = el("button", null, "NOT ARCADE");
+      misc.addEventListener("click", () => { K.machine = NOT_ARCADE.slug; K.machineName = NOT_ARCADE.name; renderDisk(); });
+      row.appendChild(misc);
+    }
     if (K.machine) {
       const back = el("button", null, "CURRENT");
       back.addEventListener("click", () => { K.machine = K.machineName = null; renderDisk(); });
@@ -3409,13 +3427,13 @@
     if (!imgs) { c.appendChild(el("div", "mut", "Reading the store's list…")); return c; }
     if (!imgs.length) { c.appendChild(el("div", "mut", "None yet: READ a drive and its image lands here.")); return c; }
     for (const x of imgs.slice(0, 20)) {
-      const r = el("div", "dk-img"), arch = {pending: ["ARCHIVE PENDING", "mut"], uploaded: ["ARCHIVED", "ok"], none: ["NOT FOR THE ARCHIVE", "mut"]}[x.archive];
+      const r = el("div", "dk-img"), arch = {pending: ["ARCHIVE PENDING", "mut"], uploaded: ["ARCHIVED", "ok"], none: ["NOT QUEUED (FILE UNDER queues it)", "mut"]}[x.archive];
       add(r, el("b", null, (x.label || base(x.image)) + " "),
           x.media ? el("span", "tag cy", x.media.toUpperCase()) : null,
           el("span", "tag " + (x.reads === 2 ? "ok" : "mut"), x.reads === 2 ? "READ TWICE, MATCH" : "READ ONCE"),
           arch ? el("span", "tag " + arch[1], arch[0]) : null,
           MAME_WORD[x.mame] ? el("span", "tag " + MAME_WORD[x.mame][1], MAME_WORD[x.mame][0]) : null,
-          el("div", "mut", `${x.machine} · ${GB(x.bytes)} · ${stamp(x.started)} · SHA-1 ${(x.sha1 || "").slice(0, 8)}`
+          el("div", "mut", `${machineWord(x.machine)} · ${GB(x.bytes)} · ${stamp(x.started)} · SHA-1 ${(x.sha1 || "").slice(0, 8)}`
                            + (x.source ? " · from " + x.source : "")
                            + (x.fingerprint != null ? " · fingerprint " + x.fingerprint.toLocaleString("en-US") : "")
                            + (x.also_read ? ` · read again ${x.also_read} time${x.also_read > 1 ? "s" : ""}` : "")));
@@ -3424,6 +3442,17 @@
         mb.disabled = st.busy;
         mb.addEventListener("click", () => api("POST", "/api/disk/mame", {image: x.image}).then(() => toast(`MAME CHECK queued: ${x.label || base(x.image)}`)).catch(fail));
         r.appendChild(mb);
+      }
+      if (S.local) {                                 // which machine it is for, or NOT ARCADE: only its record changes
+        const fb = el("button", "mini", "FILE UNDER");
+        fb.disabled = st.busy;
+        fb.addEventListener("click", async () => {
+          const m = await pickRosterMachine(`File ${x.label || base(x.image)} under`, x.machine, true);
+          if (!m || m.slug === x.machine) return;
+          api("POST", "/api/disk/file", {image: x.image, machine: m.slug})
+            .then(() => toast(`FILE UNDER ${machineWord(m.slug)} queued: ${x.label || base(x.image)}`)).catch(fail);
+        });
+        r.appendChild(fb);
       }
       c.appendChild(r);
     }
@@ -3616,7 +3645,7 @@
     for (const x of imgs.slice(0, 30)) {
       const row = el("button", "row dk-recrow");
       add(row, el("b", null, x.label || base(x.image)),
-          el("div", "mut", `${x.machine} · ${GB(x.bytes)} · ${stamp(x.started)}${x.source ? " · from " + x.source : ""}`));
+          el("div", "mut", `${machineWord(x.machine)} · ${GB(x.bytes)} · ${stamp(x.started)}${x.source ? " · from " + x.source : ""}`));
       row.addEventListener("click", () => loadRecord(x.image));
       c.appendChild(row);
     }
@@ -4059,7 +4088,7 @@
     for (const x of imgs.slice(0, 40)) {
       const row = el("div", "dk-imgrow"), r = el("button", "row dk-recrow");
       add(r, el("b", null, x.label || base(x.image)),
-          el("div", "mut", `${x.machine} · ${GB(x.bytes)} · ${stamp(x.started)}${x.source ? " · from " + x.source : ""}`));
+          el("div", "mut", `${machineWord(x.machine)} · ${GB(x.bytes)} · ${stamp(x.started)}${x.source ? " · from " + x.source : ""}`));
       r.addEventListener("click", () => fbOpenImage(x));
       add(row, r, fbIdxCell(x), fbTextCell(x));
       c.appendChild(row);

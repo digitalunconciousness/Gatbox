@@ -906,6 +906,14 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         its first real CHD confirms the format. System change: `mame-tools` in the apt list and one MANIFEST line (`gatboxlib/chd.py`).
         `test-disk-mame.sh`: 24, `test-disk.sh`: 189, `test-dash.sh`: 370, `test-bootstrap.sh`: 174; 4 breakages of `chd.py` (never MATCH, scratch copy kept, "written" always, never) each fail `test-disk-mame.sh`.
         **On the Pi:** copy a game's MAME CHD into `/srv/gatbox/disks/_chd/`, open DISK, check the CHD line counts it, then MAME CHECK on that game's image.
+  - [x] **NOT ARCADE and FILE UNDER** (the owner, 2026-11-17: "an easy way to set the machine as unclassified or misc for drives not arcade
+        related"; built that day, **not installed**). The DISK tab's FOR row has NOT ARCADE beside OTHER MACHINE (one tap; CURRENT goes back), and
+        every machine picker on the tab lists NOT ARCADE first. Each stored image has FILE UNDER (the 7" only): a machine, or NOT ARCADE. It is a
+        disk job (`op: file`, `gatbox-disk file -i IMAGE -m SLUG|unassigned`) that changes the image's sidecar only (`machine`, `realm`, a `filed`
+        line); the image stays in the folder it was read into, so the drive browser's index and thumbnails stay valid. Every READ is now queued for
+        the archive, NOT ARCADE ones included (the owner: "everything"), and filing an older image that was kept off the queue queues it. Nothing
+        drains the queue yet (`docs/plans/2026-11-17-disk-image-drain.md`). No system config. `test-disk.sh`: 199, `test-dash.sh`: 377; with
+        FILE UNDER no longer queueing an old image, `test-disk.sh` fails.
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4
   - [x] Task 4 (built 2026-11-14 and **installed on the Pi that day**: the owner ran the bootstrap. Seen again 2026-11-16: the Pi's unit list has

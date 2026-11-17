@@ -110,7 +110,8 @@ USB port power switching, INA226, relays, MAK Strike, GBS-Control, RP2350B bus d
    in the drive browser writes anywhere but its own `_browse` folder. 2026-11-16: putting an image back on the drive it came
    from (RESTORE) is a disk write, armed and acknowledged like any other, with the one "this is the drive the image came from"
    refusal lifted on purpose; a quick FORMAT of a target drive is a disk write too (built 2026-11-16, installed 2026-11-17).
-   `docs/plans/2026-11-16-restore-and-format.md`.)
+   `docs/plans/2026-11-16-restore-and-format.md`. 2026-11-17: a hold through Raspberry Pi Connect's screen sharing counts as the
+   Pi's own screen; the owner is fine with that.)
 7. **GPIO is 3.3 V only, Pi 5 included.** gpiozero (+lgpio), never RPi.GPIO. GPIO3 and GPIO26 reserved; keep I²C
    (2/3), UART (14/15) and SPI free. Anything at 5 V goes through a divider / opto / level shifter.
 8. **The board under test is always external.** Nothing here energizes a board.

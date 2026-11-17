@@ -91,6 +91,17 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       what was under it). The DISK tab shows "takes N GB" beside an image's size when that is less. System change: one MANIFEST line in
       the bootstrap and one in `archive/install.sh` (`sparse.py`); no unit changes. `test-sparse.sh`: 8, `test-disk.sh`: 226,
       `test-archive-disks.sh`: 34, `test-archive-install.sh`: 42, `test-dash.sh`: 390, `test-bootstrap.sh`: 198.
+- [x] **rpcbind masked, and the owner's answers on the Pi's audit** (2026-11-17; built that day, **not installed**).
+      rpcbind (from Pi OS's nfs-common) listened on port 111 on every interface, the hotspot included (audit 14.1). Nothing
+      here uses NFS, so the bootstrap masks `rpcbind.socket` and `rpcbind.service` (the owner: "turn the bind off if nothing
+      uses it"); `--check` lists it; `systemctl unmask rpcbind.socket rpcbind.service` undoes it. System change: those two
+      units masked, shown in the PR. `test-bootstrap.sh`: 200. Her answers on the rest:
+      - **Arming from a remote screen is fine** (14.5): a hold through Raspberry Pi Connect's screen sharing counts as the Pi's
+        own screen, as it does today.
+      - **The USB over-current storm of 2026-11-16** (6.4) came from a USB device on a port that pulled it down; nothing is
+        plugged into that port any more.
+      - **`_chd/carnevil.chd` was made from the CarnEvil image itself with chdman**, so it is not a MAME reference: MAME CHECK
+        will never match against it. MAME 0.276's CarnEvil disks are a different dump.
 - [x] **The write gate** (the owner, 2026-11-17: "loopback-gate all writes"; built that day, **not installed**). gatbox-web
       had no gate on most of its changes: a phone, or any page open on one, could edit the roster, clear the machine, start a
       disk READ or confirm a rail limit. Now every change is the Pi's own screen's, checked in one place (`route()` in

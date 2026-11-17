@@ -98,6 +98,21 @@ def main():
 
 
 def run(tmp):
+    print("the tunnel listener stays on localhost (it trusts the Access header without a signature check):")
+    for bind in ("127.0.0.1:8080", "[::1]:8080", "localhost:8080", "127.0.0.2:8080"):
+        check(f"ARCHIVE_TUNNEL_BIND={bind}: taken", Config({"ARCHIVE_TUNNEL_BIND": bind}).tunnel[1] == 8080)
+    for bind in ("0.0.0.0:8080", "192.0.2.5:8080", "[::]:8080", "gatbox-archive.example:8080"):
+        try:
+            Config({"ARCHIVE_TUNNEL_BIND": bind})
+            refused = ""
+        except ValueError as e:
+            refused = str(e)
+        check(f"ARCHIVE_TUNNEL_BIND={bind}: refused, saying why", "must be a localhost address" in refused)
+    r = subprocess.run([sys.executable, os.path.join(REPO, "archive", "gatbox-archive"), "status"], capture_output=True, text=True,
+                       timeout=60, env=dict(os.environ, ARCHIVE_TUNNEL_BIND="0.0.0.0:8080", ARCHIVE_DATA=f"{tmp}/refused"))
+    check("... and the archive won't start that way: exit 2, one line, no traceback, nothing made",
+          r.returncode == 2 and "must be a localhost address" in r.stderr and "Traceback" not in r.stderr
+          and not os.path.exists(f"{tmp}/refused"))
     cfg = Config({"ARCHIVE_DATA": f"{tmp}/data", "ARCHIVE_TUNNEL_BIND": "127.0.0.1:0", "ARCHIVE_PRIVATE_BIND": "127.0.0.1:0",
                   "ARCHIVE_MAX_FILE": str(20 * MIB), "ARCHIVE_PEOPLE": "partner@example.test,owner@example.test"})
     arc = Archive(cfg)

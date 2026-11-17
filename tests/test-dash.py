@@ -10,6 +10,7 @@ logger reads a replayed CSV, the page is tapped like a finger would), checked in
 Temp dirs and spare ports only; a synthetic two-entry roster stands in for the real one.
     python3 tests/test-dash.py [SCREENSHOT_DIR]      (no dir: the screenshots are taken, then thrown away)
 """
+import glob
 import json
 import os
 import re
@@ -305,7 +306,7 @@ def setup():
                GATBOX_MANUALS=f"{T}/manuals", GATBOX_LIBRARY=f"{T}/lib/library.sqlite", GATBOX_MAME_TITLES=f"{T}/mame-titles.json",
                GATBOX_MANUALS_SPOOL=f"{T}/mspool", GATBOX_SYSFS=FD.sys, GATBOX_DEV=FD.dev, GATBOX_MOUNTINFO=FD.mountinfo, GATBOX_UDEV=FD.udev,
                GATBOX_DISKS=FD.store, GATBOX_DISK_SPOOL=f"{T}/dspool", GATBOX_BROWSE_SOCK=f"{T}/browse.sock",
-               GATBOX_DISK_SEND_STATE=f"{T}/dsend")
+               GATBOX_DISK_SEND_STATE=f"{T}/dsend", GATBOX_IMPORT_SETTLE="0")
     # A stand-in fls in front of the real one: it adds one line a drive cannot be made to give here, an entry whose inode another file
     # now holds ("deleted-realloc"), to a folder listing while the file `ghost` is beside it. The browser scrubs its environment, so
     # the stand-in is steered by that file and not by a variable.
@@ -1312,7 +1313,7 @@ def main():
                         extra.update(FAKE_DDRESCUE_SLOW="4", FAKE_DDRESCUE_NOISE="1", GATBOX_DISK_POLL="0.3", GATBOX_DISK_TICK="0")
                     subprocess.run(["python3", os.path.join(REPO, "tools/gatbox-disk"), "--job", f"{T}/dspool/request.json",
                                     "--status", f"{T}/dspool/status.json"], capture_output=True, timeout=120, check=False,
-                                   env=FD.env(GATBOX_API=B, **extra))
+                                   env=FD.env(GATBOX_API=B, GATBOX_IMPORT_SETTLE="0", **extra))
                 time.sleep(0.2)
         threading.Thread(target=disk_runner, daemon=True).start()
 
@@ -1416,6 +1417,30 @@ def main():
               and settles(c, "document.querySelector('#dk-body .dk-send').textContent.includes('1 image there') && document.querySelector('#dk-body .dk-send').textContent.includes('not on the home network')", 10))
         shot("23e-disk-archived")
         os.remove(f"{T}/dsend/state.json")
+        # IMPORT (the owner, 2026-11-17: an image from the laptop): a file copied into the store's _incoming folder
+        os.makedirs(f"{FD.store}/_incoming", exist_ok=True)
+        open(f"{FD.store}/_incoming/carnevil-hdd.img", "wb").write(os.urandom(2 * MiB + 9))
+        click('[data-view="meter"]'); click('[data-view="disk"]')
+        check("the images card lists what is waiting to import, with IMPORT",
+              settles(c, "!!document.querySelector('#dk-body .dk-incoming') && document.querySelector('#dk-body .dk-incoming').textContent.includes('carnevil-hdd.img')", 15)
+              and "Waiting to import (1)" in text("#dk-body .dk-incoming")
+              and q("[...document.querySelectorAll('#dk-body .dk-incoming button')].some(b => b.textContent === 'IMPORT')"))
+        shot("23f-disk-incoming")
+        q("document.querySelector('#pane h2').textContent = ''")
+        q("[...document.querySelectorAll('#dk-body .dk-incoming button')].find(b => b.textContent === 'IMPORT').click()")
+        c.wait("!document.querySelector('#sheet').classList.contains('hide') && document.querySelector('#pane h2').textContent.startsWith('Which machine')", 10)
+        q("[...document.querySelectorAll('#pane .picklist .row')].find(r => r.textContent.includes('Gauntlet Legends') || r.textContent.includes('gauntlet-legends')).click()")
+        c.wait("[...document.querySelectorAll('#pane button')].some(b => b.textContent === 'HDD')", 10)
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'HDD').click()")
+        c.wait("!!document.querySelector('#pane .kp-field')", 10)
+        check("... the label is offered from the file's name", text("#pane .kp-field") == "carnevil-hdd")
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'SAVE').click()")
+        check("IMPORT runs as a disk job: IMPORTED, and the image is in the list tagged IMPORTED, the waiting list gone",
+              dk_has("IMPORTED", 30) and settles(c, "[...document.querySelectorAll('#dk-body .dk-img')].some(r => r.textContent.startsWith('carnevil-hdd') && r.textContent.includes('IMPORTED'))", 15)
+              and settles(c, "!document.querySelector('#dk-body .dk-incoming')", 10))
+        shot("23g-disk-imported")
+        for p_ in glob.glob(f"{FD.store}/gauntlet-legends/carnevil-hdd_*"):     # later checks count the store's images
+            os.remove(p_)
         FORROW = "[...document.querySelectorAll('#dk-body .btnrow')].find(r => r.firstChild && r.firstChild.textContent === 'FOR')"
         check("the READ's FOR row has NOT ARCADE beside OTHER MACHINE",
               settles(c, f"!!{FORROW} && [...{FORROW}.querySelectorAll('button')].some(b => b.textContent === 'NOT ARCADE')", 10))

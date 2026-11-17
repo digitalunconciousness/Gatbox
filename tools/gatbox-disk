@@ -74,7 +74,7 @@ def lib_path():
 
 
 sys.path.insert(0, lib_path())
-from gatboxlib.disks import (DISKS, MARKER, REFUSED, describe, disks, images, read_file,  # noqa: E402
+from gatboxlib.disks import (DISKS, INCOMING, MARKER, REFUSED, SETTLE, describe, disks, images, incoming, incoming_dir, read_file,  # noqa: E402
                              same_drive, store_mounted)
 from gatboxlib import chd as CHD  # noqa: E402
 
@@ -430,24 +430,8 @@ class Read(Work):
         self.tick(f"{gb(done)} of {gb(size)} read from the drive", 0.05 + 0.73 * done / size)
 
     def stored_copy(self, folder, sha1):
-        """(sidecar path, its contents) of an image in the store with these bytes, or None. Every machine's folder is searched, the
-        one this read is for first: the same drive read again under another machine, or under none, is still the same bytes, and a
-        second copy of a 40 GB image is not what anyone asked for. Only a sidecar with its .img inside the store counts, as in
-        disks.images() (a read still in progress, <label>.read.json, and a sidecar whose image is gone do not)."""
-        store = os.path.realpath(DISKS)
-        sides = sorted(glob.glob(os.path.join(store, "*", "*.json")), key=lambda p: (os.path.dirname(p) != folder, p))
-        for side in sides:
-            img = side[:-5] + ".img"
-            if side.endswith(".read.json") or not os.path.isfile(img) or not os.path.realpath(img).startswith(store + os.sep):
-                continue
-            try:
-                with open(side) as f:
-                    old = json.load(f)
-            except (OSError, ValueError):
-                continue
-            if isinstance(old, dict) and old.get("sha1") == sha1:
-                return side, old
-        return None
+        return find_stored(folder, sha1)
+
 
     def store(self, folder, part, mapf, state):
         """Name the image after its label, its read's date and its SHA-1; never store the same bytes twice, whichever machine's folder
@@ -495,6 +479,27 @@ class Read(Work):
                 "archive": i["archive"], "started": i["started"], "finished": round(time.time(), 3),
                 "date": now_iso(), "clock": clock_source(), "note": i.get("note", ""), "also_read": [],
                 "tool": "gatbox-disk"}
+
+
+def find_stored(folder, sha1):
+    """(sidecar path, its contents) of an image in the store with these bytes, or None. Every machine's folder is searched, the
+    one this read is for first: the same drive read again under another machine, or under none, is still the same bytes, and a
+    second copy of a 40 GB image is not what anyone asked for. Only a sidecar with its .img inside the store counts, as in
+    disks.images() (a read still in progress, <label>.read.json, and a sidecar whose image is gone do not)."""
+    store = os.path.realpath(DISKS)
+    sides = sorted(glob.glob(os.path.join(store, "*", "*.json")), key=lambda p: (os.path.dirname(p) != folder, p))
+    for side in sides:
+        img = side[:-5] + ".img"
+        if side.endswith(".read.json") or not os.path.isfile(img) or not os.path.realpath(img).startswith(store + os.sep):
+            continue
+        try:
+            with open(side) as f:
+                old = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if isinstance(old, dict) and old.get("sha1") == sha1:
+            return side, old
+    return None
 
 
 def queue(sha1, sha256, path, machine):
@@ -1318,6 +1323,92 @@ def mame_check(image, disks, w):
         os.close(lock)
 
 
+# --- IMPORT: an image file brought in from elsewhere (the owner, 2026-11-17: "an image for carnevil on my laptop") -------------
+
+
+def ensure_incoming():
+    """The store's _incoming folder: the job's, 2775, so the owner (group gatbox-disk-queue) can copy files in and the job can
+    move them out. Made when the store is mounted; a folder the owner made herself is left as it is."""
+    if not store_mounted():
+        return
+    d = incoming_dir()
+    if not os.path.isdir(d):
+        os.mkdir(d)
+        os.chmod(d, 0o2775)
+
+
+def import_label(name):
+    """A label from a file name: the stem, letters, digits, '.', '_', '-' only, at most 40 characters."""
+    stem = re.sub(r"\.(img|bin|raw|dd|iso)$", "", name, flags=re.I)
+    lab = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-._")[:40].rstrip("-._")
+    return lab if LABEL.match(lab or "") else "IMPORTED"
+
+
+def import_file(name, machine, label, media, realm, note, w):
+    """IMPORT one file from _incoming into the store, filed like a READ: hashed (SHA-1 and SHA-256), its first 64 MiB fingerprinted,
+    named <label>_<date>_<sha1[:8]>.img in its machine's folder, a sidecar that says it was imported from a file (no drive: it can
+    never be taken for "the drive it came from"), and queued for the archive. The file is moved, not copied. The same bytes already
+    in the store: nothing is moved, and it says where they are."""
+    if machine != "unassigned" and not SLUG.match(machine):
+        raise Stop(f"machine: not a roster slug: {machine!r}")
+    if not LABEL.match(label or ""):
+        raise Stop("label: 1-40 of letters, digits, '.', '_', '-' (it becomes the file name)")
+    if media not in MEDIA:
+        raise Stop(f"media: one of {', '.join(MEDIA)}")
+    require_store()
+    lock = take_lock()
+    try:
+        d = incoming_dir()
+        src = os.path.join(d, name) if isinstance(name, str) else ""
+        if (not name or "/" in name or name.startswith(".") or not os.path.isfile(src) or os.path.islink(src)
+                or os.path.dirname(os.path.realpath(src)) != os.path.realpath(d)):
+            raise Stop(f"{name!r} isn't a file in the store's {INCOMING} folder", "copy it into /srv/gatbox/disks/_incoming first")
+        st = os.stat(src)
+        if time.time() - st.st_mtime < SETTLE:
+            raise Stop(f"{name} changed {time.time() - st.st_mtime:.0f} s ago: it may still be arriving", "wait for the copy to finish")
+        size = st.st_size
+        if size < 1:
+            raise Stop(f"{name} is empty")
+        started = round(time.time(), 3)
+        w.info.update(op="import", file=name, machine=machine, label=label, media=media, bytes=size, started=started)
+        w.step("hash", f"{name}: {gb(size)}", progress=0.02)
+        sha1, sha256 = hashed_read(src, size, sha256=True,
+                                   on_progress=lambda n: w.tick(f"hashed {gb(n)} of {gb(size)}", 0.02 + 0.93 * n / size))
+        with open(src, "rb") as f:
+            scan = scan_head(f.fileno())
+        if os.stat(src).st_mtime != st.st_mtime or os.stat(src).st_size != size:
+            raise Stop(f"{name} changed while it was hashed", "wait for the copy to finish, then IMPORT again")
+        folder = os.path.join(os.path.realpath(DISKS), machine)
+        hit = find_stored(folder, sha1)
+        if hit:
+            side, _ = hit
+            where = os.path.relpath(side[:-5] + ".img", os.path.realpath(DISKS))
+            w.info.update(stored={"path": side[:-5] + ".img", "new": False}, sha1=sha1)
+            raise Stop(f"these bytes are in the store already, as {where}", f"nothing was imported; {name} is still in {INCOMING} to delete")
+        os.makedirs(folder, exist_ok=True)
+        base = os.path.join(folder, f"{label}_{time.strftime('%Y%m%d', time.localtime(started))}_{sha1[:8]}")
+        if os.path.exists(base + ".img") or os.path.exists(base + ".json"):
+            raise Stop(f"{base}.img already exists with different contents", "use another label")
+        # A rename, not a hard link: the file is the owner's (she copied it in), and the kernel's protected_hardlinks refuses a link
+        # to someone else's file. The name was checked free just above, under the store's lock.
+        os.rename(src, base + ".img")
+        side = {"label": label, "machine": machine, "realm": realm, "media": media,
+                "source": {"imported": name, "bytes": size}, "bytes": size, "sha1": sha1, "sha256": sha256,
+                "fingerprint": {"bytes": scan["bytes"], "nonzero": scan["nonzero"], "sha1": scan["sha1"]},
+                "ddrescue": None, "passes": [], "reads": 1, "identical": None,
+                "mame": {"state": "not run", "why": "not checked yet: MAME CHECK on the DISK tab, or gatbox-disk mame"},
+                "archive": {"state": "pending"}, "started": started, "finished": round(time.time(), 3), "date": now_iso(),
+                "clock": clock_source(), "note": note, "also_read": [], "imported": True, "tool": "gatbox-disk import"}
+        with open(os.open(base + ".json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644), "w") as f:
+            json.dump(side, f, indent=1)
+        queue(sha1, sha256, base + ".img", machine)
+        w.info.update(stored={"path": base + ".img", "new": True}, sha1=sha1, sha256=sha256, fingerprint=side["fingerprint"])
+        w.step("store", base + ".img", progress=1.0)
+        return base + ".img"
+    finally:
+        os.close(lock)
+
+
 def file_under(image, machine, realm, w):
     """FILE UNDER: which machine a stored image is for, or none ("unassigned": NOT ARCADE on the DISK tab). Changes the sidecar
     only: the image stays where it is (its folder is where it was read, and the drive browser's index and thumbnails are keyed by
@@ -1391,6 +1482,10 @@ def run_job(request, status):
         return 0
     say = (lambda m: print("gatbox-disk:" + m, flush=True))
     w = Work(status, say)
+    try:
+        ensure_incoming()                       # IMPORT's folder, on a store that has none yet
+    except OSError:
+        pass
     # SIGTERM is how systemd stops this job: its time limit, or `systemctl stop`. Left alone it would end the process where it stands:
     # no status, no log line, and a running.json that the DISK tab and every thumbnail wait on for good (the Pi, 2026-11-16: a 2.5 hour
     # write against a 3 hour limit). Turned into a Stop, the job takes its usual way out: it says what happened, a write logs itself as
@@ -1432,6 +1527,10 @@ def run_job(request, status):
                 w.info.update(base, image=req.get("image"))
                 disks = {k: v for k, v in (req.get("disks") or {}).items() if isinstance(v, dict)} if isinstance(req.get("disks"), dict) else {}
                 mame_check(str(req.get("image")), disks, w)
+            elif op == "import":
+                w.info.update(base)
+                import_file(str(req.get("file") or ""), machine, str(req.get("label") or ""), req.get("media"), req.get("realm"),
+                            str(req.get("note") or "")[:500], w)
             elif op == "file":
                 w.info.update(base, image=req.get("image"))
                 file_under(str(req.get("image")), machine, req.get("realm"), w)
@@ -1497,6 +1596,12 @@ def main():
             p.add_argument("--verify-only", action="store_true", help="it already holds the image: read it back twice")
     p = sub.add_parser("mame", help="the MAME CHD check of an image (reads only)")
     p.add_argument("-i", "--image", required=True)
+    p.add_argument("--json", action="store_true")
+    p = sub.add_parser("import", help="an image file from the store's _incoming folder, filed like a READ")
+    p.add_argument("file", nargs="?", help="its name in _incoming (none: list what is there)")
+    p.add_argument("-m", "--machine", default="unassigned", help="a roster slug, or unassigned (not an arcade drive)")
+    p.add_argument("-l", "--label", help="the label (default: from the file's name)")
+    p.add_argument("--media", default="hdd", choices=sorted(MEDIA))
     p.add_argument("--json", action="store_true")
     p = sub.add_parser("file", help="which machine a stored image is for (only its sidecar changes)")
     p.add_argument("-i", "--image", required=True)
@@ -1570,6 +1675,19 @@ def main():
         except CHD.ChdError as e:
             return report_stop(Stop(str(e)), args.json)
         print(json.dumps(res) if args.json else f"\nMAME: {res['state'].upper()}: {res['why']}")
+        return 0
+    if args.cmd == "import":
+        if not args.file:
+            rows = incoming()
+            print(json.dumps(rows) if args.json else (f"{len(rows)} file(s) in {incoming_dir()}" + "".join(
+                f"\n  {r['name']}: {gb(r['bytes'])}" + ("" if r["settled"] else " (still arriving)") for r in rows)))
+            return 0
+        w = Work(None, say)
+        try:
+            path = import_file(args.file, args.machine, args.label or import_label(args.file), args.media, None, "", w)
+        except Stop as s:
+            return report_stop(s, args.json, w.info)
+        print(json.dumps(w.info) if args.json else f"\nIMPORTED: {path}")
         return 0
     if args.cmd == "file":
         try:

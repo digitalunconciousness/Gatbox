@@ -17,6 +17,7 @@ import glob
 import json
 import os
 import re
+import time
 
 SYSFS = os.environ.get("GATBOX_SYSFS", "/sys")
 DEV = os.environ.get("GATBOX_DEV", "/dev")
@@ -242,5 +243,31 @@ def images():
                     "started": j.get("started"), "source": f"{src.get('vendor', '')} {src.get('model', '')}".strip(),
                     "reads": j.get("reads"), "also_read": len(j.get("also_read") or []),
                     "fingerprint": (j.get("fingerprint") or {}).get("nonzero"),
-                    "mame": (j.get("mame") or {}).get("state"), "archive": (j.get("archive") or {}).get("state")})
+                    "mame": (j.get("mame") or {}).get("state"), "archive": (j.get("archive") or {}).get("state"),
+                    "imported": src.get("imported")})
     return sorted(out, key=lambda i: i.get("started") or 0, reverse=True)
+
+
+# --- IMPORT's _incoming folder (tools/gatbox-disk import_file) -------------------------------------------------------------
+INCOMING = "_incoming"
+SETTLE = float(os.environ.get("GATBOX_IMPORT_SETTLE", "60"))   # a file still growing (a copy under way) is not imported
+
+
+def incoming_dir():
+    return os.path.join(os.path.realpath(DISKS), INCOMING)
+
+
+def incoming():
+    """The files waiting in _incoming: [{name, bytes, age, settled}]. Hidden files and .part files are copies under way."""
+    d, out, now = incoming_dir(), [], time.time()
+    try:
+        names = sorted(os.listdir(d))
+    except OSError:
+        return []
+    for n in names:
+        p = os.path.join(d, n)
+        if n.startswith(".") or n.endswith(".part") or not os.path.isfile(p) or os.path.islink(p):
+            continue
+        st = os.stat(p)
+        out.append({"name": n, "bytes": st.st_size, "age": round(now - st.st_mtime, 1), "settled": now - st.st_mtime >= SETTLE})
+    return out

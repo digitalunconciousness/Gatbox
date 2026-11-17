@@ -621,6 +621,15 @@ def api_disk_mame(h, m, q):
     _disk_queued(h, req, f"MAME check of {os.path.basename(req['image'])}")
 
 
+def api_disk_incoming(h, m, q):
+    h.json(200, disk.incoming())
+
+
+def api_disk_import(h, m, q):
+    req = disk.import_request(h.body())
+    _disk_queued(h, req, f"import {req['file']} -> {req['machine']}/{req['label']} ({req['media']})")
+
+
 def api_disk_file(h, m, q):
     req = disk.file_request(h.body())
     _disk_queued(h, req, f"file {os.path.basename(req['image'])} under {req['machine']}")
@@ -1126,6 +1135,8 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("POST", r"/api/disk/check", api_disk_check),
     ("POST", r"/api/disk/mame", api_disk_mame),
     ("POST", r"/api/disk/file", api_disk_file),
+    ("GET", r"/api/disk/incoming", api_disk_incoming),
+    ("POST", r"/api/disk/import", api_disk_import),
     ("GET", r"/api/disk/chd", api_disk_chd),
     ("POST", r"/api/disk/write", api_disk_write),
     ("POST", r"/api/disk/format-check", api_disk_format_check),

@@ -223,6 +223,14 @@ def writes():
     return out
 
 
+def _allocated(path):
+    """The room an image takes on the store (its zero blocks are holes: gatboxlib/sparse.py), or None."""
+    try:
+        return os.stat(path).st_blocks * 512
+    except OSError:
+        return None
+
+
 def images():
     """The store's images, from their sidecars (never their bytes): the newest first. Only a .img with a sidecar,
     inside the store, counts; a read still in progress (<label>.read.json) doesn't."""
@@ -244,7 +252,7 @@ def images():
                     "reads": j.get("reads"), "also_read": len(j.get("also_read") or []),
                     "fingerprint": (j.get("fingerprint") or {}).get("nonzero"),
                     "mame": (j.get("mame") or {}).get("state"), "archive": (j.get("archive") or {}).get("state"),
-                    "imported": src.get("imported")})
+                    "imported": src.get("imported"), "allocated": _allocated(img)})
     return sorted(out, key=lambda i: i.get("started") or 0, reverse=True)
 
 

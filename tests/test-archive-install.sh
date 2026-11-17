@@ -20,7 +20,7 @@ out=$(run)
 check "installs the library, the file store, the server and the launcher" '[ -f "$L/gatboxlib/library.py" ] && [ -f "$L/gatboxlib/filestore.py" ] && [ -f "$L/gatboxarchive/server.py" ] && [ -x "$T/root/usr/local/bin/gatbox-archive" ]'
 check "the unit goes in, mode 644; the launcher 755" '[ "$(stat -c %a "$T/root/etc/systemd/system/gatbox-archive.service")" = 644 ] && [ "$(stat -c %a "$T/root/usr/local/bin/gatbox-archive")" = 755 ]'
 check "the config is created from the example" 'cmp -s "$REPO/archive/archive.conf.example" "$T/root/etc/gatbox-archive/archive.conf"'
-check "nothing from tests or docs leaks in: only the manifest's files" '[ "$(find "$L" -type f | wc -l)" = 10 ]'
+check "nothing from tests or docs leaks in: only the manifest's files" '[ "$(find "$L" -type f | wc -l)" = 11 ]'
 S="$T/root/usr/local/share/gatbox-archive/static"
 check "the pages' stylesheet and script are installed, mode 644, and no font was fetched in a test run" 'cmp -s "$REPO/archive/static/archive.css" "$S/archive.css" && cmp -s "$REPO/archive/static/archive.js" "$S/archive.js" && [ "$(stat -c %a "$S/archive.css")" = 644 ] && [ ! -d "$S/fonts" ]'
 

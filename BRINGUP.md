@@ -72,10 +72,21 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       the disk job makes the folder 2775, group gatbox-disk-queue, which the owner's login is in). The DISK tab lists what is waiting
       (STILL ARRIVING until it has not changed for 60 s) with IMPORT: a machine or NOT ARCADE, what it is an image of, a label from the
       file's name. The disk job (`op: import`; `gatbox-disk import [FILE] -m SLUG`) hashes it (SHA-1 and SHA-256), fingerprints its first
-      64 MiB, renames it into the machine's folder as `<label>_<date>_<sha1[:8]>.img` with a sidecar that says "imported from a file" (no
+      64 MiB, files it in the machine's folder as `<label>_<date>_<sha1[:8]>.img` with a sidecar that says "imported from a file" (no
       drive, so it can never be taken for the drive an image came from) and queues it for the archive. The same bytes already in the
       store: nothing moves, and it says where. Hidden files, `.part` files and symlinks are not imports. No system config.
-      `test-disk.sh`: 216, `test-dash.sh`: 383.
+      `test-disk.sh`: 216, `test-dash.sh`: 383. (From HOLES below, the file is copied with its zero blocks left out rather than renamed.)
+- [x] **HOLES** (the owner, 2026-11-17: "build option 1, the holes after read and import"; built that day, **not installed**). A drive
+      image's all-zero 64 KiB blocks become holes in the stored file: they read back as zeros, so the bytes, the SHA-1 and the SHA-256
+      don't change, and the image takes the room its data needs (`du`; `ls -l` still shows the full size). `backend/gatboxlib/sparse.py`.
+      READ: made in the hashing pass, which already reads the whole image, so no extra pass (ddrescue's own `--sparse` already left most
+      zeros out). IMPORT: the file is copied into the store in one pass with the hashing, its zero blocks left out, and the original is
+      removed from `_incoming` once the copy is stored; the stored image is the job's own file, like a READ's. `gatbox-disk holes [-i IMAGE]`:
+      a one-time pass over images stored before this (only the parts holding data are read; it says how much each one freed). The
+      archive: an all-zero 8 MiB part is punched as a hole instead of written (a part sent again after a failed check still replaces
+      what was under it). The DISK tab shows "takes N GB" beside an image's size when that is less. System change: one MANIFEST line in
+      the bootstrap and one in `archive/install.sh` (`sparse.py`); no unit changes. `test-sparse.sh`: 8, `test-disk.sh`: 226,
+      `test-archive-disks.sh`: 34, `test-archive-install.sh`: 42, `test-dash.sh`: 390, `test-bootstrap.sh`: 198.
 - [x] **Games for the hubs' machines** (the owner, 2026-11-17: new cabcrawl and tracker games should reach the archive without
       her going to it; `docs/plans/2026-11-17-hub-games.md`; built that day, **not installed**). `backend/gatboxweb/hubgames.py`: a hub
       machine's key that names no game in the library becomes a game on the deck (titled from the machine's name), which the library

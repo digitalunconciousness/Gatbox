@@ -77,6 +77,7 @@ sys.path.insert(0, lib_path())
 from gatboxlib.disks import (DISKS, INCOMING, MARKER, REFUSED, SETTLE, describe, disks, images, incoming, incoming_dir, read_file,  # noqa: E402
                              same_drive, store_mounted)
 from gatboxlib import chd as CHD  # noqa: E402
+from gatboxlib import sparse as SP  # noqa: E402
 
 DDRESCUE = os.environ.get("GATBOX_DDRESCUE", "ddrescue")
 API = os.environ.get("GATBOX_API", "http://127.0.0.1")
@@ -164,14 +165,19 @@ def _is_block(path):
         return False
 
 
-def hashed_read(path, length, sha256=False, on_progress=None):
+def hashed_read(path, length, sha256=False, on_progress=None, holes=False):
     """SHA-1 (and SHA-256) of exactly the first LENGTH bytes of PATH. ON_PROGRESS(bytes so far) is called after every
-    4 MiB piece, so a half-hour pass can say where it is; it must be cheap and must not raise. A block device is read with O_DIRECT, past the
+    4 MiB piece, so a half-hour pass can say where it is; it must be cheap and must not raise. HOLES (a new image in the store,
+    never a drive): the all-zero blocks it reads are made holes as it goes, so the image takes only the room its data needs and
+    the hashing pass is the only pass (gatboxlib/sparse.py). A block device is read with O_DIRECT, past the
     page cache, so a verify reads the drive and not memory, with no replug needed (note §1, row 6). The plain files
     that stand in for devices in the tests are read normally: tmpfs refuses O_DIRECT."""
     h1, h2 = hashlib.sha1(), (hashlib.sha256() if sha256 else None)
     direct = _is_block(path)
-    fd = os.open(path, os.O_RDONLY | (os.O_DIRECT if direct else 0))
+    if holes and direct:
+        raise Stop("holes are only made in an image file, never on a drive")
+    fd = os.open(path, (os.O_RDWR if holes else os.O_RDONLY) | (os.O_DIRECT if direct else 0))
+    dig = SP.Holes(fd) if holes else None
     try:
         buf = mmap.mmap(-1, CHUNK)                  # page-aligned, as O_DIRECT needs
         view = memoryview(buf)
@@ -188,9 +194,14 @@ def hashed_read(path, length, sha256=False, on_progress=None):
                 h1.update(view[:take])
                 if h2:
                     h2.update(view[:take])
+                if dig:
+                    dig.feed(done, view[:take])
                 done += take
                 if on_progress:
                     on_progress(done)
+            if dig:
+                dig.close()
+                os.fsync(fd)
         finally:
             view.release()
             buf.close()
@@ -346,9 +357,9 @@ class Read(Work):
                        needs_retry=True)
         self.step("hash", "SHA-1 and SHA-256", progress=0.8)
         flash = self.media in FLASH                 # a card is read a second time after this, so this pass ends earlier
-        sha1, sha256 = hashed_read(part, size, sha256=True,
+        sha1, sha256 = hashed_read(part, size, sha256=True, holes=True,
                                    on_progress=self._pass("SHA-1 and SHA-256", size, 0.8, 0.85 if flash else 0.97))
-        self.info.update(sha1=sha1, sha256=sha256, bytes=size, reads=1)
+        self.info.update(sha1=sha1, sha256=sha256, bytes=size, reads=1, allocated=SP.allocated(part))
         fd = os.open(part, os.O_RDONLY)          # the image's own first 64 MiB: no second look at a fragile source drive
         try:
             scan = scan_head(fd)
@@ -1347,8 +1358,10 @@ def import_label(name):
 def import_file(name, machine, label, media, realm, note, w):
     """IMPORT one file from _incoming into the store, filed like a READ: hashed (SHA-1 and SHA-256), its first 64 MiB fingerprinted,
     named <label>_<date>_<sha1[:8]>.img in its machine's folder, a sidecar that says it was imported from a file (no drive: it can
-    never be taken for "the drive it came from"), and queued for the archive. The file is moved, not copied. The same bytes already
-    in the store: nothing is moved, and it says where they are."""
+    never be taken for "the drive it came from"), and queued for the archive. The file is copied in one pass with the hashing, its
+    all-zero blocks left out as holes (gatboxlib/sparse.py: a copy from a laptop has its zeros written out in full), and the original
+    is removed from _incoming once the copy is stored. The copy is the job's own file, as a READ's image is. The same bytes already in
+    the store: the copy is dropped, the file stays in _incoming, and it says where they are."""
     if machine != "unassigned" and not SLUG.match(machine):
         raise Stop(f"machine: not a roster slug: {machine!r}")
     if not LABEL.match(label or ""):
@@ -1371,27 +1384,38 @@ def import_file(name, machine, label, media, realm, note, w):
             raise Stop(f"{name} is empty")
         started = round(time.time(), 3)
         w.info.update(op="import", file=name, machine=machine, label=label, media=media, bytes=size, started=started)
-        w.step("hash", f"{name}: {gb(size)}", progress=0.02)
-        sha1, sha256 = hashed_read(src, size, sha256=True,
-                                   on_progress=lambda n: w.tick(f"hashed {gb(n)} of {gb(size)}", 0.02 + 0.93 * n / size))
-        with open(src, "rb") as f:
-            scan = scan_head(f.fileno())
-        if os.stat(src).st_mtime != st.st_mtime or os.stat(src).st_size != size:
-            raise Stop(f"{name} changed while it was hashed", "wait for the copy to finish, then IMPORT again")
         folder = os.path.join(os.path.realpath(DISKS), machine)
+        os.makedirs(folder, exist_ok=True)
+        tmp = os.path.join(folder, f".import-{label}.part")       # hidden, and not an .img: no list or browser takes it for an image
+        if os.path.exists(tmp):
+            os.remove(tmp)                                          # left by an import that was stopped: the lock is ours now
+        w.step("copy", f"{name}: {gb(size)}, its zero blocks left out", progress=0.02)
+        try:
+            sha1, sha256, scan = _sparse_copy(src, tmp, size, w)
+        except BaseException as e:
+            try:
+                os.remove(tmp)
+            except FileNotFoundError:
+                pass
+            if isinstance(e, OSError) and e.errno == errno.ENOSPC:
+                raise Stop("the image store is full", f"nothing was imported; {name} is still in {INCOMING}") from None
+            raise
+        if os.stat(src).st_mtime != st.st_mtime or os.stat(src).st_size != size:
+            os.remove(tmp)
+            raise Stop(f"{name} changed while it was copied", "wait for the copy to finish, then IMPORT again")
         hit = find_stored(folder, sha1)
         if hit:
+            os.remove(tmp)
             side, _ = hit
             where = os.path.relpath(side[:-5] + ".img", os.path.realpath(DISKS))
             w.info.update(stored={"path": side[:-5] + ".img", "new": False}, sha1=sha1)
             raise Stop(f"these bytes are in the store already, as {where}", f"nothing was imported; {name} is still in {INCOMING} to delete")
-        os.makedirs(folder, exist_ok=True)
         base = os.path.join(folder, f"{label}_{time.strftime('%Y%m%d', time.localtime(started))}_{sha1[:8]}")
         if os.path.exists(base + ".img") or os.path.exists(base + ".json"):
+            os.remove(tmp)
             raise Stop(f"{base}.img already exists with different contents", "use another label")
-        # A rename, not a hard link: the file is the owner's (she copied it in), and the kernel's protected_hardlinks refuses a link
-        # to someone else's file. The name was checked free just above, under the store's lock.
-        os.rename(src, base + ".img")
+        os.rename(tmp, base + ".img")                               # the name was checked free just above, under the store's lock
+        w.info["allocated"] = SP.allocated(base + ".img")
         side = {"label": label, "machine": machine, "realm": realm, "media": media,
                 "source": {"imported": name, "bytes": size}, "bytes": size, "sha1": sha1, "sha256": sha256,
                 "fingerprint": {"bytes": scan["bytes"], "nonzero": scan["nonzero"], "sha1": scan["sha1"]},
@@ -1402,9 +1426,66 @@ def import_file(name, machine, label, media, realm, note, w):
         with open(os.open(base + ".json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644), "w") as f:
             json.dump(side, f, indent=1)
         queue(sha1, sha256, base + ".img", machine)
+        os.remove(src)                                              # stored, with its sidecar: the original goes
         w.info.update(stored={"path": base + ".img", "new": True}, sha1=sha1, sha256=sha256, fingerprint=side["fingerprint"])
-        w.step("store", base + ".img", progress=1.0)
+        w.step("store", f"{base}.img: takes {gb(w.info['allocated'])} of its {gb(size)}", progress=1.0)
         return base + ".img"
+    finally:
+        os.close(lock)
+
+
+def _sparse_copy(src, dst, size, w):
+    """Copy SRC to the new file DST in one pass: SHA-1 and SHA-256 of every byte, the all-zero 64 KiB blocks left out as holes,
+    the original's first 64 MiB fingerprinted after. -> (sha1, sha256, scan)."""
+    h1, h2 = hashlib.sha1(), hashlib.sha256()
+    fi = os.open(src, os.O_RDONLY)
+    fo = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o660)
+    try:
+        os.ftruncate(fo, size)                                      # the full size, all hole, before any byte is written
+        done = wrote = 0
+        while done < size:
+            piece = os.pread(fi, min(CHUNK, size - done), done)
+            if not piece:
+                raise Stop(f"{os.path.basename(src)} ended after {done:,} bytes, before {size:,}", "it changed while it was copied")
+            h1.update(piece)
+            h2.update(piece)
+            wrote += SP.write_sparse(fo, done, piece)
+            done += len(piece)
+            w.tick(f"copied {gb(done)} of {gb(size)} ({gb(wrote)} of it data)", 0.02 + 0.93 * done / size)
+        os.fsync(fo)
+        scan = scan_head(fi)
+    finally:
+        os.close(fi)
+        os.close(fo)
+    return h1.hexdigest(), h2.hexdigest(), scan
+
+
+def dig_holes(paths, w):
+    """HOLES: the all-zero blocks of images already in the store made holes (the images stored before 2026-11-17, and an imported
+    file that came in whole). The bytes, the SHA-1 and the SHA-256 don't change; only the room each image takes. PATHS: images in
+    the store, or none for all of them. Reads only the parts of each image that hold data. -> one row per image."""
+    require_store()
+    lock = take_lock()
+    try:
+        todo = [image_in_store(p)[0] for p in paths] if paths else sorted(os.path.join(os.path.realpath(DISKS), i["image"])
+                                                                          for i in images())
+        rows = []
+        for n, img in enumerate(todo, 1):
+            name = os.path.relpath(img, os.path.realpath(DISKS))
+            w.step("holes", f"{n} of {len(todo)}: {name}", progress=(n - 1) / max(len(todo), 1))
+            try:
+                r = SP.dig(img, on_progress=lambda done, total, name=name, n=n: w.tick(
+                    f"{name}: looked at {gb(done)} of {gb(total)}", (n - 1 + done / max(total, 1)) / len(todo)))
+            except PermissionError:
+                r = {"error": "this job can't write it (not its file): skipped"}
+            rows.append(dict(r, image=name))
+            w.say(f"    {name}: " + (r["error"] if "error" in r else
+                  f"takes {gb(r['after'])} of its {gb(r['bytes'])} (was {gb(r['before'])}, {gb(r['freed'])} freed)"
+                  + ("" if r["ok"] else "; this filesystem can't make holes")))
+        freed = sum(r.get("freed", 0) for r in rows)
+        w.info.update(op="holes", images=rows, freed=freed)
+        w.step("done", f"{len(rows)} image(s), {gb(freed)} freed", progress=1.0)
+        return rows
     finally:
         os.close(lock)
 
@@ -1607,6 +1688,9 @@ def main():
     p.add_argument("-i", "--image", required=True)
     p.add_argument("-m", "--machine", required=True, help="a roster slug, or unassigned (not an arcade drive)")
     p.add_argument("--json", action="store_true")
+    p = sub.add_parser("holes", help="make the zero blocks of stored images holes (the room they take; their bytes don't change)")
+    p.add_argument("-i", "--image", action="append", default=[], help="an image in the store (none: every image)")
+    p.add_argument("--json", action="store_true")
     p = sub.add_parser("chd", help="the reference CHDs in the store's _chd/ folder")
     p.add_argument("--json", action="store_true")
     for name in ("format-check", "format"):
@@ -1621,7 +1705,7 @@ def main():
     if args.job:
         return run_job(args.job, args.status or os.path.join(os.path.dirname(args.job), "status.json"))
     if not args.cmd:
-        ap.error("a command is needed: list, read, retry, check, write, format-check, format, mame or chd")
+        ap.error("a command is needed: list, read, retry, check, write, format-check, format, mame, chd, import, file or holes")
     # the store is shared by the owner (terminal) and the dashboard's job, both in its group, and setgid
     os.umask(0o002)
     say = (lambda *a: None) if getattr(args, "json", False) else print
@@ -1688,6 +1772,14 @@ def main():
         except Stop as s:
             return report_stop(s, args.json, w.info)
         print(json.dumps(w.info) if args.json else f"\nIMPORTED: {path}")
+        return 0
+    if args.cmd == "holes":
+        w = Work(None, say)
+        try:
+            rows = dig_holes(args.image, w)
+        except Stop as s:
+            return report_stop(s, args.json, w.info)
+        print(json.dumps(w.info) if args.json else f"\nHOLES: {len(rows)} image(s), {gb(w.info['freed'])} freed")
         return 0
     if args.cmd == "file":
         try:

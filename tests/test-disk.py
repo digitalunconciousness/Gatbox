@@ -318,6 +318,58 @@ def main():
     for n_ in ("link.img", ".partial-copy", "still.img.part"):
         os.remove(f"{inc}/{n_}")
 
+    print("holes (the owner, 2026-11-17): an image's zero blocks take no room, and its bytes don't change")
+
+    def took(p):
+        return os.stat(p).st_blocks * 512
+    gap = bytes(12 * MiB)
+    sparse_src = os.urandom(MiB) + gap + os.urandom(64 * 1024 + 512) + gap + os.urandom(5120)
+    usb_disk("sdv", len(sparse_src), "WIDGET", "MOSTLYEMPTY 80", port=21, devnum="8:336", data=sparse_src)
+    code, out = disk("read", "-d", "sdv", "-m", "unassigned", "-l", "EMPTYISH", "--media", "hdd", "--json")
+    rd = json.loads(out) if code == 0 else {}
+    rimg = (rd.get("stored") or {}).get("path", "")
+    check("READ: the image's zero blocks are holes after the hashing pass (it takes about its data, not its size)",
+          code == 0 and open(rimg, "rb").read() == sparse_src and took(rimg) < 4 * MiB and os.path.getsize(rimg) == len(sparse_src))
+    check("... the same SHA-1 and SHA-256 as the drive's bytes, and the job says what it takes",
+          rd.get("sha1") == hashlib.sha1(sparse_src).hexdigest() and rd.get("sha256") == hashlib.sha256(sparse_src).hexdigest()
+          and 0 < rd.get("allocated", 0) < 4 * MiB)
+    lrow = next((i for i in json.loads(disk("list", "--json")[1])["images"] if rimg.endswith(i["image"])), {})
+    check("the store's list says what each image takes (the DISK tab shows it beside the size)",
+          lrow.get("bytes") == len(sparse_src) and lrow.get("allocated") == took(rimg))
+    open(f"{inc}/Mostly Empty.img", "wb").write(sparse_src[::-1])        # a laptop's copy: every zero written out
+    code, out = disk("import", "Mostly Empty.img", "-m", "unassigned", "--json", GATBOX_IMPORT_SETTLE="0")
+    ij = json.loads(out) if code == 0 else {}
+    iimg = (ij.get("stored") or {}).get("path", "")
+    check("IMPORT: copied with its zero blocks left out as holes, the bytes the same, the original gone from _incoming",
+          code == 0 and open(iimg, "rb").read() == sparse_src[::-1] and took(iimg) < 4 * MiB
+          and not os.path.exists(f"{inc}/Mostly Empty.img"))
+    check("... no copy left behind in the machine's folder", not [n for n in os.listdir(f"{STORE}/unassigned") if n.startswith(".import-")])
+    check("... and the stored image is the job's own file now, not the laptop copy's (it can make holes in it later)",
+          os.stat(iimg).st_uid == os.getuid() and os.access(iimg, os.W_OK))
+    with open(iimg, "r+b") as f_:                                          # an image stored before 2026-11-17: written out in full
+        f_.write(open(iimg, "rb").read())
+    before_ = took(iimg)
+    sha_before = hashlib.sha256(open(iimg, "rb").read()).hexdigest()
+    code, out = disk("holes", "-i", os.path.relpath(iimg, STORE), "--json")
+    hj = json.loads(out) if code == 0 else {}
+    row = (hj.get("images") or [{}])[0]
+    check("HOLES on an image written out in full: its zero blocks freed, and it says how much",
+          code == 0 and before_ >= len(sparse_src) and took(iimg) < 4 * MiB and row.get("freed", 0) >= 20 * MiB
+          and hj.get("freed") == row.get("freed"))
+    check("... its bytes and its SHA-256 unchanged", hashlib.sha256(open(iimg, "rb").read()).hexdigest() == sha_before
+          and open(iimg, "rb").read() == sparse_src[::-1])
+    code, out = disk("holes", "--json")
+    hj = json.loads(out) if code == 0 else {}
+    check("HOLES with no image: every image in the store, and nothing more to free the second time",
+          code == 0 and len(hj.get("images", [])) == len(json.loads(disk("list", "--json")[1])["images"])
+          and hj.get("freed", 1) < MiB)
+    code, out = disk("holes", "-i", "../archive-queue.jsonl")
+    check("HOLES refuses what isn't an image in the store", code != 0 and "isn't an image in the store" in out)
+    for p_ in (rimg, iimg):
+        for ext_ in (".img", ".json", ".map"):
+            if os.path.exists(p_[:-4] + ext_):
+                os.remove(p_[:-4] + ext_)
+
     print("the drive's own identity (Task 0, 2026-11-06: the dock's INQUIRY names the dock):")
     usb_disk("sdk", 3 * MiB, "XinTop", "XT-U33502", port=11, devnum="8:160", data=os.urandom(3 * MiB),
              ata=("WDC WD800JD-75MSA1", "WD-WIDGET0001"))

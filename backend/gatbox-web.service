@@ -56,6 +56,8 @@ SupplementaryGroups=gatbox-browse
 # gatbox-sync's status, for the SYSTEM panel's hub block. Read-only and fails soft: that job
 # is the only writer of its own state. "-": start anyway on a Pi where sync never ran.
 ReadOnlyPaths=-/var/lib/gatbox-sync
+# gatbox-disk-send's state, for the DISK tab's ARCHIVED / SENDING and its line about the drain. Read-only, fails soft.
+ReadOnlyPaths=-/var/lib/gatbox-disk-send
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes

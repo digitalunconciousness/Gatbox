@@ -304,7 +304,8 @@ def setup():
                GATBOX_ROMS=f"{T}/roms", GATBOX_MINIPRO_PARTS=f"{T}/parts.txt", GATBOX_MAME_ROMS=f"{T}/mame-roms.json",
                GATBOX_MANUALS=f"{T}/manuals", GATBOX_LIBRARY=f"{T}/lib/library.sqlite", GATBOX_MAME_TITLES=f"{T}/mame-titles.json",
                GATBOX_MANUALS_SPOOL=f"{T}/mspool", GATBOX_SYSFS=FD.sys, GATBOX_DEV=FD.dev, GATBOX_MOUNTINFO=FD.mountinfo, GATBOX_UDEV=FD.udev,
-               GATBOX_DISKS=FD.store, GATBOX_DISK_SPOOL=f"{T}/dspool", GATBOX_BROWSE_SOCK=f"{T}/browse.sock")
+               GATBOX_DISKS=FD.store, GATBOX_DISK_SPOOL=f"{T}/dspool", GATBOX_BROWSE_SOCK=f"{T}/browse.sock",
+               GATBOX_DISK_SEND_STATE=f"{T}/dsend")
     # A stand-in fls in front of the real one: it adds one line a drive cannot be made to give here, an entry whose inode another file
     # now holds ("deleted-realloc"), to a folder listing while the file `ghost` is beside it. The browser scrubs its environment, so
     # the stand-in is steered by that file and not by a variable.
@@ -1397,6 +1398,24 @@ def main():
         check("... and FILE UNDER gauntlet-legends puts it back (its folder never moved)",
               dk_has("FILED UNDER gauntlet-legends", 30)
               and json.load(open(f"{FD.store}/gauntlet-legends/{stored[0][:-4]}.json"))["machine"] == "gauntlet-legends")
+        # the drain to the archive (gatbox-disk-send, home network only): its line, then ARCHIVED and SENDING from its state
+        check("before the sender ever ran: the images card says so, and that it sends over the home network only",
+              settles(c, "!!document.querySelector('#dk-body .dk-send') && document.querySelector('#dk-body .dk-send').textContent.includes('not run yet')", 10)
+              and "home network only" in text("#dk-body .dk-send"))
+        ww_side = json.load(open(f"{FD.store}/gauntlet-legends/{stored[0][:-4]}.json"))
+        os.makedirs(f"{T}/dsend", exist_ok=True)
+        json.dump({"at": time.time(), "result": "sending", "why": "sending WW-HDD", "sent": {},
+                   "current": {"sha256": ww_side["sha256"], "image": "x", "have": 1, "parts": 4}}, open(f"{T}/dsend/state.json", "w"))
+        click('[data-view="meter"]'); click('[data-view="disk"]')
+        check("an image going up: SENDING 25 %", settles(c, f"!!{WWROW} && {WWROW}.textContent.includes('SENDING 25 %')", 10))
+        json.dump({"at": time.time(), "result": "away", "why": "no answer from 192.0.2.7:8081: not on the home network, or the archive is down",
+                   "sent": {ww_side["sha256"]: {"at": time.time()}}}, open(f"{T}/dsend/state.json", "w"))
+        click('[data-view="meter"]'); click('[data-view="disk"]')
+        check("once the archive has it: ARCHIVED; and the line says how many are there and why nothing is moving now",
+              settles(c, f"!!{WWROW} && {WWROW}.textContent.includes('ARCHIVED')", 10)
+              and settles(c, "document.querySelector('#dk-body .dk-send').textContent.includes('1 image there') && document.querySelector('#dk-body .dk-send').textContent.includes('not on the home network')", 10))
+        shot("23e-disk-archived")
+        os.remove(f"{T}/dsend/state.json")
         FORROW = "[...document.querySelectorAll('#dk-body .btnrow')].find(r => r.firstChild && r.firstChild.textContent === 'FOR')"
         check("the READ's FOR row has NOT ARCADE beside OTHER MACHINE",
               settles(c, f"!!{FORROW} && [...{FORROW}.querySelectorAll('button')].some(b => b.textContent === 'NOT ARCADE')", 10))

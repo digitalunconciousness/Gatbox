@@ -426,6 +426,16 @@ The deck sends every disk image it reads here, but only over the private listene
    `{"images": []}` is right. `503 ... disk images are off here` means `ARCHIVE_DISKS` isn't set or install.sh hasn't run
    since. The same call to `https://<HOSTNAME>` answers 404: the tunnel never takes images.
 
+5. **On the deck**, add the archive's home address to `/etc/gatbox/archive.conf` (`sudo nano /etc/gatbox/archive.conf`):
+   ```
+   ARCHIVE_LAN_URL=http://<CONTAINER_IP>:8081
+   ```
+   It must be an `http://` address on a private network (the deck refuses anything else). Then run the bootstrap: it writes a drop-in
+   that lets `gatbox-disk-send` reach that one address, and nothing else (its unit denies every address on its own).
+   `gatbox-disk-send.timer` then tries every 15 minutes: away from home it gets no answer and waits; at home it sends what the
+   archive doesn't have, oldest first, and stops while a disk job runs. The DISK tab says what it is doing under the image list;
+   `sudo -u gatbox-disk-send gatbox-disk-send --status` says the same, and `journalctl -u gatbox-disk-send` names every image sent.
+
 Nothing here deletes an image. A stored one is `<folder>/stored/<first two hex>/<sha256>.img`, with the deck's sidecar beside it
 as `.json`.
 

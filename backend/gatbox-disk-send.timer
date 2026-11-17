@@ -1,0 +1,12 @@
+[Unit]
+Description=GATBOX: disk images to the archive (home network only), 15 minutes after the last run ended
+
+[Timer]
+OnBootSec=5min
+# From the end of the last run, not its start: a run can take hours, and a timer that counts from the start would start the
+# next one the moment a long one ended.
+OnUnitInactiveSec=15min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

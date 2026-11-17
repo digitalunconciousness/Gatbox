@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+"""gatbox-disk-send: the store's disk images to the archive, over the home network only.
+
+The owner, 2026-11-17 (docs/plans/2026-11-17-disk-image-drain.md): every image goes to the archive, and only "at home", outside
+the tunnel. So this job knows one address, ARCHIVE_LAN_URL in /etc/gatbox/archive.conf: the archive's private listener (an http://
+address on the home network). With no answer there within a few seconds the deck is away, and the run ends quietly. It never uses
+ARCHIVE_URL (the tunnel).
+
+gatbox-disk-send.timer starts it. Each run: if a disk job is queued or running it waits (imaging keeps the USB bus); else it sends
+every image the archive doesn't have, oldest first, one at a time, in the archive's 8 MiB parts, resuming at the parts the archive
+already holds, and stops between parts the moment a disk job is queued. After the last part the archive reads the whole image back
+against its SHA-256 (archive/gatboxarchive/diskstore.py); only "stored" counts as sent.
+
+It reads the store and writes nothing to it. What it has sent and where it is, it keeps in its own state.json, which gatbox-web
+reads for the DISK tab (ARCHIVED, SENDING n %, and a line saying why nothing is moving).
+
+  gatbox-disk-send          one run (the timer's)
+  gatbox-disk-send --status what state.json says
+"""
+import ipaddress
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+sys.path.insert(0, os.environ.get("GATBOX_LIB", "/usr/local/lib/gatbox"))
+from gatboxlib import disks as DL  # noqa: E402
+
+PART = 8 * 1024 * 1024                       # the archive's part size (it says so in every answer; checked)
+SPOOL = os.environ.get("GATBOX_DISK_SPOOL", "/var/spool/gatbox-disk")
+STATE_DIR = os.environ.get("STATE_DIRECTORY") or os.environ.get("GATBOX_DISK_SEND_STATE", "/var/lib/gatbox-disk-send")
+REACH_TIMEOUT = float(os.environ.get("GATBOX_DISK_SEND_REACH", "5"))      # "are we at home": the archive answers this fast on the LAN
+CALL_TIMEOUT = 60
+CHECK_WAIT = float(os.environ.get("GATBOX_DISK_SEND_CHECK_WAIT", str(4 * 3600)))   # the archive's read-back of an image
+POLL = float(os.environ.get("GATBOX_DISK_SEND_POLL", "10"))
+SIDE_KEYS = ("label", "machine", "realm", "media", "source", "bytes", "sha1", "sha256", "fingerprint", "reads", "identical",
+             "mame", "started", "finished", "date", "note", "filed", "tool")
+USER_AGENT = "gatbox-disk-send"
+
+
+def log(msg):
+    print(f"gatbox-disk-send: {msg}", flush=True)
+
+
+def conf_path():
+    if os.environ.get("GATBOX_DISK_SEND_CONF"):
+        return os.environ["GATBOX_DISK_SEND_CONF"]
+    creds = os.environ.get("CREDENTIALS_DIRECTORY")
+    return os.path.join(creds, "archive") if creds else "/etc/gatbox/archive.conf"
+
+
+def read_conf():
+    """(url, token, why). url is None when there is nothing to do here, with why saying so."""
+    try:
+        with open(conf_path(), encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return None, None, "no /etc/gatbox/archive.conf"
+    conf = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, _, v = line.partition("=")
+            conf[k.strip()] = v.strip()
+    url, token = conf.get("ARCHIVE_LAN_URL", "").rstrip("/"), conf.get("ARCHIVE_TOKEN", "")
+    if not url:
+        return None, None, "no ARCHIVE_LAN_URL in archive.conf: the archive's address on the home network"
+    parts = urllib.parse.urlsplit(url)
+    try:
+        home = ipaddress.ip_address(parts.hostname or "").is_private
+    except ValueError:
+        home = False
+    # The home network only: an http:// address must be a private one (an IP, so no name lookup can send it elsewhere).
+    if parts.scheme != "http" or not home or parts.path not in ("", "/"):
+        return None, None, "ARCHIVE_LAN_URL must be http://<a private address>:<port>, the archive's private listener"
+    if not token.startswith("gbx_"):
+        return None, None, "no ARCHIVE_TOKEN (the deck's device token) in archive.conf"
+    return url, token, None
+
+
+class Archive:
+    def __init__(self, url, token):
+        self.url, self.token = url, token
+
+    def call(self, method, path, body=None, raw=None, timeout=CALL_TIMEOUT):
+        """-> (status, JSON body). Raises OSError (urllib's errors are OSErrors) when nothing answered."""
+        data, ctype = raw, "application/octet-stream"
+        if body is not None:
+            data, ctype = json.dumps(body).encode(), "application/json"
+        req = urllib.request.Request(self.url + path, data=data, method=method)
+        req.add_header("Authorization", f"Bearer {self.token}")
+        req.add_header("User-Agent", USER_AGENT)
+        if data is not None:
+            req.add_header("Content-Type", ctype)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.status, json.loads(r.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            try:
+                return e.code, json.loads(e.read() or b"{}")
+            except ValueError:
+                return e.code, {"error": f"HTTP {e.code}"}
+
+
+# --- state ---------------------------------------------------------------------------------------------------------------
+
+def load_state():
+    try:
+        with open(os.path.join(STATE_DIR, "state.json"), encoding="utf-8") as f:
+            st = json.load(f)
+            return st if isinstance(st, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(st):
+    st["at"] = round(time.time(), 3)
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tmp = os.path.join(STATE_DIR, "state.json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(st, f, indent=1)
+    os.replace(tmp, os.path.join(STATE_DIR, "state.json"))
+
+
+def disk_job_waiting():
+    """A disk job queued or running: imaging has the USB bus, so this waits (the drive browser's rule too)."""
+    return any(os.path.exists(os.path.join(SPOOL, n)) for n in ("request.json", "running.json"))
+
+
+class Stop(Exception):
+    """This run ends here, and why (said on the DISK tab)."""
+    def __init__(self, result, why):
+        super().__init__(why)
+        self.result, self.why = result, why
+
+
+# --- one image -----------------------------------------------------------------------------------------------------------
+
+def sidecar(path):
+    try:
+        with open(path[:-4] + ".json", encoding="utf-8") as f:
+            j = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    side = {k: j[k] for k in SIDE_KEYS if k in j}
+    return side if len(json.dumps(side)) < 60000 else {k: side[k] for k in ("label", "machine", "bytes", "sha1", "sha256") if k in side}
+
+
+def send_one(arc, st, img, save):
+    """Send one image until the archive has stored it. -> True when stored. Raises Stop to end the run."""
+    store = os.path.realpath(DL.DISKS)
+    path = os.path.join(store, img["image"])
+    sha, size = img["sha256"], os.path.getsize(path)
+    code, b = arc.call("POST", "/api/v1/disks", {"sha256": sha, "size": size, "side": sidecar(path)})
+    if code == 507:
+        raise Stop("no_room", f"the archive has no room for {img['image']}: {b.get('error', '')}")
+    if code != 200:
+        raise Stop("error", f"the archive refused {img['image']}: HTTP {code}: {b.get('error', '')}")
+    if b.get("part_size", PART) != PART:
+        raise Stop("error", f"the archive's parts are {b.get('part_size')} bytes, this job sends {PART}")
+    cur = {"sha256": sha, "image": img["image"], "bytes": size, "parts": b.get("parts"), "have": b.get("have", 0)}
+    st["current"] = cur
+    save(force=True)
+    with open(path, "rb") as f:
+        while b.get("state") in ("open", "failed"):
+            missing = b.get("missing") or []
+            if not missing:
+                break
+            for n in missing:
+                if disk_job_waiting():
+                    raise Stop("waiting", "a disk job was queued: sending stops until it is done")
+                data = os.pread(f.fileno(), min(PART, size - n * PART), n * PART)
+                code, r = arc.call("PUT", f"/api/v1/disks/{sha}/parts/{n}", raw=data)
+                if code != 200:
+                    raise Stop("error", f"part {n} of {img['image']}: HTTP {code}: {r.get('error', '')}")
+                if r.get("state") == "stored":
+                    b = r
+                    break
+                cur["have"] += 1
+                save()
+            else:
+                code, b = arc.call("GET", f"/api/v1/disks/{sha}")
+                if code != 200:
+                    raise Stop("error", f"{img['image']}: HTTP {code}: {b.get('error', '')}")
+                continue
+            break
+    if b.get("state") != "stored":
+        code, b = arc.call("POST", f"/api/v1/disks/{sha}/finish")
+        if code != 200:
+            raise Stop("error", f"finishing {img['image']}: HTTP {code}: {b.get('error', '')}")
+        cur["checking"] = True
+        save(force=True)
+        end = time.monotonic() + CHECK_WAIT
+        while b.get("state") == "checking" and time.monotonic() < end:
+            time.sleep(POLL)
+            code, b = arc.call("GET", f"/api/v1/disks/{sha}")
+            if code != 200:
+                raise Stop("error", f"{img['image']}: HTTP {code}: {b.get('error', '')}")
+    if b.get("state") == "stored":
+        st.setdefault("sent", {})[sha] = {"at": round(time.time(), 3), "image": img["image"], "bytes": size}
+        st.pop("current", None)
+        save(force=True)
+        log(f"sent {img['image']} ({size:,} bytes), the archive checked it")
+        return True
+    if b.get("state") == "failed":
+        raise Stop("error", f"the archive's check of {img['image']} failed: {b.get('why', '')}; it is sent again next run")
+    raise Stop("waiting", f"the archive is still checking {img['image']}; the next run asks again")
+
+
+# --- a run ---------------------------------------------------------------------------------------------------------------
+
+def run():
+    st = load_state()
+    last = [0.0]
+
+    def save(force=False):
+        if force or time.monotonic() - last[0] > 5:
+            last[0] = time.monotonic()
+            save_state(st)
+
+    def end(result, why):
+        st["result"], st["why"] = result, why
+        save(force=True)
+        log(why)
+        return 0
+
+    url, token, why = read_conf()
+    if url is None:
+        st.pop("current", None)
+        return end("off", why)
+    st["lan"] = urllib.parse.urlsplit(url).netloc
+    if disk_job_waiting():
+        return end("waiting", "a disk job is queued or running: sending waits for it")
+    if not DL.store_mounted():
+        return end("waiting", "the image store is not connected")
+    arc = Archive(url, token)
+    try:
+        code, b = arc.call("GET", "/api/v1/disks", timeout=REACH_TIMEOUT)
+    except OSError:
+        return end("away", f"no answer from {st['lan']}: not on the home network, or the archive is down")
+    if code == 503:
+        return end("off", "the archive has disk images off (ARCHIVE_DISKS, its RUNBOOK step 6b)")
+    if code != 200:
+        return end("error", f"the archive answered HTTP {code}: {b.get('error', '')}")
+    there = {i.get("sha256") for i in b.get("images", [])}
+    sent = st.setdefault("sent", {})
+    for sha in there:                              # stored by an earlier run that stopped before it could say so
+        sent.setdefault(sha, {"at": round(time.time(), 3)})
+    todo = sorted((i for i in DL.images() if i.get("sha256") and i["sha256"] not in sent), key=lambda i: i.get("started") or 0)
+    if not todo:
+        st.pop("current", None)
+        return end("done", f"every image is on the archive ({len(sent)})")
+    try:
+        for img in todo:
+            send_one(arc, st, img, save)
+    except Stop as s:
+        return end(s.result, s.why)
+    except OSError as e:
+        return end("away", f"the archive stopped answering ({e}): the next run picks up where this one stopped")
+    st.pop("current", None)
+    return end("done", f"every image is on the archive ({len(sent)})")
+
+
+def main(argv):
+    if argv[1:] == ["--status"]:
+        print(json.dumps(load_state(), indent=1))
+        return 0
+    if argv[1:]:
+        print(__doc__)
+        return 2
+    return run()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

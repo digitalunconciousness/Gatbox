@@ -593,7 +593,7 @@ def api_disk_get(h, m, q):
 
 
 def api_disk_images(h, m, q):
-    h.json(200, {"images": disk.images(), "mounted": disk.dl.store_mounted()})
+    h.json(200, {"images": disk.images(), "mounted": disk.dl.store_mounted(), "send": disk.send_summary()})
 
 
 def _disk_queued(h, req, what):

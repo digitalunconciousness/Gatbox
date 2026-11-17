@@ -601,7 +601,7 @@
     if (view === "library") loadManuals();
     if (view === "system") loadSystem();
     if (view === "devices" || view === "dump") loadDevices();
-    if (view === "disk") { K.sig = null; loadDisk(); }
+    if (view === "disk") { K.sig = null; loadDisk(); loadImages(); }   // the images' archive state moves on its own (gatbox-disk-send)
     if (view === "meter") chart.redraw();
   }
   document.querySelectorAll("#nav button").forEach(b => b.addEventListener("click", () => show(b.dataset.view)));
@@ -2950,7 +2950,7 @@
   const DISK_DOING = {read: "READING", retry: "RETRYING", check: "CHECKING", write: "WRITING", format_check: "CHECKING", format: "FORMATTING", mame: "MAME CHECK OF",
                       file: "FILING"};
 
-  const loadImages = () => api("GET", "/api/disk/images").then(r => { K.images = r.images; renderDisk(); }).catch(() => {});
+  const loadImages = () => api("GET", "/api/disk/images").then(r => { K.images = r.images; K.send = r.send; renderDisk(); }).catch(() => {});
   async function loadDisk() {
     let st;
     try { st = await api("GET", "/api/disk"); } catch (e) { return; }
@@ -3427,7 +3427,9 @@
     if (!imgs) { c.appendChild(el("div", "mut", "Reading the store's list…")); return c; }
     if (!imgs.length) { c.appendChild(el("div", "mut", "None yet: READ a drive and its image lands here.")); return c; }
     for (const x of imgs.slice(0, 20)) {
-      const r = el("div", "dk-img"), arch = {pending: ["ARCHIVE PENDING", "mut"], uploaded: ["ARCHIVED", "ok"], none: ["NOT QUEUED (FILE UNDER queues it)", "mut"]}[x.archive];
+      const sp = x.sending || {}, pct = sp.parts ? Math.floor(100 * (sp.have || 0) / sp.parts) : 0;
+      const r = el("div", "dk-img"), arch = {pending: ["ARCHIVE PENDING", "mut"], uploaded: ["ARCHIVED", "ok"], none: ["NOT QUEUED (FILE UNDER queues it)", "mut"],
+                                             sending: [sp.checking ? "ARCHIVE CHECKING IT" : `SENDING ${pct} %`, "cy"]}[x.archive];
       add(r, el("b", null, (x.label || base(x.image)) + " "),
           x.media ? el("span", "tag cy", x.media.toUpperCase()) : null,
           el("span", "tag " + (x.reads === 2 ? "ok" : "mut"), x.reads === 2 ? "READ TWICE, MATCH" : "READ ONCE"),
@@ -3457,6 +3459,10 @@
       c.appendChild(r);
     }
     if (imgs.length > 20) c.appendChild(el("div", "mut", `and ${imgs.length - 20} older ones`));
+    // the drain to the archive (gatbox-disk-send, the home network only): what its last run did, and why nothing is moving
+    const sd = K.send;
+    c.appendChild(el("div", "mut dk-send", !sd ? "To the archive: not run yet (it sends over the home network only, every 15 minutes)."
+      : `To the archive: ${sd.sent} image${sd.sent === 1 ? "" : "s"} there · ${sd.why || sd.result}${sd.at ? " · " + stamp(sd.at) : ""}`));
     if (K.chds === undefined) { K.chds = null; loadChds(); }
     const cs = (K.chds && K.chds.chds) || [], named = cs.filter(x => x.mame).length;
     c.appendChild(el("div", "mut dk-chds", !K.chds ? "Reading the reference CHDs…"
@@ -4447,6 +4453,7 @@
   loadDisk();
   setInterval(() => { if (S.view === "disk") loadDisk(); }, 5000);     // a drive put on the dock shows up
   setInterval(() => { if (S.view !== "disk") loadDisk(); }, 15000);    // the nav's line
+  setInterval(() => { if (S.view === "disk" && K.send && K.send.current) loadImages(); }, 30000);   // SENDING n % while an image goes up
   setInterval(() => { if (S.view === "sessions") loadSessions(); }, 30000);
   connect();
   window.GDashRunning = true;       // index.html's load check: this script ran to the end

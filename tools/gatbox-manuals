@@ -15,6 +15,9 @@ The list is gatbox-manuals.json (git-ignored next to the roster: it's the floor)
   gatbox-manuals --job REQUEST --status STATUS     the dashboard's FIND A MANUAL (gatbox-manuals.service, started by its path
                                     unit when gatbox-web drops a request): search archive.org's texts, list one item's PDFs,
                                     or fetch one. Same rules as fetch: https from the archives only, a real PDF only.
+                                    READ LIMITS (op read_limits, and after every fetch): the supply-rail limits read off a
+                                    document's pages, OCR for a page with no text, into <id>.limits.json beside it as
+                                    proposals; the owner confirms each on the 7" (gatboxlib/railread.py). Nothing is set here.
 
 Run it as the owner (group gatbox-manuals: the folder is 2775). Nothing here is in git: the documents are copyrighted.
 """
@@ -42,6 +45,7 @@ def lib_path():
 
 sys.path.insert(0, lib_path())
 from gatboxlib import profiles  # noqa: E402
+from gatboxlib import railread  # noqa: E402
 
 LIST = "gatbox-manuals.json"
 DEST = os.environ.get("GATBOX_MANUALS", "/srv/gatbox/manuals")
@@ -203,6 +207,35 @@ def ia_files(identifier):
     return sorted(out, key=lambda x: -x["size"])[:30]
 
 
+def read_limits(folder, did, info, status):
+    """READ LIMITS on one document already in the folder: <id>.limits.json beside it. The status file says which page it is on,
+    because OCR of a scanned manual takes minutes."""
+    import tempfile
+    pdf = os.path.join(DEST, folder, did + ".pdf")
+    if not os.path.isfile(pdf):
+        raise ValueError(f"no {did}.pdf in {folder}")
+    last = [0.0]
+
+    def on_page(p, n, how):
+        if time.monotonic() - last[0] > 2 or p == n:
+            last[0] = time.monotonic()
+            _write_status(status, dict(info, state="running", step="limits", page=p, pages=n, how=how))
+    with tempfile.TemporaryDirectory(prefix="gatbox-limits-") as scratch:
+        res = railread.read_limits(pdf, scratch, on_page=on_page)
+    res.update(doc_id=did, folder=folder)
+    out = os.path.join(DEST, folder, did + ".limits.json")
+    with open(out + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(res, f, indent=1)
+    os.replace(out + ".tmp", out)
+    return {"pages": res["pages"], "ocr_pages": res["ocr_pages"], "found": len(res["candidates"]), "notes": res["notes"]}
+
+
+def _write_status(status, info):
+    with open(status + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(info, f)
+    os.replace(status + ".tmp", status)
+
+
 def run_job(request, status):
     """One request from gatbox-web: claims it (renames it to running.json so the path unit doesn't fire again), does it and
     writes the outcome to the status file. A refused or failed request is a normal outcome: exit 0."""
@@ -239,15 +272,23 @@ def run_job(request, status):
                 info.update(folder=folder, doc_id=did, file=did + ".pdf", fetched=state == "fetched", sha256=side["sha256"],
                             pages=side["pages"], bytes=side["bytes"], title=side["title"], kind=side["kind"],
                             source_url=doc["url"], source=doc["source"])
+                # READ LIMITS on the new manual straight away (the owner, 2026-11-17); a failure here never fails the fetch
+                try:
+                    info["limits"] = read_limits(folder, did, info, status)
+                except (ValueError, OSError, subprocess.SubprocessError) as e:
+                    info["limits"] = {"error": str(e)[:300]}
+            elif op == "read_limits":
+                folder, did = str(req.get("folder") or ""), str(req.get("doc_id") or "")
+                if not (SLUG.match(folder) and ID.match(did)):
+                    raise ValueError("a request gatbox-web shouldn't have sent: folder or id is malformed")
+                info.update(folder=folder, doc_id=did, limits=read_limits(folder, did, info, status))
             else:
                 raise ValueError(f"unknown request {op!r}")
             info["state"] = "done"
         except (ValueError, OSError, urllib.error.URLError, subprocess.SubprocessError) as e:
             info.update(state="stopped", error=str(getattr(e, "reason", None) or e)[:300])
         info["finished_at"] = round(time.time(), 3)
-        with open(status + ".tmp", "w", encoding="utf-8") as f:
-            json.dump(info, f)
-        os.replace(status + ".tmp", status)
+        _write_status(status, info)
         print(f"gatbox-manuals: {info.get('op')}: {info['state']}: {info.get('error') or ''}", flush=True)
         return 0
     finally:

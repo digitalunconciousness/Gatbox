@@ -114,6 +114,7 @@ backend/gatboxlib/browsecopy.py                 /usr/local/lib/gatbox/gatboxlib/
 backend/gatboxlib/rawpreview.py                 /usr/local/lib/gatbox/gatboxlib/rawpreview.py         644
 backend/gatboxlib/browsehash.py                 /usr/local/lib/gatbox/gatboxlib/browsehash.py         644
 backend/gatboxlib/chd.py                        /usr/local/lib/gatbox/gatboxlib/chd.py                644
+backend/gatboxlib/railread.py                   /usr/local/lib/gatbox/gatboxlib/railread.py           644
 backend/gatboxweb/__init__.py                   /usr/local/lib/gatbox/gatboxweb/__init__.py           644
 backend/gatboxweb/config.py                     /usr/local/lib/gatbox/gatboxweb/config.py             644
 backend/gatboxweb/server.py                     /usr/local/lib/gatbox/gatboxweb/server.py             644
@@ -175,6 +176,7 @@ PKGS=(sigrok-cli python3-matplotlib python3-qrcode rsync git curl util-linux-ext
       build-essential pkg-config libusb-1.0-0-dev zlib1g-dev       # minipro build
       libarchive-tools                                              # bsdtar: XGecu .rar -> T48 firmware (minipro's dump-alg script)
       poppler-utils                                                 # pdftoppm / pdftotext / pdfinfo: the manuals viewer
+      tesseract-ocr                                                 # READ LIMITS: OCR for a scanned manual page with no text (the manuals job runs it)
       hdparm smartmontools                                          # disk imaging: hdparm -I/-N and smartctl -i/-H, run on demand
       gddrescue                                                     # ddrescue: the disk job's READ
       mame-tools                                                    # chdman: the disk job's MAME CHD check (info and extracthd only; Task 3)
@@ -368,14 +370,18 @@ if [ "${1:-}" = "--extract" ]; then
 fi
 
 if [ "${1:-}" = "--check" ]; then
+    # The desktop user's account, as the real run takes it: the sudo user, not root. Under sudo, $HOME and id -un are root's, and
+    # --check listed root's autostart files and group memberships (the Pi, 2026-11-17).
+    CU=${SUDO_USER:-$(id -un)}
+    CHOME=$(getent passwd "$CU" | cut -d: -f6); CHOME=${CHOME:-$HOME}
     DISKS_CONF=${GATBOX_DISKS_CONF:-$DISKS_CONF}; STORE_MOUNT=${GATBOX_STORE_MOUNT:-$STORE_MOUNT}   # a test points these elsewhere; --check only reads
     ARCHIVE_CONF=${GATBOX_ARCHIVE_CONF:-$ARCHIVE_CONF}; SEND_DROPIN=${GATBOX_SEND_DROPIN:-$SEND_DROPIN}
     DISK_RULE=${GATBOX_DISK_RULE:-$DISK_RULE}; SYS_BLOCK=${GATBOX_SYS_BLOCK:-$SYS_BLOCK}; DEV_DIR=${GATBOX_DEV:-$DEV_DIR}
     ETC_GATBOX=${GATBOX_ETC:-/etc/gatbox}
     NOTES=()   # what this check could not look at, said after the list: not a change
     while read -r src dst mode opt; do check_file "$src" "$dst" "$mode" "$opt"; done < <(manifest)
-    while read -r src rel mode; do check_file "$src" "$HOME/$rel" "$mode"; done < <(user_manifest)
-    grep -qE "$TOUCH_LINE" "$HOME/.config/labwc/rc.xml" 2>/dev/null \
+    while read -r src rel mode; do check_file "$src" "$CHOME/$rel" "$mode"; done < <(user_manifest)
+    grep -qE "$TOUCH_LINE" "$CHOME/.config/labwc/rc.xml" 2>/dev/null \
         && DIFFS+=("edit       ~/.config/labwc/rc.xml: remove autotouch's port-pinned Waveshare touch line")
     for p in "${PKGS[@]}"; do pkg_ok "$p" || DIFFS+=("install    package $p"); done
     [ "$(minipro_version)" = "$MINIPRO_TAG" ] || DIFFS+=("build      minipro $MINIPRO_TAG (installed: $(minipro_version))")
@@ -398,7 +404,7 @@ if [ "${1:-}" = "--check" ]; then
     getent group gatbox-mame >/dev/null || DIFFS+=("create     group gatbox-mame (sysusers.d: the chip-list job's spool)")
     [ -d /var/spool/gatbox-mame ] || DIFFS+=("create     /var/spool/gatbox-mame (tmpfiles.d)")
     [ -d /srv/gatbox/disks ] || DIFFS+=("create     /srv/gatbox/disks, the image store's bare mountpoint (tmpfiles.d)")
-    id -nG "$(id -un)" | grep -qw gatbox-disk-queue || DIFFS+=("group      $(id -un) += gatbox-disk-queue (the disk spool)")
+    id -nG "$CU" | grep -qw gatbox-disk-queue || DIFFS+=("group      $CU += gatbox-disk-queue (the disk spool)")
     stale=$(unfixed_disk_nodes | xargs)
     [ -z "$stale" ] || DIFFS+=("restart    systemd-udevd and re-apply the disk rule: $stale is not in group gatbox-disk yet")
     # disks.conf is 0600 root: without root there is nothing to compare, so nothing is said.
@@ -436,12 +442,12 @@ if [ "${1:-}" = "--check" ]; then
         systemctl -q is-enabled gatbox-ap-fallback.timer 2>/dev/null \
             || DIFFS+=("enable     gatbox-ap-fallback.timer (replaces the boot-only service)")
     fi
-    id -nG "$(id -un)" | grep -qw gatbox-dump || DIFFS+=("group      $(id -un) += gatbox-dump (the dump archive)")
+    id -nG "$CU" | grep -qw gatbox-dump || DIFFS+=("group      $CU += gatbox-dump (the dump archive)")
     getent group gatbox-manuals >/dev/null || DIFFS+=("create     group gatbox-manuals (sysusers.d)")
     [ -d /srv/gatbox/manuals ] || DIFFS+=("create     /srv/gatbox/manuals (tmpfiles.d)")
     [ -d /srv/gatbox/library ] || DIFFS+=("create     /srv/gatbox/library (tmpfiles.d; the game library's folder)")
-    getent group gatbox-manuals >/dev/null && ! getent group gatbox-manuals | cut -d: -f4 | tr ',' '\n' | grep -qx "$(id -un)" \
-        && DIFFS+=("group      $(id -un) += gatbox-manuals (the manuals folder)")
+    getent group gatbox-manuals >/dev/null && ! getent group gatbox-manuals | cut -d: -f4 | tr ',' '\n' | grep -qx "$CU" \
+        && DIFFS+=("group      $CU += gatbox-manuals (the manuals folder)")
     command -v minipro >/dev/null && ! parts_ok && DIFFS+=("generate   $PARTS_LIST")
     mame_roms_wanted && ! mame_roms_ok && DIFFS+=("generate   $MAME_ROMS (from mame -listxml: a minute or two)")
     mame_titles_wanted && ! mame_titles_ok && DIFFS+=("generate   $MAME_TITLES (MAME's title list, once per MAME version: a minute or two)")

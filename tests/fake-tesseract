@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+"""tesseract, for the tests: `fake-tesseract IMAGE - [opts]` prints what a scanned power-supply page might read as, misread digit
+included ("5.2S"), and a clean line. FAKE_TESSERACT_TEXT replaces it; FAKE_TESSERACT_FAIL=1 exits 1."""
+import os
+import sys
+
+if os.environ.get("FAKE_TESSERACT_FAIL"):
+    sys.exit(1)
+if len(sys.argv) < 3 or not os.path.exists(sys.argv[1]):
+    sys.exit(2)
+print(os.environ.get("FAKE_TESSERACT_TEXT", "POWER REQUIREMENTS\n+5V 4.75 - 5.2S V\n+12V DC 11.4 to 12.6 V\n"))

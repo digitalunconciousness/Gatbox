@@ -289,6 +289,8 @@ else
     check "--check: a /etc/gatbox this user cannot open: no false 'create' lines, and a note says what was not looked at" \
         '! grep -qE "create     /etc/gatbox/(hubs.d|hub.conf|archive.conf)" "$T/etc-closed" && grep -q "^note: /etc/gatbox is readable by root only" "$T/etc-closed"'
 fi
+check "READ LIMITS: tesseract-ocr in the package list and railread.py in the MANIFEST" \
+    'grep -qE "^ +tesseract-ocr +#" "$BOOT" && grep -qE "^backend/gatboxlib/railread.py +/usr/local/lib/gatbox/gatboxlib/railread.py +644" "$BOOT"'
 # Disk images to the archive (docs/plans/2026-11-17-disk-image-drain.md): the home network only, the store read-only, imaging first.
 DSS="$REPO/backend/gatbox-disk-send.service"; DST="$REPO/backend/gatbox-disk-send.timer"
 for f in "tools/gatbox-disk-send +/usr/local/bin/gatbox-disk-send +755" "backend/gatbox-disk-send.service +/etc/systemd/system/gatbox-disk-send.service +644" \
@@ -394,6 +396,12 @@ check "--check: an empty disks.conf (the state before the drive is formatted): n
 
 bash "$BOOT" --check > "$T/check" 2>&1; rc=$?
 check "--check runs without root (exit 0 or 3)" '[ $rc = 0 ] || [ $rc = 3 ]'
+# Under sudo, --check is about the sudo user's account (as the real run is), not root's (the Pi, 2026-11-17: it listed
+# /root/.config/autostart files and "group root += ...").
+SUDO_USER=nobody bash "$BOOT" --check > "$T/check-sudo" 2>&1
+NOHOME=$(getent passwd nobody | cut -d: -f6)
+check "--check under sudo: the user files and groups are the sudo user's, never root's" \
+    '! grep -qE "/root/\.config|group      root \+=" "$T/check-sudo" && grep -qE "group      nobody \+= gatbox-disk-queue" "$T/check-sudo" && grep -qF "$NOHOME/.config/autostart/gatbox-kiosk.desktop" "$T/check-sudo"'
 # Without root the script refuses at its first check. As root it would go on and run for real (on a Pi, `sudo bash
 # tests/test-bootstrap.sh` has everything it asks for), so this is not run as root.
 if [ "$(id -u)" = 0 ]; then

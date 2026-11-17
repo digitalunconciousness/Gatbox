@@ -8,8 +8,10 @@ Two listeners, because the archive can't verify Cloudflare's signed Access token
            library, and no calling out for Cloudflare's keys), and only here: nothing but cloudflared can reach this port,
            and Cloudflare's own docs say an origin behind a tunnel needn't validate the token. That holds only while every
            route of the tunnel that reaches this port is covered by the Access application (RUNBOOK).
-  private  optional, on the node's private address, for the apps' pull jobs. It takes reader tokens and nothing else, so
-           there is no identity to forge, and what it serves is read-only.
+  private  optional, on the node's private address, for the apps' pull jobs. It takes reader tokens, so there is no identity
+           to forge, and what it serves them is read-only. The one exception is the deck's disk images (diskstore.py): the
+           owner wants those sent over the home network only (2026-11-17), so /api/v1/disks is on this listener alone, for the
+           deck's device token, and the tunnel answers it 404.
 
 What each may do:   changes / digest   files (read)               records (write)   files (upload)
     device          yes                everything                 every kind        yes
@@ -35,6 +37,7 @@ from gatboxlib import library as L
 from gatboxlib.filestore import FileError, FileStore
 
 from . import api
+from .diskstore import DiskError, DiskStore
 from .tokens import TokenStore
 
 DEFAULT_MAX_FILE = 400 * 1024 * 1024
@@ -71,6 +74,10 @@ class Config:
         people = [p.strip().lower() for p in env.get("ARCHIVE_PEOPLE", "").split(",") if p.strip()]
         self.people = set(people) or None
         self.max_file = int(env.get("ARCHIVE_MAX_FILE", DEFAULT_MAX_FILE))
+        # The deck's disk images (diskstore.py): off until ARCHIVE_DISKS names a folder, which should be outside ARCHIVE_DATA if the
+        # backups of the data are not meant to carry them. ARCHIVE_DISK_RESERVE: what they must leave free there.
+        self.disks = env.get("ARCHIVE_DISKS", "").strip() or None
+        self.disk_reserve = int(env.get("ARCHIVE_DISK_RESERVE", 20 << 30))
         self.static = env.get("ARCHIVE_STATIC", "/usr/local/share/gatbox-archive/static")
 
     @staticmethod
@@ -90,6 +97,7 @@ class Archive:
         self.lib = L.Library(os.path.join(cfg.data, "library.sqlite"))
         self.files = FileStore(os.path.join(cfg.data, "files"), cfg.max_file)
         self.tokens = TokenStore(os.path.join(cfg.data, "tokens.json"))
+        self.disks = DiskStore(cfg.disks, cfg.disk_reserve) if cfg.disks else None
         self.ui_secret = self._secret(os.path.join(cfg.data, "ui-secret"))
 
     @staticmethod
@@ -214,7 +222,7 @@ class Handler(BaseHTTPRequestHandler):
                 continue
             try:
                 return fn(self, hit, parse_qs(url.query))
-            except (Refuse, FileError, api.ApiError) as e:
+            except (Refuse, FileError, DiskError, api.ApiError) as e:
                 return self.refused(e.code, str(e))
             except Exception:                                      # a bug: logged without the query, the person told plainly
                 traceback.print_exc()
@@ -242,6 +250,20 @@ class Handler(BaseHTTPRequestHandler):
         elif self.identity():
             return {"kind": "person", "name": self.identity()[:60]}
         raise Refuse(401, "a valid token is required")
+
+    def deck_at_home(self):
+        """The disk image calls: the private listener and the deck's device token only. On the tunnel they don't exist."""
+        if self.listener != "private":
+            raise Refuse(404, "not found")
+        auth = self.headers.get("Authorization", "")
+        row = self.archive.tokens.verify(auth[7:].strip()) if auth.lower().startswith("bearer ") else None
+        if not row:
+            raise Refuse(401, "a valid token is required")
+        if row["role"] != "device":
+            raise Refuse(403, f"a {row['role']} may not do that")
+        if self.archive.disks is None:
+            raise Refuse(503, "disk images are off here: set ARCHIVE_DISKS in archive.conf and run install.sh")
+        return self.archive.disks
 
     def need(self, who, *kinds):
         if who["kind"] not in kinds:
@@ -308,6 +330,40 @@ def files_part(h, m, q):
 def files_finish(h, m, q):
     h.need(h.who(), "device", "person")
     h.json(200, h.archive.files.finish(m.group(1)))
+
+
+# --- the deck's disk images (the home network only; diskstore.py) ------------------------------------------------------------
+
+@route("POST", r"/api/v1/disks")
+def disks_begin(h, m, q):
+    store = h.deck_at_home()
+    body = h.json_body()
+    if not isinstance(body, dict):
+        raise Refuse(400, "the body must be an object")
+    h.json(200, store.begin(body.get("sha256"), body.get("size"), body.get("side")))
+
+
+@route("GET", r"/api/v1/disks")
+def disks_list(h, m, q):
+    h.json(200, {"images": h.deck_at_home().list()})
+
+
+@route("GET", rf"/api/v1/disks/({SHA})")
+def disks_state(h, m, q):
+    h.json(200, h.deck_at_home().state(m.group(1)))
+
+
+@route("PUT", rf"/api/v1/disks/({SHA})/parts/(\d{{1,7}})")
+def disks_part(h, m, q):
+    store = h.deck_at_home()
+    if (h.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/octet-stream":
+        raise Refuse(415, "send application/octet-stream")
+    h.json(200, store.put_part(m.group(1), int(m.group(2)), h.read_body(PART_BODY)))
+
+
+@route("POST", rf"/api/v1/disks/({SHA})/finish")
+def disks_finish(h, m, q):
+    h.json(200, h.deck_at_home().finish(m.group(1)))
 
 
 def _range(header, size):

@@ -20,7 +20,7 @@ out=$(run)
 check "installs the library, the file store, the server and the launcher" '[ -f "$L/gatboxlib/library.py" ] && [ -f "$L/gatboxlib/filestore.py" ] && [ -f "$L/gatboxarchive/server.py" ] && [ -x "$T/root/usr/local/bin/gatbox-archive" ]'
 check "the unit goes in, mode 644; the launcher 755" '[ "$(stat -c %a "$T/root/etc/systemd/system/gatbox-archive.service")" = 644 ] && [ "$(stat -c %a "$T/root/usr/local/bin/gatbox-archive")" = 755 ]'
 check "the config is created from the example" 'cmp -s "$REPO/archive/archive.conf.example" "$T/root/etc/gatbox-archive/archive.conf"'
-check "nothing from tests or docs leaks in: only the manifest's files" '[ "$(find "$L" -type f | wc -l)" = 9 ]'
+check "nothing from tests or docs leaks in: only the manifest's files" '[ "$(find "$L" -type f | wc -l)" = 10 ]'
 S="$T/root/usr/local/share/gatbox-archive/static"
 check "the pages' stylesheet and script are installed, mode 644, and no font was fetched in a test run" 'cmp -s "$REPO/archive/static/archive.css" "$S/archive.css" && cmp -s "$REPO/archive/static/archive.js" "$S/archive.js" && [ "$(stat -c %a "$S/archive.css")" = 644 ] && [ ! -d "$S/fonts" ]'
 
@@ -63,6 +63,7 @@ printf 'font-one' > "$FSRC/ofl/x/One.ttf"
 frun >/dev/null
 
 echo "the private listener's network:"
+CONFF0="$T/root/etc/gatbox-archive/archive.conf"
 DROP="$T/root/etc/systemd/system/gatbox-archive.service.d/private.conf"
 check "no ARCHIVE_PRIVATE_ALLOW: no drop-in" '[ ! -e "$DROP" ]'
 sed -i 's|^ARCHIVE_PRIVATE_ALLOW=.*|ARCHIVE_PRIVATE_ALLOW=192.0.2.0/24|' "$T/root/etc/gatbox-archive/archive.conf"
@@ -74,6 +75,20 @@ check "and a re-run leaves it alone" 'run --check | grep -q "nothing to change"'
 sed -i 's|^ARCHIVE_PRIVATE_ALLOW=.*|ARCHIVE_PRIVATE_ALLOW=|' "$T/root/etc/gatbox-archive/archive.conf"
 run >/dev/null
 check "emptied: the drop-in is removed" '[ ! -e "$DROP" ]'
+sed -i 's|^ARCHIVE_DISKS=.*|ARCHIVE_DISKS=/srv/archive-disks|' "$CONFF0"
+check "ARCHIVE_DISKS set (the deck's disk images, 2026-11-17): --check sees a drop-in that lets the service write there" \
+    'run --check | grep -q "drop-in    .*ReadWritePaths=/srv/archive-disks"'
+run >/dev/null
+check "... the drop-in has only that line (no private network set)" '[ "$(cat "$DROP")" = "$(printf "[Service]\nReadWritePaths=/srv/archive-disks")" ]'
+sed -i 's|^ARCHIVE_PRIVATE_ALLOW=.*|ARCHIVE_PRIVATE_ALLOW=192.0.2.0/24|' "$CONFF0"
+run >/dev/null
+check "... and with the private network too: both lines, and a re-run leaves it alone" \
+    'grep -q "^IPAddressAllow=192.0.2.0/24$" "$DROP" && grep -q "^ReadWritePaths=/srv/archive-disks$" "$DROP" && run --check | grep -q "nothing to change"'
+sed -i 's|^ARCHIVE_DISKS=.*|ARCHIVE_DISKS=relative/path|' "$CONFF0"
+check "ARCHIVE_DISKS that is not an absolute path: refused, nothing written" '! run >/dev/null 2>&1 && grep -q "^ReadWritePaths=/srv/archive-disks$" "$DROP"'
+sed -i 's|^ARCHIVE_DISKS=.*|ARCHIVE_DISKS=|; s|^ARCHIVE_PRIVATE_ALLOW=.*|ARCHIVE_PRIVATE_ALLOW=|' "$CONFF0"
+run >/dev/null
+check "both emptied: the drop-in is removed again" '[ ! -e "$DROP" ]'
 
 echo "archive.conf and the service's restart (the service reads the conf only when it starts):"
 CONFF="$T/root/etc/gatbox-archive/archive.conf"

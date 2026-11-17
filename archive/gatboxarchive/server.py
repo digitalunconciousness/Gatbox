@@ -23,6 +23,7 @@ It never calls out, and it keeps no record of what a reader asked for: the log h
 and the status, and no token.
 """
 import base64
+import ipaddress
 import json
 import os
 import re
@@ -64,6 +65,16 @@ def email_from(value):
     return value.lower()
 
 
+def _loopback(host):
+    """Is HOST an address only this machine can reach (127.0.0.0/8, ::1, localhost)?"""
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 class Config:
     def __init__(self, env=None):
         env = os.environ if env is None else env
@@ -80,12 +91,20 @@ class Config:
         self.disk_reserve = int(env.get("ARCHIVE_DISK_RESERVE", 20 << 30))
         self.static = env.get("ARCHIVE_STATIC", "/usr/local/share/gatbox-archive/static")
 
+        # The tunnel listener trusts the Access identity it is sent without checking a signature (the module docstring), which is
+        # safe only while nothing but cloudflared, on this machine, can reach it. A bind anywhere else would let anyone who can
+        # reach that address name themselves in a header, so it refuses to start rather than run that way (the owner,
+        # 2026-11-17: keep the tunnel-only design and check it).
+        if not _loopback(self.tunnel[0]):
+            raise ValueError(f"ARCHIVE_TUNNEL_BIND must be a localhost address (127.0.0.1, ::1 or localhost), not {self.tunnel[0]!r}: "
+                             "the tunnel listener trusts the Access header, so only cloudflared on this machine may reach it")
+
     @staticmethod
     def _bind(text):
         if not text:
             return None
         host, _, port = text.rpartition(":")
-        return (host or "127.0.0.1", int(port))
+        return (host.strip("[]") or "127.0.0.1", int(port))
 
 
 class Archive:

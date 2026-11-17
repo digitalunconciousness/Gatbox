@@ -6,7 +6,8 @@
 ARCHIVE_DATA=/srv/archive
 
 # Where cloudflared delivers what has passed Cloudflare Access. Keep it on localhost: only here is the Access identity
-# trusted, so nothing but cloudflared may be able to reach it.
+# trusted, so nothing but cloudflared may be able to reach it. The archive refuses to start with any other address here
+# (127.0.0.1, ::1 and localhost are the ones it takes).
 ARCHIVE_TUNNEL_BIND=127.0.0.1:8080
 
 # Optional: the apps' pull jobs, on this container's private address (reader tokens only, read-only). Empty = tunnel only.

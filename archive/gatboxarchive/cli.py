@@ -53,7 +53,11 @@ def main(argv=None):
     rev = tsub.add_parser("revoke")
     rev.add_argument("name")
     args = ap.parse_args(argv)
-    cfg = Config()
+    try:
+        cfg = Config()
+    except ValueError as e:                  # a setting it won't run with (archive.conf): said plainly, no traceback
+        print(f"gatbox-archive: {e}", file=sys.stderr)
+        return 2
     become_data_owner(cfg.data)
     arc = Archive(cfg)
     if args.cmd == "serve":

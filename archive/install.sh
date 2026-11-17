@@ -142,7 +142,13 @@ fi
 have_dropin=""
 [ -f "$PREFIX$DROPIN" ] && have_dropin=$(cat "$PREFIX$DROPIN")
 [ "$want_dropin" = "$have_dropin" ] || DIFFS+=("drop-in    $DROPIN (${want_dropin:+$(printf '%s' "$want_dropin" | tail -n +2 | tr '\n' ' ')}${want_dropin:-removed})")
-[ -n "$NO_SYSTEM" ] || [ -z "$disks_dir" ] || [ -d "$disks_dir" ] || DIFFS+=("create     $disks_dir (the deck's disk images)")
+# The folder must be the service's: a fresh Proxmox mount point is root's, and the archive would then fail to start (the owner's
+# container, 2026-11-17). So an existing folder with another owner is put right too, not only a missing one.
+disks_owner_ok() { [ "$(stat -c %U:%G "$disks_dir" 2>/dev/null)" = "gatbox-archive:gatbox-archive" ]; }
+if [ -z "$NO_SYSTEM" ] && [ -n "$disks_dir" ]; then
+    if [ ! -d "$disks_dir" ]; then DIFFS+=("create     $disks_dir (the deck's disk images)")
+    elif ! disks_owner_ok; then DIFFS+=("chown      $disks_dir to gatbox-archive (it is $(stat -c %U:%G "$disks_dir"))"); fi
+fi
 ! conf_changed || DIFFS+=("restart    gatbox-archive (archive.conf changed since the service was last started)")
 
 if [ -z "$NO_SYSTEM" ]; then
@@ -172,8 +178,10 @@ if [ -z "$NO_SYSTEM" ]; then
     getent passwd gatbox-archive >/dev/null || {
         useradd --system --home-dir "$DATA" --no-create-home --shell /usr/sbin/nologin gatbox-archive && log "user gatbox-archive"; }
     install -d -m 0750 -o gatbox-archive -g gatbox-archive "$DATA"
-    if [ -n "$disks_dir" ] && [ ! -d "$disks_dir" ]; then
-        install -d -m 0750 -o gatbox-archive -g gatbox-archive "$disks_dir" && log "created $disks_dir (the deck's disk images)"
+    if [ -n "$disks_dir" ] && { [ ! -d "$disks_dir" ] || ! disks_owner_ok; }; then
+        # install -d sets the owner and mode on a folder that is already there (a mount point) as well as making a missing one
+        install -d -m 0750 -o gatbox-archive -g gatbox-archive "$disks_dir" && log "$disks_dir is the service's (the deck's disk images)"
+        restart_disks=1
     fi
 fi
 
@@ -213,7 +221,7 @@ fi
 restart_conf=0
 if conf_changed; then restart_conf=1; fi
 if [ -z "$NO_SYSTEM" ]; then
-    if [ "${#changed_files[@]}" -gt 0 ] || [ "$restart_conf" = 1 ] || ! systemctl is-enabled --quiet gatbox-archive 2>/dev/null; then
+    if [ "${#changed_files[@]}" -gt 0 ] || [ "$restart_conf" = 1 ] || [ "${restart_disks:-0}" = 1 ] || ! systemctl is-enabled --quiet gatbox-archive 2>/dev/null; then
         systemctl daemon-reload
         systemctl enable gatbox-archive >/dev/null 2>&1 || true
         if systemctl restart gatbox-archive; then
@@ -223,8 +231,16 @@ if [ -z "$NO_SYSTEM" ]; then
             log "!! gatbox-archive did not restart: journalctl -u gatbox-archive"
         fi
     fi
-    systemctl is-active --quiet gatbox-archive && log "gatbox-archive is running on ${ARCHIVE_TUNNEL_BIND:-127.0.0.1:8080}" \
-        || log "gatbox-archive is NOT running: journalctl -u gatbox-archive"
+    # "active" is true for a moment even when the service is about to crash and restart (Restart=always), so ask it: health
+    # on the tunnel port, a few tries while it starts.
+    bind=$(sed -n 's/^ARCHIVE_TUNNEL_BIND=//p' "$PREFIX$CONF" | head -1 | tr -d ' "'); bind=${bind:-127.0.0.1:8080}
+    up=0
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if curl -fsS --max-time 2 "http://$bind/api/v1/health" >/dev/null 2>&1; then up=1; break; fi
+        sleep 1
+    done
+    if [ "$up" = 1 ]; then log "gatbox-archive is running on $bind"
+    else log "!! gatbox-archive is NOT answering on $bind: journalctl -u gatbox-archive -n 30"; fi
 elif [ "$restart_conf" = 1 ]; then
     stamp_conf                    # a test run has no service: take the conf as the one it started with
 fi

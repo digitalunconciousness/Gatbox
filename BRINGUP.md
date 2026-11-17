@@ -928,6 +928,10 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         and a line under the images). `test-disk-send.sh`: 25, `test-archive-disks.sh`: 29, `test-archive-install.sh`: 42, `test-bootstrap.sh`: 193,
         `test-dash.sh`: 380; 6 breakages each fail a test (disk calls on the tunnel, no room check, no stop for a disk job, a public address
         allowed, FILE UNDER not queueing; and any address let into the drop-in).
+  - [x] Fix from the owner's container (2026-11-17): with `ARCHIVE_DISKS` on a fresh Proxmox mount point (owned by root), the archive
+        stopped answering at all, and install.sh still said it was running. install.sh now makes an existing folder the service's (not only
+        a missing one) and asks the archive's health before it says "running"; and the server starts without disk images when it can't use
+        the folder, the disk calls saying why. `test-archive-disks.sh`: 31.
   - [ ] ⏸ Owner: the archive side first (`archive/RUNBOOK.md` step 6b: a folder for the images outside `/srv/archive`, `ARCHIVE_DISKS`
         and the private listener in archive.conf, install.sh, the `curl` check from the deck), then `ARCHIVE_LAN_URL` in the deck's
         archive.conf, then the bootstrap (the diff is in the PR: a new user, a unit and its timer, the drop-in from ARCHIVE_LAN_URL, one line in gatbox-web.service).

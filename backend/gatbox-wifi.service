@@ -16,3 +16,23 @@ Environment=LC_ALL=C
 # anything else. PrivateTmp so nothing it runs leaves traces in a shared /tmp.
 PrivateTmp=yes
 NoNewPrivileges=yes
+# Sandboxed (2026-11-17's security pass). It runs as root, so NetworkManager takes its nmcli calls without asking anyone,
+# but nmcli only talks to NetworkManager over D-Bus (AF_UNIX); the daemon does every write to its own profiles. So the job itself
+# needs no device, no kernel tunable and no write outside its spool and the hotspot's state (it runs gatbox-ap-fallback after a change). Capabilities are left as they are: it writes files it owns as
+# root, and a narrower set is a guess that only the Pi can check.
+ProtectSystem=strict
+ReadWritePaths=-/var/spool/gatbox-wifi -/var/lib/gatbox-ap-fallback
+ProtectHome=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_NETLINK

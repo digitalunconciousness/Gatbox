@@ -315,7 +315,9 @@
       sess.textContent = `LOGGING${age != null ? " · " + dur(age) : ""} · ${S.file}`;
       sess.className = "ok";
     } else {
-      sess.textContent = S.st.stopped ? "not logging (stopped)" : "not logging";
+      // Not stopped and no readings: the logger is ready, and the first reading starts a file. "not logging" beside a STOP
+      // LOGGING button read as a contradiction (2026-11-17's review). Kept short: a longer line makes METER scroll on the 7".
+      sess.textContent = S.st.stopped ? "not logging (stopped)" : "waiting for readings";
       sess.className = "mut";
     }
     // actions. STOP LOGGING sits by the logging line while it isn't stopped; once it is, START LOGGING takes the NEW
@@ -1398,7 +1400,7 @@
       ["hotspot", n.hotspot && n.hotspot.active ? `${n.hotspot.ssid || "GATBOX"} ${n.hotspot.address || ""}` : "off (comes up when no known Wi-Fi)"],
       ...(n.interfaces || []).map(i => [i.name, i.ipv4.length ? i.ipv4.join(", ") : (i.up ? "up, no address" : "down")])]);
     tile("Storage", Object.entries(d.disk || {}).map(([k, v]) =>
-      [k, v ? `${v.used_pct}% used · ${(v.free / 1e9).toFixed(1)} GB free` : "not there yet (M7)", v && v.used_pct > 90 ? "bad" : null]));
+      [k, v ? `${v.used_pct}% used · ${(v.free / 1e9).toFixed(1)} GB free` : "no folder yet: made with the first one", v && v.used_pct > 90 ? "bad" : null]));
     const lb = d.library || {}, sz = n => n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : n >= 1e3 ? `${Math.round(n / 1e3)} KB` : `${n || 0} B`;
     tile("Library", [
       ["games", lb.seeded ? `${lb.games}${lb.missing ? ` · ${lb.missing} missing a manual` : ""}` : "not set up yet", lb.seeded ? null : "mut"],

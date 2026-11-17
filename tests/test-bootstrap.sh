@@ -129,6 +129,8 @@ check "gatbox-web may write there (and is in the group)" 'grep -qx "ReadWritePat
 # that sets an APM level on each drive as it appears (its USB guard knows pci-*-usb- paths, and a Pi 5's are
 # platform-xhci-hcd, so it would not skip the dock).
 PKGLINES=$(sed -n '/^PKGS=(/,/^      mame)/p' "$BOOT")
+check "the package list names mame-tools (chdman, for the MAME CHD check), and the CHD module is in the manifest" \
+    'grep -qw mame-tools <<<"$PKGLINES" && grep -q "^backend/gatboxlib/chd.py " "$BOOT"'
 check "the package list names what FORMAT runs (dosfstools, exfatprogs, e2fsprogs): without them a format stops and says which is missing" \
     'grep -qw dosfstools <<<"$PKGLINES" && grep -qw exfatprogs <<<"$PKGLINES" && grep -qw e2fsprogs <<<"$PKGLINES"'
 check "the package list names hdparm and smartmontools"   'grep -qw hdparm <<<"$PKGLINES" && grep -qw smartmontools <<<"$PKGLINES"'

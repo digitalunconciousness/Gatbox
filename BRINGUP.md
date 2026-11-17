@@ -895,7 +895,17 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         real against a scratch root: a bootstrap run leaves the claim, a boot removes it and only it); 7 breakages each fail a test (no handler, the claim kept, no partly-written hint, a stale status shown as running, a live claim shown as stale, the `!` dropped, the limit left at 3h). One is not covered: the once-only guard in the handler (a second SIGTERM) has no test, because it is a race to time. The running job's
         own limit cannot be raised (systemd keeps the one it started with): it ends three hours after the job started, and the job was expected to
         finish about half an hour before that.
-  - [ ] Task 3, the MAME check (the chdman parser waits for Task 0's output)
+  - [x] Task 3, the MAME check (built 2026-11-17, **not installed**). `gatboxlib/chd.py`, `gatbox-disk mame -i IMAGE` and `gatbox-disk chd`, the job's
+        `mame` op, `GET /api/disk/chd` and `POST /api/disk/mame`, and on the DISK tab a MAME tag on each image, MAME CHECK (the 7" only, an image
+        filed under a machine) and a line counting the reference CHDs in the store's `_chd/` folder. Tier 1 only: an image is hashed over a CHD's
+        logical size and compared with its Data SHA1 (MATCH); when it differs, `chdman extracthd` writes a scratch copy on the store, the two are
+        compared and the scratch copy removed, and the result says how many bytes differ and in how many places (a few: the game wrote to its disk;
+        many: another version or damage). It reads the image and the CHD and writes only the image's sidecar and that scratch file: no drive is
+        touched. Tier 2 (building a CHD from the image with the drive's own geometry) is not built: the dock never reports a drive's geometry.
+        The `chdman info` parser follows chdman 0.289's output (the owner's laptop, 2026-11-16); the Pi's `mame-tools` is the Trixie package, so
+        its first real CHD confirms the format. System change: `mame-tools` in the apt list and one MANIFEST line (`gatboxlib/chd.py`).
+        `test-disk-mame.sh`: 24, `test-disk.sh`: 189, `test-dash.sh`: 370, `test-bootstrap.sh`: 174; 4 breakages of `chd.py` (never MATCH, scratch copy kept, "written" always, never) each fail `test-disk-mame.sh`.
+        **On the Pi:** copy a game's MAME CHD into `/srv/gatbox/disks/_chd/`, open DISK, check the CHD line counts it, then MAME CHECK on that game's image.
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4
   - [x] Task 4 (built 2026-11-14 and **installed on the Pi that day**: the owner ran the bootstrap. Seen again 2026-11-16: the Pi's unit list has

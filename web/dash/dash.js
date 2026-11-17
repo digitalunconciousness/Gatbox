@@ -2939,7 +2939,7 @@
                      mounted: ["MOUNTED", "warn"]};
   const DISK_MEDIA = [["hdd", "HDD"], ["cf", "CF"], ["sd", "SD"], ["ssd", "SSD"]];
   const DISK_LABEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
-  const DISK_DOING = {read: "READING", retry: "RETRYING", check: "CHECKING", write: "WRITING", format_check: "CHECKING", format: "FORMATTING"};
+  const DISK_DOING = {read: "READING", retry: "RETRYING", check: "CHECKING", write: "WRITING", format_check: "CHECKING", format: "FORMATTING", mame: "MAME CHECK OF"};
 
   const loadImages = () => api("GET", "/api/disk/images").then(r => { K.images = r.images; renderDisk(); }).catch(() => {});
   async function loadDisk() {
@@ -3064,6 +3064,7 @@
     const s = st.status && st.status.state === "running" ? st.status : {}, r = st.request || s;
     const c = el("div", "card");
     const what = r.op === "check" || r.op === "format_check" || r.op === "format" ? r.device : r.op === "write" ? `${base(r.image)} → ${r.device}`
+               : r.op === "mame" ? base(r.image)
                : `${r.label || ""}${r.device ? " · " + r.device : ""}`;
     c.appendChild(el("h2", null, `${s.verify_only ? "VERIFYING" : DISK_DOING[r.op] || "WORKING"} ${what}`));
     const bar = el("div", "dk-bar"), fill = el("div");
@@ -3121,6 +3122,14 @@
         b.addEventListener("click", () => { K.mode = "checklist"; renderDisk(); });
         c.appendChild(b);
       }
+    } else if (s.op === "mame" && s.state === "done" && s.mame) {
+      const m = s.mame, [word, cls] = MAME_WORD[m.state === "differs" ? m.verdict : m.state] || ["MAME CHECK", "mut"];
+      big(word, cls);
+      line(base(s.image));
+      if (m.set) line(`MAME ${m.set}${m.desc ? " · " + m.desc : ""} · CHD ${m.chd}`, "mut");
+      line(m.why, m.state === "match" ? "mut" : "warn");
+      if (m.where && m.where.length) line("Where: " + m.where.slice(0, 6).map(([o, n]) => `${GB(o)} (${n.toLocaleString("en-US")} bytes)`).join(", ")
+                                          + (m.places > 6 ? ` and ${m.places - 6} more` : ""), "mut");
     } else if (s.op === "format_check" && s.state === "done") {
       big("FORMAT CHECK PASSED", "ok");
       line(`${s.device} · ${driveName(s.identity)} · ${exact((s.identity || {}).bytes)}`);
@@ -3389,6 +3398,10 @@
           : `stopped: ${r.error || "no reason recorded"}${r.written ? " (the format had started)" : " (nothing was written)"}`)));
     B.appendChild(log);
   }
+  // The MAME CHD check (Task 3): what the sidecar's "mame" says, as a tag on the image and as the verdict's big word.
+  const MAME_WORD = {match: ["MAME DISK: MATCH", "ok"], written: ["MAME DISK, WRITTEN TO", "cy"], other: ["NOT MAME'S DISK", "warn"],
+                     shorter: ["SHORTER THAN MAME'S DISK", "warn"], no_reference: ["NO REFERENCE CHD", "mut"], no_disk: ["NO MAME DISK", "mut"]};
+  const loadChds = () => api("GET", "/api/disk/chd").then(r => { K.chds = r; renderDisk(); }).catch(() => {});
   function diskImagesCard(st) {
     const c = el("div", "card"), imgs = K.images;
     c.appendChild(el("h2", null, "Images in the store"));
@@ -3401,13 +3414,24 @@
           x.media ? el("span", "tag cy", x.media.toUpperCase()) : null,
           el("span", "tag " + (x.reads === 2 ? "ok" : "mut"), x.reads === 2 ? "READ TWICE, MATCH" : "READ ONCE"),
           arch ? el("span", "tag " + arch[1], arch[0]) : null,
+          MAME_WORD[x.mame] ? el("span", "tag " + MAME_WORD[x.mame][1], MAME_WORD[x.mame][0]) : null,
           el("div", "mut", `${x.machine} · ${GB(x.bytes)} · ${stamp(x.started)} · SHA-1 ${(x.sha1 || "").slice(0, 8)}`
                            + (x.source ? " · from " + x.source : "")
                            + (x.fingerprint != null ? " · fingerprint " + x.fingerprint.toLocaleString("en-US") : "")
                            + (x.also_read ? ` · read again ${x.also_read} time${x.also_read > 1 ? "s" : ""}` : "")));
+      if (S.local && x.machine && x.machine !== "unassigned") {
+        const mb = el("button", "mini", x.mame && x.mame !== "not run" ? "MAME CHECK AGAIN" : "MAME CHECK");
+        mb.disabled = st.busy;
+        mb.addEventListener("click", () => api("POST", "/api/disk/mame", {image: x.image}).then(() => toast(`MAME CHECK queued: ${x.label || base(x.image)}`)).catch(fail));
+        r.appendChild(mb);
+      }
       c.appendChild(r);
     }
     if (imgs.length > 20) c.appendChild(el("div", "mut", `and ${imgs.length - 20} older ones`));
+    if (K.chds === undefined) { K.chds = null; loadChds(); }
+    const cs = (K.chds && K.chds.chds) || [], named = cs.filter(x => x.mame).length;
+    c.appendChild(el("div", "mut dk-chds", !K.chds ? "Reading the reference CHDs…"
+      : `Reference CHDs for the MAME check: ${cs.length} in the store's _chd folder${cs.length ? `, ${named} of them MAME disks this Pi knows` : ": copy MAME's CHDs for your games there"}.`));
     return c;
   }
   // --- DRIVE INFO ---------------------------------------------------------------------------------------------------

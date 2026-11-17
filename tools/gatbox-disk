@@ -8,6 +8,8 @@
     gatbox-disk write -i IMAGE -d sdb [--overwrite]         check, show both drives, type the model, write, verify
     gatbox-disk format-check -d sdb --fs fat32 [--label X]  the FORMAT CHECK, on its own (fat32, exfat or ext4)
     gatbox-disk format -d sdb --fs fat32 [--label X] [--overwrite]   check, type the model, quick format, verify
+    gatbox-disk mame -i IMAGE                               the MAME CHD check: is it MAME's disk for its game? (reads only)
+    gatbox-disk chd                                         the reference CHDs in the store's _chd/ and which MAME disk each is
 
 The spec is docs/plans/2026-11-02-disk-imaging.md. What the 2026-11-02 swap done by hand taught, and so what this does:
   * A drive is its model, size and sector size (and its ATA serial, once the bridge is known to pass it), never a
@@ -32,7 +34,7 @@ The spec is docs/plans/2026-11-02-disk-imaging.md. What the 2026-11-02 swap done
     or verified. The rest of a larger drive is left untouched.
   * FORMAT: a quick format (FAT32, exFAT or ext4; MBR under 2 TiB, GPT above), by the same road as a write. See the FORMAT section.
 
-Not here yet (the note's §10): the MAME CHD check (Task 3: the chdman parser waits for Task 0's real output), the
+Not here yet (the note's §10): the
 dashboard's job mode (Task 4/5), and what needs the dock's pass-through known first (Task 0 stage 3): the drive's ATA
 serial and CHS, and an HDD's health line from smartctl.
 
@@ -74,6 +76,7 @@ def lib_path():
 sys.path.insert(0, lib_path())
 from gatboxlib.disks import (DISKS, MARKER, REFUSED, describe, disks, images, read_file,  # noqa: E402
                              same_drive, store_mounted)
+from gatboxlib import chd as CHD  # noqa: E402
 
 DDRESCUE = os.environ.get("GATBOX_DDRESCUE", "ddrescue")
 API = os.environ.get("GATBOX_API", "http://127.0.0.1")
@@ -491,7 +494,7 @@ class Read(Work):
                 "fingerprint": i.get("fingerprint"),
                 "ddrescue": i["ddrescue"], "passes": i.get("passes", []), "reads": i["reads"],
                 "identical": i.get("identical"),
-                "mame": {"state": "not run", "why": "the MAME CHD check comes with Task 3"},
+                "mame": {"state": "not run", "why": "not checked yet: MAME CHECK on the DISK tab, or gatbox-disk mame"},
                 "archive": i["archive"], "started": i["started"], "finished": round(time.time(), 3),
                 "date": now_iso(), "clock": clock_source(), "note": i.get("note", ""), "also_read": [],
                 "tool": "gatbox-disk"}
@@ -1252,6 +1255,72 @@ class Format(Work):
             f.write(json.dumps(line) + "\n")
 
 
+# --- the MAME CHD check (Task 3, the plan's §7) ------------------------------------------------------------------------
+MAME_ROMS = os.environ.get("GATBOX_MAME_ROMS", "/usr/local/share/gatbox/mame-roms.json")
+
+
+def file_disks(machine):
+    """The terminal's MAME disks for a machine, from the installed checklist (the dashboard sends the library's own)."""
+    try:
+        with open(MAME_ROMS, encoding="utf-8") as f:
+            return CHD.mame_disks(json.load(f), machine)
+    except (OSError, ValueError):
+        return {}
+
+
+def mame_check(image, disks, w):
+    """Is this image MAME's hard disk for its machine? DISKS: {combined sha1: {machine, set, desc, disk, parent}} for that machine.
+    Reads the image and the CHDs; writes nothing but the image's sidecar ("mame") and, while it compares, a scratch file in the
+    store that it removes. -> the result, also kept in the sidecar."""
+    require_store()
+    lock = take_lock()
+    try:
+        img, side = image_in_store(image)
+        store = os.path.realpath(DISKS)
+        machine = side.get("machine") or "unassigned"
+        w.step("chd", "the reference CHDs in _chd/", progress=0.02)
+        os.makedirs(os.path.join(store, CHD.CHD_DIR), exist_ok=True)     # the folder to copy them into (the store's group can write it)
+        refs = []
+        for row in CHD.list_chds(store):
+            m = disks.get(row.get("sha1") or "")
+            if m:
+                refs.append((not m.get("parent"), row["file"], row, m))
+        refs.sort()
+        res = {"at": round(time.time(), 3), "machine": machine}
+        if not disks:
+            res.update(state="no_disk", why=f"MAME lists no hard disk for {machine}" if machine != "unassigned"
+                       else "this image was read for no machine, so there is no MAME disk to compare it with")
+        elif not refs:
+            want = sorted({f"{m['set']} ({m['disk']})" for m in disks.values()})
+            res.update(state="no_reference", wanted=want,
+                       why="none of the CHDs in the store's _chd/ folder is this machine's MAME disk. Copy MAME's CHD for one of these "
+                           "there: " + ", ".join(want))
+        else:
+            tried = []
+            for n, (_, name, row, m) in enumerate(refs):
+                lo, span = n / len(refs), 1 / len(refs)
+                got = CHD.compare(img, os.path.join(store, CHD.CHD_DIR, name), row, os.path.join(store, CHD.SCRATCH),
+                                  shutil.disk_usage(store).free,
+                                  on_progress=lambda f, lo=lo, span=span: w.tick(f"against {name}", 0.05 + 0.9 * (lo + span * f)),
+                                  say=lambda step, detail, name=name: w.step(step, f"{name}: {detail}"))
+                got.update(chd=name, set=m["set"], desc=m.get("desc"), disk=m["disk"])
+                tried.append(got)
+                if got["state"] == "match":
+                    break
+            best = next((t for t in tried if t["state"] == "match"), None) or min(tried, key=lambda t: t.get("bytes", float("inf")))
+            res.update(best, tried=[{k: t.get(k) for k in ("chd", "set", "state", "verdict", "bytes", "places")} for t in tried])
+        side["mame"] = res
+        sp = img[:-4] + ".json"
+        with open(sp + ".tmp", "w") as f:
+            json.dump(side, f, indent=1)
+        os.replace(sp + ".tmp", sp)
+        w.info.update(op="mame", image=img, mame=res)
+        w.step("done", res["why"], progress=1.0)
+        return res
+    finally:
+        os.close(lock)
+
+
 # --- the terminal ---------------------------------------------------------------------------------------------------------
 
 def show_list(as_json):
@@ -1330,6 +1399,10 @@ def run_job(request, status):
                           machine=req.get("machine"), realm=req.get("realm"), status=status, say=say)
                 w.info.update(base)
                 w.go(verify_only=req.get("verify_only") is True)
+            elif op == "mame":
+                w.info.update(base, image=req.get("image"))
+                disks = {k: v for k, v in (req.get("disks") or {}).items() if isinstance(v, dict)} if isinstance(req.get("disks"), dict) else {}
+                mame_check(str(req.get("image")), disks, w)
             elif op == "format_check":
                 w.info.update(base, device=req.get("device"))
                 w.step("check", f"{req.get('device')} before a format", progress=0.1)
@@ -1344,6 +1417,8 @@ def run_job(request, status):
             w.info["state"] = "done"
         except Stop as e:
             w.info.update(state="stopped", error=e.what, hint=e.hint, **e.extra)
+        except CHD.ChdError as e:                   # the MAME check could not compare: said as it is, nothing was changed
+            w.info.update(state="stopped", error=str(e), hint="nothing was changed: the image and the CHDs are as they were")
         except Exception as e:                      # a crash still ends as a result the dashboard can show
             w.info.update(state="stopped", error=f"gatbox-disk failed: {e!r}", hint="see journalctl -u gatbox-disk")
         w.info["finished_at"] = round(time.time(), 3)
@@ -1388,6 +1463,11 @@ def main():
         if name == "write":
             p.add_argument("--overwrite", action="store_true", help="the target isn't blank, and that's fine")
             p.add_argument("--verify-only", action="store_true", help="it already holds the image: read it back twice")
+    p = sub.add_parser("mame", help="the MAME CHD check of an image (reads only)")
+    p.add_argument("-i", "--image", required=True)
+    p.add_argument("--json", action="store_true")
+    p = sub.add_parser("chd", help="the reference CHDs in the store's _chd/ folder")
+    p.add_argument("--json", action="store_true")
     for name in ("format-check", "format"):
         p = sub.add_parser(name, help="the FORMAT CHECK" if name == "format-check" else "check, then a quick format, verified")
         p.add_argument("-d", "--device", required=True)
@@ -1400,7 +1480,7 @@ def main():
     if args.job:
         return run_job(args.job, args.status or os.path.join(os.path.dirname(args.job), "status.json"))
     if not args.cmd:
-        ap.error("a command is needed: list, read, retry, check, write, format-check or format")
+        ap.error("a command is needed: list, read, retry, check, write, format-check, format, mame or chd")
     # the store is shared by the owner (terminal) and the dashboard's job, both in its group, and setgid
     os.umask(0o002)
     say = (lambda *a: None) if getattr(args, "json", False) else print
@@ -1425,6 +1505,36 @@ def main():
               + (" identical" if info.get("identical") else ""))
         return 0
 
+    if args.cmd == "chd":
+        try:
+            require_store()
+            with open(MAME_ROMS, encoding="utf-8") as f:
+                roms = json.load(f)
+        except Stop as s:
+            return report_stop(s, args.json)
+        except (OSError, ValueError):
+            roms = None
+        rows = CHD.list_chds(os.path.realpath(DISKS), roms)
+        if args.json:
+            print(json.dumps({"chds": rows}))
+        else:
+            print(f"{len(rows)} CHD(s) in {os.path.join(DISKS, CHD.CHD_DIR)}" + ("" if rows else ": copy MAME's CHDs there"))
+            for r in rows:
+                m = r.get("mame")
+                print(f"  {r['file']}: " + (r["error"] if r.get("error") else
+                      (f"{m['set']} ({m['disk']}), for {m['machine']}" if m else "not a MAME disk this Pi knows")))
+        return 0
+    if args.cmd == "mame":
+        w = Work(None, say)
+        try:
+            img, side = image_in_store(args.image)
+            res = mame_check(args.image, file_disks(side.get("machine")), w)
+        except Stop as s:
+            return report_stop(s, args.json)
+        except CHD.ChdError as e:
+            return report_stop(Stop(str(e)), args.json)
+        print(json.dumps(res) if args.json else f"\nMAME: {res['state'].upper()}: {res['why']}")
+        return 0
     if args.cmd in ("format-check", "format"):
         try:
             c = format_check(args.device, args.fs, args.label, say=say)

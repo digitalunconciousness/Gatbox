@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""A stand-in for MAME's chdman, for the disk tests: `info -i X.chd` and `extracthd -i X.chd -o OUT [-f]`.
+
+A "CHD" here is a small JSON file: {"raw": "<path of the disk's data>", "cyls": .., "heads": .., "secs": ..}. `info` prints what
+chdman 0.289 prints (the format read off the owner's laptop, 2026-11-16): the combined SHA1 covers the data and the metadata line,
+the Data SHA1 the data alone. `extracthd` copies the data out. FAKE_CHDMAN_FAIL=info|extracthd makes that command fail.
+"""
+import hashlib
+import json
+import os
+import shutil
+import sys
+
+
+def main():
+    a = sys.argv[1:]
+    cmd = a[0] if a else ""
+    src = a[a.index("-i") + 1] if "-i" in a else None
+    if os.environ.get("FAKE_CHDMAN_FAIL") == cmd:
+        print("Error: the fake was told to fail", file=sys.stderr)
+        return 1
+    try:
+        c = json.load(open(src))
+    except (OSError, ValueError, TypeError):
+        print(f"Error opening CHD file: {src}", file=sys.stderr)
+        return 1
+    meta = f"CYLS:{c['cyls']},HEADS:{c['heads']},SECS:{c['secs']},BPS:512"
+    if cmd == "info":
+        data = open(c["raw"], "rb").read()
+        print(f"chdman - MAME Compressed Hunks of Data (CHD) manager 0.289 (fake)\nInput file:   {src}\nFile Version: 5\n"
+              f"Logical size: {len(data):,} bytes\nHunk Size:    4,096 bytes\nTotal Hunks:  {len(data) // 4096:,}\nUnit Size:    512 bytes\n"
+              f"Compression:  none\nCHD size:     {os.path.getsize(src):,} bytes\nRatio:        0.0%\n"
+              f"SHA1:         {hashlib.sha1(data + meta.encode()).hexdigest()}\nData SHA1:    {hashlib.sha1(data).hexdigest()}\n"
+              f"Metadata:     Tag='GDDD'  Index=0  Length={len(meta) + 1} bytes\n              {meta}.")
+        return 0
+    if cmd == "extracthd":
+        out = a[a.index("-o") + 1]
+        if os.path.exists(out) and "-f" not in a:
+            print("Error: file already exists", file=sys.stderr)
+            return 1
+        shutil.copyfile(c["raw"], out)
+        return 0
+    print(f"fake chdman: no {cmd!r}", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

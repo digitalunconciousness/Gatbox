@@ -1,6 +1,6 @@
 # Disk images off the deck: the archive-queue drain (design note, 2026-11-17)
 
-Status: **a note for the owner's decisions; nothing built.** Disk imaging plan §8 says each finished image gets a line in the
+Status: **decided 2026-11-17 (below); built in pieces.** Disk imaging plan §8 says each finished image gets a line in the
 store's `archive-queue.jsonl` and that "phase D's sync drains it". Phase D shipped without that drain (checked 2026-11-15, the
 drive browser note §5.6): today the only copy of every disk image is the 4 TB drive on the deck.
 
@@ -44,3 +44,36 @@ homelab job into a file the store already has room for (`<image>.offsite.json`),
 2. If A: the archive container's free disk, and the largest file you'll let it take.
 3. Which images leave the deck at all: every image filed under a machine (today's queue), or only ones you mark?
 4. Images not for a machine (`unassigned`, e.g. the NIKON card): never leave the deck (today's rule). Keep that?
+
+## The owner's answers (2026-11-17)
+
+- **To the archive, over the home network only, never the tunnel**: "Can we connect through the local ip when I'm on the home
+  address? The container already has 1tb I believe with room to spare, let's just only sync at home outside of the tunnel."
+- **Everything**: every image, a machine's or not.
+- **"An easy way to set the machine as unclassified or misc for drives not arcade related"**: NOT ARCADE and FILE UNDER on the
+  DISK tab (built, #84).
+
+So option A, on the LAN. The recommendation above (B) is set aside.
+
+## The design
+
+**On the archive** (`archive/`, the owner installs it on the container):
+- Disk images are kept apart from the library's files: their own folder, `ARCHIVE_DISKS` in `archive.conf`, **empty by default,
+  and the feature is off until it is set**. That folder should be outside the data directory that the Proxmox backups take
+  (1 TB of images in every backup is the owner's call, not a default).
+- The calls are on the **private listener only** (`ARCHIVE_PRIVATE_BIND`, the home network), and only for the deck's device token;
+  the tunnel answers them 404. They are not part of library-v1 and no app sees them:
+  `POST /api/v1/disks` (begin: SHA-256, size and the image's sidecar), `PUT /api/v1/disks/<sha256>/parts/<n>` (8 MiB parts, written in
+  place, so an 80 GB image needs 80 GB, not twice that), `POST .../finish` (the archive re-reads the whole file and checks its SHA-256
+  in the background), `GET /api/v1/disks/<sha256>` (open, checking, stored or failed, with the parts it has), `GET /api/v1/disks`.
+- **Room:** a begin is refused (507) when the image would leave less than `ARCHIVE_DISK_RESERVE` free (default 20 GiB), counting the
+  images still arriving. The deck says so and tries again on a later run.
+
+**On the deck:**
+- `/etc/gatbox/archive.conf` gains `ARCHIVE_LAN_URL=http://<container's LAN address>:<private port>`. Only that address is used for
+  images: with no answer within a few seconds (away from home), a run ends quietly and waits.
+- A new job, `gatbox-disk-send` (its own user; the store read-only; network only to the home network's addresses), on a timer. One
+  image at a time, oldest first, resuming at the parts the archive already has. It stands still while a disk job is queued or running
+  (imaging keeps the USB bus) and stops between parts if one is queued.
+- What it has sent is its own state (`/var/lib/gatbox-disk-send/`), which gatbox-web reads to show ARCHIVED (or SENDING n %) on the
+  DISK tab; the sidecar is the disk job's and stays as it is.

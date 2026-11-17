@@ -2691,6 +2691,13 @@ def main():
         click('[data-view="library"]')
         check("LIBRARY: the game's ROM images, with the mark on it",
               lib_has("ROM images (1)") and "KNOWN GOOD" in text("#lb-body") and "ROM SET" in text("#lb-body"))
+        # two loads at once (the owner's Time Crisis II page, 2026-11-16: "ROM images (0)" twice): tap LIBRARY twice, quickly
+        q("document.querySelector('[data-view=\"library\"]').click(); document.querySelector('[data-view=\"library\"]').click()")
+        lib_has("ROM images (1)")
+        time.sleep(1.5)
+        check("LIBRARY tapped twice while loading: each card is drawn once, not twice",
+              q("document.querySelector('#lb-body').textContent.split('ROM images (').length - 1") == 1
+              and q("document.querySelector('#lb-body').textContent.split('Drive images (').length - 1") <= 1)
         q("document.querySelector('#lb-body').lastElementChild.scrollIntoView({block: 'end'})")
         shot("27c-library-images")
         lan = next((a for a in _lan_addrs() if "." in a and not a.startswith("127.")), None)

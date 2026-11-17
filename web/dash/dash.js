@@ -809,7 +809,8 @@
       c.appendChild(r);
     }
     if (hubOnly) c.appendChild(e.library
-      ? el("div", null, `Model: ${e.library_name || e.library}. Its manuals, limits and ROM list are this Pi's ${e.library_name || e.library}.`)
+      ? el("div", null, e.linked_here ? `Linked on this Pi to ${e.library_name || e.library} (LIBRARY): its manuals, limits and ROM list are that game's.`
+                                      : `Model: ${e.library_name || e.library}. Its manuals, limits and ROM list are this Pi's ${e.library_name || e.library}.`)
       : el("div", "mut", e.model_key ? `Model ${e.model_key}: not in this Pi's library, so no manuals or ROM list.`
                                      : "No model on the hub's record, so no manuals or ROM list."));
     if (e.added) {
@@ -1632,7 +1633,7 @@
     return rows;
   }
   async function loadManuals() {
-    const B = $("#lb-body"), slug = mnSlug();
+    const B = $("#lb-body"), slug = mnSlug(), seq = LB.seq = (LB.seq || 0) + 1;   // only the newest load draws: two at once doubled cards
     LB.data = null;                                  // fresh each time: a seed or an import from the command line shows at once
     try { await libState(); } catch (e) { LB.data = {seeded: false}; }
     const head = el("div", "card"), row = el("div", "btnrow"), other = el("button", null, "OTHER MACHINE");
@@ -1654,16 +1655,16 @@
     try {
       [d, s] = await Promise.all([api("GET", "/api/manuals/" + encodeURIComponent(slug)), api("GET", "/api/specs/" + encodeURIComponent(slug))]);
     } catch (e) { add(clear(B), head, el("div", "card warn", e.message)); return; }
-    if (mnSlug() !== slug) return;                 // another machine was picked meanwhile
+    if (mnSlug() !== slug || seq !== LB.seq) return;  // another machine was picked meanwhile, or a newer load is drawing
     M.docs = d; M.sheet = s;
     add(clear(B), head, specCard(slug, s, d), docsCard(slug, d));
     const g = LB.data && LB.data.seeded ? gameOf(slug) : null;
     if (g) {
       const ic = await imagesCard(g);
-      if (ic && mnSlug() === slug) B.appendChild(ic);
+      if (ic && mnSlug() === slug && seq === LB.seq) B.appendChild(ic);
     }
     const dc = await diskImagesForGame(g, slug);
-    if (dc && mnSlug() === slug) B.appendChild(dc);
+    if (dc && mnSlug() === slug && seq === LB.seq) B.appendChild(dc);
   }
   async function pickManualsMachine() {
     let R, O;

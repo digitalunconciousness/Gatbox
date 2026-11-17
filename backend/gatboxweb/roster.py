@@ -321,12 +321,15 @@ def entry(slug):
     if m is None:
         return None
     model = m.get("model_key") if isinstance(m.get("model_key"), str) else None
-    lib = model if model in (local_slugs() or set()) else None
+    # Whose manuals, limits and ROM list it reads: a game linked to it on this Pi first (LIBRARY, the owner 2026-11-16), else the
+    # model its hub names. library() is what the manuals, the spec sheet and the chip list already use, so this page agrees with them.
+    linked = libsource.library_slug(slug)
+    lib = library(slug)
     return {"slug": slug, "name": m.get("name") or slug, "kind": None, "status": m.get("status"),
-            "location": m.get("location"), "model_key": model, "library": lib,
+            "location": m.get("location"), "model_key": model, "library": lib, "linked_here": bool(linked),
             "library_name": name(lib) if lib else None, "hub": m["hub"], "conflict": m["conflict"],
             "added": False, "risk": [], "faults_all": [], "parts_all": [], "risk_info": [], "critical_actions": [],
-            "platform_info": None, "spec": profiles.spec_for(slug, model)}
+            "platform_info": None, "spec": profiles.spec_for(slug, lib or model)}
 
 
 def library(slug):

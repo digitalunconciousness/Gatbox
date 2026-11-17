@@ -555,10 +555,14 @@ def main():
           c == 200 and {"slug": "s-0005-widget-wars-2", "name": "Widget Wars 2"} in g["machines"])
     check("... and it reads the game's manuals and limits at once", get("/api/manuals/s-0005-widget-wars-2")["docs"] == get("/api/manuals/widget-wars")["docs"]
           and get("/api/manuals/widget-wars")["docs"])
+    e_ = get("/api/roster/s-0005-widget-wars-2")
+    check("... and MACHINE says so: library is the game, linked here, not \"no model on the hub's record\" (the owner's screenshot, 2026-11-16)",
+          e_.get("library") == "widget-wars" and e_.get("linked_here") is True and e_.get("model_key") is None)
     check("... the game the 7\" finds for it is that game", any(x["key"] == "widget-wars" and any(m["slug"] == "s-0005-widget-wars-2" for m in x["machines"])
                                                            for x in get("/api/library")["games"]))
     c, _ = call("DELETE", "/api/library/games/widget-wars/machines/s-0005-widget-wars-2")
-    check("UNLINK: it is the hub's machine with no model again", c == 200 and call("GET", "/api/manuals/s-0005-widget-wars-2")[0] == 404)
+    check("UNLINK: it is the hub's machine with no model again", c == 200 and call("GET", "/api/manuals/s-0005-widget-wars-2")[0] == 404
+          and get("/api/roster/s-0005-widget-wars-2").get("library") is None)
     check("a slug that is on no roster at all, this Pi's or a hub's: still 404",
           call("POST", "/api/library/games/widget-wars/machines", {"slug": "s-9999-nowhere"})[0] == 404)
     for f_ in ("status.json", "hub.json", "roster.json"):

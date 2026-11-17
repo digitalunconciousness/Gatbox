@@ -49,6 +49,17 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       from the archive, BLANK CHECK → the 3 s hold → VERIFIED (minipro's verify + 2 read-backs), in burns.jsonl
 - [ ] **M8 2G stretch**: deferred by the owner (2026-09-29): the homelab side (Sync, the war-room panel) waits until
       she's ready to sort out her server setup. Don't start it or ask about it until she brings it up.
+- [x] **READ LIMITS** (the owner, 2026-11-17: "let's do the rail limits thing with the ocr for a fall back if there's no text"; built
+      that day, **not installed**). `gatboxlib/railread.py` reads a manual page by page (pdftotext; a page with almost no text is a scan,
+      read by tesseract OCR within a 15-minute budget) and finds supply-rail limits: ranges ("4.75V to 5.25V", "between 4.9V and 5.1V",
+      "11.4 - 12.6 V"), tolerances ("+12 VDC ±5%", "-12V +/- 0.6 V"), signs taken from the rail named on the line, a band only if it holds
+      its nominal within ±15 %, and a number that runs into a letter ("5.2S", OCR's misread of 5.25) is no number. The manuals job runs it
+      after every FIND A MANUAL download and on request (`op: read_limits`; LIBRARY → spec sheet → READ LIMITS), writing
+      `<doc>.limits.json` beside the PDF. The spec sheet shows each as a proposal (page, words, READ BY OCR when it was), and CONFIRM (the
+      page on screen first) adds a rail_limit with that page and those words, confirmed by the owner, which reaches the logger and syncs
+      to the archive; NOT THIS sets it aside for good. Hard rule 12 holds: only a number read off the game's own manual can be confirmed
+      this way (a made-up one is refused). System change: `tesseract-ocr` in the apt list and one MANIFEST line (`railread.py`); no unit
+      changes. `test-railread.sh`: 34, `test-library-web.sh`: 140, `test-dash.sh`: 384, `test-bootstrap.sh`: 195.
 - [ ] **Owner requests (2026-09-29)**, off-spec, one at a time with her OK on each design:
       [x] + ADD MACHINE / EDIT / EXPORT ROSTER, and CAPTURE → SAVE READING (code + tests/test-roster.sh, test-dash)
       [x] installed (d578961) [x] each machine's ROM checklist from MAME's own hash data, no ROM sets downloaded

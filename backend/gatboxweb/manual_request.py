@@ -137,6 +137,18 @@ def fetch(key, body, local):
                    "file": name, "title": title, "kind": kind})
 
 
+def read_limits(key, body, local):
+    """POST /api/library/games/<key>/limits/read {doc_id}: READ LIMITS on one of the game's documents already here."""
+    v, key = _gate(local, key, body)
+    did = body.get("doc_id")
+    if not isinstance(did, str) or not any(d["data"]["doc_id"] == did for d in v.recs("document", key)):
+        raise meter.Bad(404, f"{did!r} isn't one of this game's documents")
+    folder = next((f for f in libsource.folders(key) if os.path.isfile(os.path.join(config.MANUALS, f, did + ".pdf"))), None)
+    if folder is None:
+        raise meter.Bad(409, f"{did}.pdf isn't on this Pi: fetch it first")
+    return _queue({"op": "read_limits", "key": key, "folder": folder, "doc_id": did})
+
+
 def adopt(st):
     """A finished fetch becomes the game's document in the library: its hash, pages and size. Safe to repeat: a document that's
     there with its hash is left alone, so a restart between the download and this changes nothing."""

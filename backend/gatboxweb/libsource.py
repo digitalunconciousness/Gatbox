@@ -131,6 +131,26 @@ def confirm(name, rail, doc, page):
     return current().confirmed_state()[key][rail]
 
 
+def add_confirmed(name, rail, doc, page, lo, hi, quote):
+    """READ LIMITS: a limit read off a manual's page, confirmed by the owner's tap, becomes a rail_limit with that page and those
+    words, confirmed now (the newest confirmed limit of a rail is its window). It syncs to the archive like any other."""
+    import uuid
+    from decimal import Decimal
+    v = current()
+    key = v.key_for(name)
+    volts = lambda x: format(Decimal(str(x)).normalize(), "f")          # noqa: E731 -- "4.75", "-12"
+    data = {"model_key": key, "rail": rail, "lo": volts(lo), "hi": volts(hi), "doc_id": doc, "page": page,
+            "quote": str(quote or "")[:500], "confirmed": {"by": "owner", "at": round(time.time(), 3)}}
+    try:
+        res = v.lib.put("rail_limit", uuid.uuid4().hex, data, 0, by="gatbox")
+    except L.Reject as e:
+        raise meter.Bad(400, f"that limit can't be kept: {e}") from None
+    if res["result"] != "created":
+        raise meter.Bad(409, "that limit couldn't be added: open the page again")
+    refresh_export()
+    return current().confirmed_state()[key][rail]
+
+
 def unconfirm(name, rail):
     v = current()
     key = v.key_for(name)

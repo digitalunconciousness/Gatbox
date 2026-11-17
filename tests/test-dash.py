@@ -2542,6 +2542,25 @@ def main():
         check("... the spec sheet still answers as before: the manual's limit, its page, CONFIRM / CONFIRMED, actuals for the machine",
               "4.75–5.25 V" in text("#lb-body") and "SET ACTUAL" in text("#lb-body"))
         shot("25a-library-seeded")
+        # READ LIMITS (the owner, 2026-11-17): what the manuals job read off the manual, proposed until she confirms it on its page
+        check("READ LIMITS is on the spec sheet (the Pi's own screen)", "READ LIMITS" in text("#lb-body"))
+        json.dump({"doc_id": "gl-manual", "pages": 3, "ocr_pages": 1, "notes": [], "candidates": [
+            {"rail": "+12V", "lo": 11.4, "hi": 12.6, "page": 2, "quote": "+12 VDC 11.4 to 12.6 V", "how": "ocr"}]},
+                  open(f"{T}/manuals/gauntlet-legends/gl-manual.limits.json", "w"))
+        click('[data-view="meter"]')
+        click('[data-view="library"]')
+        check("a limit read off the manual shows apart from the sheet, with its page, its words and READ BY OCR",
+              lib_has("Read off the manuals (1)") and all(s_ in text("#lb-body .found") for s_ in (
+                  "+12V", "11.4–12.6 V", "p.2 ▸", "READ BY OCR: CHECK THE NUMBERS", "+12 VDC 11.4 to 12.6 V", "NOT THIS")))
+        shot("25a2-read-limits")
+        q("[...document.querySelectorAll('#lb-body .found button')].find(b => b.textContent === 'CONFIRM').click()")
+        c.wait("!document.querySelector('#sheet').classList.contains('hide') && document.querySelector('#pane .pagebox img')", 10)
+        check("CONFIRM shows the page first, and says OCR can misread a digit", "OCR, which can misread a digit" in text("#pane"))
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'CONFIRM').click()")
+        check("confirmed: gone from the proposals, on the sheet as +12V ✓ CONFIRMED, and the logger's window has it",
+              settles(c, "!document.querySelector('#lb-body .found') && document.querySelector('#lb-body').textContent.includes('11.4–12.6 V · the manual, confirmed')", 15)
+              and api("GET", "/api/specs/gauntlet-legends")["rails"][-1]["window"] == [11.4, 12.6])
+        api("DELETE", "/api/specs/gauntlet-legends/confirm", {"rail": "+12V"})
         check("the game's page lists the drive images read for its machine (the owner, 2026-11-16: 'No disk image.'), each with its size and date",
               lib_has("Drive images (") and "Drive images (0)" not in text("#lb-body") and "WW-HDD" in text("#lb-body") and "Tap one to look inside it" in text("#lb-body"))
         q("[...document.querySelectorAll('#lb-body button.row')].find(b => b.textContent.startsWith('WW-HDD')).click()")

@@ -829,6 +829,11 @@ def api_manual_files(h, m, q):
     _manual_queued(h, req, f"files of {req['identifier']}")
 
 
+def api_limits_read(h, m, q):
+    req = manual_request.read_limits(unquote(m["key"]), h.body(), h.is_local())
+    _manual_queued(h, req, f"read limits off {req['folder']}/{req['doc_id']}.pdf")
+
+
 def api_manual_fetch(h, m, q):
     req = manual_request.fetch(unquote(m["key"]), h.body(), h.is_local())
     _manual_queued(h, req, f"fetch {req['identifier']}/{req['file']} -> {req['folder']}/{req['id']}.pdf")
@@ -908,6 +913,23 @@ def _spec_changed(h, slug, out, new_file):
 
 def api_specs(h, m, q):
     h.json(200, manuals.sheet(m["slug"]))
+
+
+def api_specs_found(h, m, q):
+    """READ LIMITS → CONFIRM: the Pi's own screen only, like the rest of the spec sheet's confirming."""
+    if not h.is_local():
+        raise meter.Bad(403, "a limit read off a manual is confirmed on the Pi's own screen")
+    b = h.body()
+    out, new_file = meter.spec_change(lambda: manuals.confirm_found(m["slug"], b))
+    h.log_line(f"specs: {m['slug']} limit read off a manual confirmed: {out['source']}")
+    _spec_changed(h, m["slug"], out, new_file)
+
+
+def api_specs_found_dismiss(h, m, q):
+    if not h.is_local():
+        raise meter.Bad(403, "the Pi's own screen only")
+    manuals.dismiss_found(m["slug"], h.body())
+    h.json(200, {"ok": True})
 
 
 def api_specs_confirm(h, m, q):
@@ -1155,6 +1177,7 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("POST", r"/api/library/games/(?P<key>[^/]+)/manual/search", api_manual_search),
     ("POST", r"/api/library/games/(?P<key>[^/]+)/manual/files", api_manual_files),
     ("POST", r"/api/library/games/(?P<key>[^/]+)/manual/fetch", api_manual_fetch),
+    ("POST", r"/api/library/games/(?P<key>[^/]+)/limits/read", api_limits_read),
     ("GET", r"/api/library/mame", api_library_mame),
     ("GET", r"/api/library/conflicts", api_library_conflicts),
     ("POST", r"/api/library/conflicts/resolve", api_library_conflict_choose),
@@ -1178,6 +1201,8 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("GET", r"/manual/(?P<slug>[^/]+)/(?P<file>[^/]+)/(?P<page>\d{1,5})\.png", get_manual_page),
     ("GET", r"/api/specs/(?P<slug>[^/]+)", api_specs),
     ("POST", r"/api/specs/(?P<slug>[^/]+)/confirm", api_specs_confirm),
+    ("POST", r"/api/specs/(?P<slug>[^/]+)/found", api_specs_found),
+    ("DELETE", r"/api/specs/(?P<slug>[^/]+)/found", api_specs_found_dismiss),
     ("DELETE", r"/api/specs/(?P<slug>[^/]+)/confirm", api_specs_unconfirm),
     ("PUT", r"/api/actuals/(?P<slug>[^/]+)", api_actuals_put),
     ("DELETE", r"/api/actuals/(?P<slug>[^/]+)", api_actuals_delete),

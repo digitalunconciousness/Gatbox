@@ -149,6 +149,9 @@ button.primary{border-color:var(--mag)}
 .spec-t td:nth-child(3){min-width:210px}
 .spec-t td:nth-child(3) .btnrow{flex-wrap:nowrap}
 .specline{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+/* READ LIMITS: what was read off a manual, set apart from the sheet until confirmed */
+.found{margin:10px 0;padding:8px 10px;border:1px dashed var(--warn);border-radius:6px}
+.found h3{margin:0 0 6px;color:var(--warn)}
 button.mini{min-height:40px;font-size:14px;padding:4px 10px}
 button.cite{min-height:36px;font-size:13px;padding:2px 8px;color:var(--cyan)}
 .quote{font-size:12px;color:var(--mut);font-style:italic;max-width:440px}

@@ -114,6 +114,7 @@ backend/gatboxlib/browsecopy.py                 /usr/local/lib/gatbox/gatboxlib/
 backend/gatboxlib/rawpreview.py                 /usr/local/lib/gatbox/gatboxlib/rawpreview.py         644
 backend/gatboxlib/browsehash.py                 /usr/local/lib/gatbox/gatboxlib/browsehash.py         644
 backend/gatboxlib/chd.py                        /usr/local/lib/gatbox/gatboxlib/chd.py                644
+backend/gatboxlib/railread.py                   /usr/local/lib/gatbox/gatboxlib/railread.py           644
 backend/gatboxweb/__init__.py                   /usr/local/lib/gatbox/gatboxweb/__init__.py           644
 backend/gatboxweb/config.py                     /usr/local/lib/gatbox/gatboxweb/config.py             644
 backend/gatboxweb/server.py                     /usr/local/lib/gatbox/gatboxweb/server.py             644
@@ -175,6 +176,7 @@ PKGS=(sigrok-cli python3-matplotlib python3-qrcode rsync git curl util-linux-ext
       build-essential pkg-config libusb-1.0-0-dev zlib1g-dev       # minipro build
       libarchive-tools                                              # bsdtar: XGecu .rar -> T48 firmware (minipro's dump-alg script)
       poppler-utils                                                 # pdftoppm / pdftotext / pdfinfo: the manuals viewer
+      tesseract-ocr                                                 # READ LIMITS: OCR for a scanned manual page with no text (the manuals job runs it)
       hdparm smartmontools                                          # disk imaging: hdparm -I/-N and smartctl -i/-H, run on demand
       gddrescue                                                     # ddrescue: the disk job's READ
       mame-tools                                                    # chdman: the disk job's MAME CHD check (info and extracthd only; Task 3)

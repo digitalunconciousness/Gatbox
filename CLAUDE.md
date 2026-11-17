@@ -217,7 +217,7 @@ documents, MAME sets, ROM lists, ROM images and rail limits (`backend/gatboxlib/
 `docs/contract/library-v1/`), seeded from the roster and manuals by `gatbox-library seed --plan|--apply` (the plan is
 read by the owner first). The logger never opens it: gatbox-web exports the confirmed limits to `library-specs.json`.
 LIBRARY replaces MANUALS on the 7" (games, MISSING, ADD/EDIT, title search over MAME's list, CHECK with known-good marks,
-FIND A MANUAL through a spool job). An unseeded deck behaves as before. Spec `docs/plans/2026-11-03-phase-b-library.md`;
+FIND A MANUAL through a spool job, and READ LIMITS: the rail limits read off a manual's pages, OCR for a scanned page, proposed on the spec sheet until the owner CONFIRMs one on its page; `gatboxlib/railread.py`, built 2026-11-17, not installed). An unseeded deck behaves as before. Spec `docs/plans/2026-11-03-phase-b-library.md`;
 the manuals job's install diff is in BRINGUP.md and in the PR that wired it into the bootstrap.
 
 **Phase D (the archive), D1 to D7 built 2026-11-04 on `phase-d-archive` (stacked on `phase-b-library`). The deck's side of D3 is installed (`/etc/gatbox/archive.conf` is on the Pi, 2026-11-16); an archive is set up (the file is not empty: the owner's check, 2026-11-16); the ROM-list job for games added after the seed (`gatbox-mame-roms.path`) was wired into the bootstrap on 2026-11-16 and is not installed yet:**

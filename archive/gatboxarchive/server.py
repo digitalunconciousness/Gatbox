@@ -97,7 +97,15 @@ class Archive:
         self.lib = L.Library(os.path.join(cfg.data, "library.sqlite"))
         self.files = FileStore(os.path.join(cfg.data, "files"), cfg.max_file)
         self.tokens = TokenStore(os.path.join(cfg.data, "tokens.json"))
-        self.disks = DiskStore(cfg.disks, cfg.disk_reserve) if cfg.disks else None
+        # The disk images are an extra: a folder it cannot write (a fresh mount point is root's) must not stop the library, the
+        # pages and the apps' reads (the owner's container, 2026-11-17: the whole archive failed to start). The calls say why.
+        self.disks, self.disks_error = None, None
+        if cfg.disks:
+            try:
+                self.disks = DiskStore(cfg.disks, cfg.disk_reserve)
+            except OSError as e:
+                self.disks_error = f"disk images are off: {cfg.disks} can't be used ({e.strerror or e}); run install.sh, which makes it the service's"
+                print(f"gatbox-archive: {self.disks_error}", file=sys.stderr, flush=True)
         self.ui_secret = self._secret(os.path.join(cfg.data, "ui-secret"))
 
     @staticmethod
@@ -262,7 +270,7 @@ class Handler(BaseHTTPRequestHandler):
         if row["role"] != "device":
             raise Refuse(403, f"a {row['role']} may not do that")
         if self.archive.disks is None:
-            raise Refuse(503, "disk images are off here: set ARCHIVE_DISKS in archive.conf and run install.sh")
+            raise Refuse(503, self.archive.disks_error or "disk images are off here: set ARCHIVE_DISKS in archive.conf and run install.sh")
         return self.archive.disks
 
     def need(self, who, *kinds):

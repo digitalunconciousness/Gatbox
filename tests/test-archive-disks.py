@@ -91,6 +91,19 @@ def run(tmp):
     for s in (tun, prv):
         s.shutdown()
 
+    print("a disks folder it can't use (a fresh mount point is root's; the owner's container, 2026-11-17):")
+    open(f"{tmp}/a-file", "w").close()
+    arc, (tun, prv) = serve(dict(base, ARCHIVE_DISKS=f"{tmp}/a-file/disks"))
+    dev = arc.tokens.add("deck-x", "device")
+    T, P = Client(tun.server_address[1]), Client(prv.server_address[1])
+    check("the archive still starts and the library still answers (the disk images are an extra)",
+          T.call("GET", "/api/v1/library/digest", token=dev)[0] == 200 and T.call("GET", "/api/v1/health")[0] == 200)
+    c, b, _ = P.call("GET", "/api/v1/disks", token=dev)
+    check("... and the disk calls say they are off and why, naming the folder and install.sh",
+          c == 503 and f"{tmp}/a-file/disks" in b["error"] and "install.sh" in b["error"])
+    for s in (tun, prv):
+        s.shutdown()
+
     disks = f"{tmp}/disks"
     arc, (tun, prv) = serve(dict(base, ARCHIVE_DISKS=disks))
     dev, rd = arc.tokens.add("deck-b", "device"), arc.tokens.add("cabcrawl-b", "reader")

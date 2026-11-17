@@ -56,6 +56,10 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       from the archive, BLANK CHECK → the 3 s hold → VERIFIED (minipro's verify + 2 read-backs), in burns.jsonl
 - [ ] **M8 2G stretch**: deferred by the owner (2026-09-29): the homelab side (Sync, the war-room panel) waits until
       she's ready to sort out her server setup. Don't start it or ask about it until she brings it up.
+- [ ] **On hold beside M8** (the owner, 2026-11-17, from `docs/FEATURE-IDEAS.md`): a physical ARM button, a GPIO MARK
+      button, SMART reads on a path that isn't the dock's bridge, a search page on the archive, a phone status page with
+      sign-in. Same rule as M8: don't start them or ask about them until she brings one up. Her picks for the next phase are
+      in that file; the hardware audit for the end of phase 2 is `docs/PI-AUDIT.md`.
 - [x] **READ LIMITS** (the owner, 2026-11-17: "let's do the rail limits thing with the ocr for a fall back if there's no text"; built
       that day, **not installed**). `gatboxlib/railread.py` reads a manual page by page (pdftotext; a page with almost no text is a scan,
       read by tesseract OCR within a 15-minute budget) and finds supply-rail limits: ranges ("4.75V to 5.25V", "between 4.9V and 5.1V",

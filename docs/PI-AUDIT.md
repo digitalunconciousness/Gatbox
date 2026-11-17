@@ -56,11 +56,12 @@ between jobs). The disk job's time limit should be 12h (the repo's value since 2
 
 ## 2. The rail logger
 
-- `gatbox-status`: the reading, the dial mode, the port.
+- `gatbox-status`: the reading, the dial mode, the port. It re-runs itself under `sudo`, so the owner runs it if the agent
+  has no password.
 - The newest CSV in `/var/log/gatbox/`: `tail -n 20` it, then `gatbox-rail-report <that csv> --no-plot`.
 - The ACT LED blinks while it logs (the owner looks).
 - Dial modes: the owner turns the UT61E's dial through DC V, AC V, Ω, continuity and diode. For each, record what `gatbox-status`
-  shows and the CSV's `# mode=` line in the new file. **Continuity and diode have never been seen on real data.** A mode that
+  shows and the CSV's `# mode=` line in the new file. **Diode has never been seen on real data** (continuity has: three CSVs from 2026-09-27). A mode that
   logs nothing, or logs a flag in the unit column, is a finding.
 - A CSV that ends in NUL bytes (a past power cut), if one exists: `gatbox-rail-report` reads it without an error. Don't cut power
   to make one.
@@ -115,7 +116,7 @@ dmesg | grep -iE 'usb|error -71' | tail -n 60
 
 ## 7. The T48: dumps
 
-- DUMP tab with the T48 plugged in (the owner plugs it in). The chip and the part name are hers: `minipro -L | grep -i <part>`
+- DUMP tab with the T48 plugged in (the owner plugs it in). The chip and the part name are hers: `minipro -q T48 -l | grep -i <part>`
   confirms the name, never a guess.
 - A dump: read twice, MATCH or the difference, `mame -romident`'s answer, and the file in `/srv/gatbox/roms`.
 - **BURN passed once** (AM27C020, 2026-09-29). Don't burn in this audit unless the owner asks for one on a scratch chip; then

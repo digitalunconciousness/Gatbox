@@ -914,6 +914,23 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
         the archive, NOT ARCADE ones included (the owner: "everything"), and filing an older image that was kept off the queue queues it. Nothing
         drains the queue yet (`docs/plans/2026-11-17-disk-image-drain.md`). No system config. `test-disk.sh`: 199, `test-dash.sh`: 377; with
         FILE UNDER no longer queueing an old image, `test-disk.sh` fails.
+  - [x] **Disk images to the archive, over the home network only** (the owner, 2026-11-17: "only sync at home outside of the tunnel",
+        "everything"; `docs/plans/2026-11-17-disk-image-drain.md`; built that day, **not installed**).
+        The archive (`archive/gatboxarchive/diskstore.py`): `/api/v1/disks` on the private listener only, for the deck's device token (the tunnel
+        answers 404); 8 MiB parts written in place, a background read-back against the SHA-256 before an image counts as stored, a reserve kept
+        free (`ARCHIVE_DISK_RESERVE`); off until `ARCHIVE_DISKS` names a folder; nothing deletes a stored image. install.sh makes the folder and adds
+        `ReadWritePaths=` for it to the drop-in. The deck: `tools/gatbox-disk-send` + `gatbox-disk-send.service/.timer` (its own user in the
+        disk spool's group, the store read-only, every address denied but the archive's one, idle I/O, every 15 minutes after the last run
+        ended), reading `ARCHIVE_LAN_URL` from archive.conf (an `http://` private address, or it refuses). The bootstrap writes
+        `gatbox-disk-send.service.d/home.conf` with `IPAddressAllow=` that one address (checked private by Python's `ipaddress`, never loopback;
+        removed when the line goes), so no address range is typed into the repo. It waits for a disk job, stops between
+        parts when one is queued, resumes at the parts the archive has, and keeps its own state, which the DISK tab reads (ARCHIVED, SENDING n %,
+        and a line under the images). `test-disk-send.sh`: 25, `test-archive-disks.sh`: 29, `test-archive-install.sh`: 42, `test-bootstrap.sh`: 193,
+        `test-dash.sh`: 380; 6 breakages each fail a test (disk calls on the tunnel, no room check, no stop for a disk job, a public address
+        allowed, FILE UNDER not queueing; and any address let into the drop-in).
+  - [ ] ⏸ Owner: the archive side first (`archive/RUNBOOK.md` step 6b: a folder for the images outside `/srv/archive`, `ARCHIVE_DISKS`
+        and the private listener in archive.conf, install.sh, the `curl` check from the deck), then `ARCHIVE_LAN_URL` in the deck's
+        archive.conf, then the bootstrap (the diff is in the PR: a new user, a unit and its timer, the drop-in from ARCHIVE_LAN_URL, one line in gatbox-web.service).
   - [x] Job mode (`gatbox-disk --job`, as gatbox-dump's) and the units `backend/gatbox-disk.path/.service`, written
         to §5 and **not installed**: not in the MANIFEST until Task 4
   - [x] Task 4 (built 2026-11-14 and **installed on the Pi that day**: the owner ran the bootstrap. Seen again 2026-11-16: the Pi's unit list has

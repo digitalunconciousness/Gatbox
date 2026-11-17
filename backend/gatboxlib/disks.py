@@ -238,7 +238,7 @@ def images():
             continue
         src = j.get("source") or {}
         out.append({"image": os.path.relpath(img, store), "machine": j.get("machine"), "label": j.get("label"),
-                    "bytes": j.get("bytes"), "sha1": j.get("sha1"), "media": j.get("media"), "realm": j.get("realm"),
+                    "bytes": j.get("bytes"), "sha1": j.get("sha1"), "sha256": j.get("sha256"), "media": j.get("media"), "realm": j.get("realm"),
                     "started": j.get("started"), "source": f"{src.get('vendor', '')} {src.get('model', '')}".strip(),
                     "reads": j.get("reads"), "also_read": len(j.get("also_read") or []),
                     "fingerprint": (j.get("fingerprint") or {}).get("nonzero"),

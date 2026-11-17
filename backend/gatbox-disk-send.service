@@ -1,0 +1,54 @@
+# Installed by gatbox-bootstrap.sh (docs/plans/2026-11-17-disk-image-drain.md); started by gatbox-disk-send.timer.
+# Sends the image store's disk images to the archive, over the home network only (the owner, 2026-11-17: "only sync at home outside
+# of the tunnel"). It reads the store and writes nothing there; its one write is its own state, which gatbox-web reads.
+[Unit]
+Description=GATBOX: disk images to the archive, over the home network
+After=network-online.target srv-gatbox-disks.mount
+Wants=network-online.target
+# A deck with no archive configured has nothing to send. tmpfiles leaves archive.conf empty, and the job condition-skips
+# rather than failing every 15 minutes; with a file but no ARCHIVE_LAN_URL, it says so in its state and ends.
+ConditionFileNotEmpty=/etc/gatbox/archive.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gatbox-disk-send
+# The archive's home address and the deck's device token. Loaded as a credential, so the file (600 root) is never readable
+# by the user below.
+LoadCredential=archive:/etc/gatbox/archive.conf
+# A real user (sysusers.d), not DynamicUser: a DynamicUser's state is /var/lib/private/<name> at 0700, and gatbox-web could not
+# read what the DISK tab shows (the same reason as gatbox-sync). It holds the disk spool's group only to read the images (they are
+# that group's) and to see whether a disk job is queued; never the devices' group.
+User=gatbox-disk-send
+Group=gatbox-disk-send
+SupplementaryGroups=gatbox-disk-queue
+StateDirectory=gatbox-disk-send
+StateDirectoryMode=0755
+# One image can take hours over the home network (80 GB), and the archive then reads it back. The job stops on its own when a
+# disk job is queued or the archive stops answering; the timer starts the next run 15 minutes after this one ends.
+TimeoutStartSec=infinity
+# Imaging comes first: the lowest CPU and I/O priority, and it waits whenever a disk job is queued or running.
+Nice=19
+IOSchedulingClass=idle
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/srv/gatbox/disks
+ReadOnlyPaths=-/var/spool/gatbox-disk
+InaccessiblePaths=-/var/lib/gatbox-web -/var/lib/gatbox-sync -/srv/gatbox/library -/srv/gatbox/manuals -/srv/gatbox/roms
+PrivateDevices=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# The home network only, and on it only the archive: everything is denied here, and the bootstrap adds one drop-in
+# (gatbox-disk-send.service.d/home.conf) allowing the one address in ARCHIVE_LAN_URL, when that is a private address. With no such
+# line the job can reach nothing at all, and says so. The tool itself refuses an ARCHIVE_LAN_URL that isn't a private address too.
+IPAddressDeny=any
+IPAddressAllow=localhost
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+MemoryMax=256M

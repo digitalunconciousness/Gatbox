@@ -63,6 +63,8 @@ backend/gatbox-disk.service                     /etc/systemd/system/gatbox-disk.
 backend/gatbox-browse.socket                    /etc/systemd/system/gatbox-browse.socket              644
 backend/gatbox-browse.service                   /etc/systemd/system/gatbox-browse.service             644
 backend/gatbox-disk.path                        /etc/systemd/system/gatbox-disk.path                  644
+backend/gatbox-disk-send.service                /etc/systemd/system/gatbox-disk-send.service          644
+backend/gatbox-disk-send.timer                  /etc/systemd/system/gatbox-disk-send.timer            644
 backend/gatbox-manuals.service                  /etc/systemd/system/gatbox-manuals.service            644
 backend/gatbox-manuals.path                     /etc/systemd/system/gatbox-manuals.path               644
 backend/gatbox-mame-roms.service                /etc/systemd/system/gatbox-mame-roms.service          644
@@ -90,6 +92,7 @@ tools/gatbox-replay                             /usr/local/bin/gatbox-replay    
 tools/gatbox-labels                             /usr/local/bin/gatbox-labels                          755
 tools/gatbox-dump                               /usr/local/bin/gatbox-dump                            755
 tools/gatbox-disk                               /usr/local/bin/gatbox-disk                            755
+tools/gatbox-disk-send                          /usr/local/bin/gatbox-disk-send                       755
 backend/gatbox-browse                           /usr/local/bin/gatbox-browse                          755
 tools/gatbox-mame-roms                          /usr/local/bin/gatbox-mame-roms                       755
 tools/gatbox-library                            /usr/local/bin/gatbox-library                         755
@@ -305,6 +308,23 @@ Options=noatime,nodev,nosuid,noexec
 WantedBy=dev-disk-by\\x2duuid-${esc}.device
 EOF
 }
+# gatbox-disk-send may reach one address: the archive's private listener, ARCHIVE_LAN_URL in archive.conf (docs/plans/
+# 2026-11-17-disk-image-drain.md). Its unit denies everything; this drop-in, written from that line, allows that address only.
+ARCHIVE_CONF=/etc/gatbox/archive.conf
+SEND_DROPIN=/etc/systemd/system/gatbox-disk-send.service.d/home.conf
+lan_host() {   # the address in ARCHIVE_LAN_URL=http://<address>:<port>, when it is a private IP address; else nothing
+    local h
+    h=$(awk -F= '/^[[:space:]]*ARCHIVE_LAN_URL[[:space:]]*=/ { sub(/^[^=]*=[[:space:]]*/, ""); gsub(/[[:space:]\r]/, ""); print; exit }' "$ARCHIVE_CONF" 2>/dev/null)
+    h=${h#http://}; h=${h%%/*}
+    if [[ $h == \[* ]]; then h=${h#[}; h=${h%%]*}; else h=${h%%:*}; fi
+    # Python's own idea of "private" (RFC 1918, ULA, link-local), not a list typed in here; never loopback.
+    python3 -c 'import ipaddress, sys
+a = ipaddress.ip_address(sys.argv[1])
+sys.exit(0 if a.is_private and not a.is_loopback else 1)' "$h" 2>/dev/null && printf '%s\n' "$h"
+}
+send_dropin() {   # <address>: the drop-in text
+    printf '# Written by gatbox-bootstrap.sh from ARCHIVE_LAN_URL in /etc/gatbox/archive.conf: edit that, not this.\n[Service]\nIPAddressAllow=%s\n' "$1"
+}
 # The disk rule (98-gatbox-disk.rules) puts every whole disk behind USB in the group gatbox-disk. udev works out a rule's
 # GROUP= when it loads the rule, and a daemon that loaded this one before the group existed kept leaving drives root:disk
 # after it was told to reload (the Pi, 2026-11-14: only a restart fixed it; why a reload was not enough was not established).
@@ -349,6 +369,7 @@ fi
 
 if [ "${1:-}" = "--check" ]; then
     DISKS_CONF=${GATBOX_DISKS_CONF:-$DISKS_CONF}; STORE_MOUNT=${GATBOX_STORE_MOUNT:-$STORE_MOUNT}   # a test points these elsewhere; --check only reads
+    ARCHIVE_CONF=${GATBOX_ARCHIVE_CONF:-$ARCHIVE_CONF}; SEND_DROPIN=${GATBOX_SEND_DROPIN:-$SEND_DROPIN}
     DISK_RULE=${GATBOX_DISK_RULE:-$DISK_RULE}; SYS_BLOCK=${GATBOX_SYS_BLOCK:-$SYS_BLOCK}; DEV_DIR=${GATBOX_DEV:-$DEV_DIR}
     ETC_GATBOX=${GATBOX_ETC:-/etc/gatbox}
     NOTES=()   # what this check could not look at, said after the list: not a change
@@ -362,13 +383,14 @@ if [ "${1:-}" = "--check" ]; then
     for l in usb_max_current_enable=1; do grep -qxF "$l" /boot/firmware/config.txt || DIFFS+=("config.txt += $l"); done
     grep -qE '^[^#]*rtc_bbat_vchg' /boot/firmware/config.txt && [ -z "$RTC_CHARGE" ] && DIFFS+=("config.txt: comment out rtc_bbat_vchg (RTC CHARGING IS ON)")
     for u in gatbox-raillog.service gatbox-web.service gatbox-scand.service gatbox-dump.path gatbox-rtc-sync.timer \
-             gatbox-sync.timer gatbox-disk.path gatbox-manuals.path gatbox-mame-roms.path gatbox-browse.socket; do
+             gatbox-sync.timer gatbox-disk.path gatbox-manuals.path gatbox-mame-roms.path gatbox-browse.socket gatbox-disk-send.timer; do
         systemctl -q is-enabled "$u" 2>/dev/null || DIFFS+=("enable     $u"); done
     systemctl -q is-enabled smartmontools.service 2>/dev/null \
         && DIFFS+=("disable    smartd (smartmontools.service): the disk jobs call smartctl on demand, nothing polls the drives")
     getent passwd gatbox-dump >/dev/null || DIFFS+=("create     user gatbox-dump (sysusers.d)")
     getent passwd gatbox-disk >/dev/null || DIFFS+=("create     user gatbox-disk (sysusers.d)")
     getent passwd gatbox-browse >/dev/null || DIFFS+=("create     user gatbox-browse (sysusers.d)")
+    getent passwd gatbox-disk-send >/dev/null || DIFFS+=("create     user gatbox-disk-send (sysusers.d: disk images to the archive, home network only)")
     getent passwd gatbox-fetch >/dev/null || DIFFS+=("create     user gatbox-fetch (sysusers.d: the manuals job, in group gatbox-manuals)")
     getent group gatbox-disk-queue >/dev/null || DIFFS+=("create     group gatbox-disk-queue (sysusers.d)")
     [ -d /var/spool/gatbox-disk ] || DIFFS+=("create     /var/spool/gatbox-disk (tmpfiles.d)")
@@ -384,6 +406,15 @@ if [ "${1:-}" = "--check" ]; then
         uuid=$(store_uuid)
         [ -z "$uuid" ] || [ "$(store_mount_unit "$uuid")" = "$(cat "$STORE_MOUNT" 2>/dev/null)" ] \
             || DIFFS+=("write      srv-gatbox-disks.mount (the image store, UUID $uuid)")
+    fi
+    # archive.conf is 0600 root too.
+    if [ -r "$ARCHIVE_CONF" ]; then
+        lan=$(lan_host || true)
+        if [ -n "$lan" ]; then
+            [ "$(send_dropin "$lan")" = "$(cat "$SEND_DROPIN" 2>/dev/null)" ] || DIFFS+=("write      gatbox-disk-send.service.d/home.conf (IPAddressAllow=$lan, the archive at home)")
+        elif [ -e "$SEND_DROPIN" ]; then
+            DIFFS+=("remove     gatbox-disk-send.service.d/home.conf (no private ARCHIVE_LAN_URL in archive.conf)")
+        fi
     fi
     getent passwd gatbox-sync >/dev/null || DIFFS+=("create     user gatbox-sync (sysusers.d)")
     getent group gatbox-wifi >/dev/null || DIFFS+=("create     group gatbox-wifi (sysusers.d)")
@@ -608,8 +639,8 @@ svc() {   # <unit> <installed path glob>...: enable it; restart only if its file
 if changed /etc/sysusers.d/gatbox.conf || ! getent passwd gatbox-dump >/dev/null || ! getent group gatbox-manuals >/dev/null \
    || ! getent passwd gatbox-sync >/dev/null || ! getent group gatbox-wifi >/dev/null \
    || ! getent passwd gatbox-disk >/dev/null || ! getent group gatbox-disk-queue >/dev/null || ! getent passwd gatbox-browse >/dev/null \
-   || ! getent passwd gatbox-fetch >/dev/null || ! getent group gatbox-mame >/dev/null; then
-    systemd-sysusers /etc/sysusers.d/gatbox.conf && SYSUSERS_RAN=1 && log "users gatbox-dump (T48 dumps, group plugdev), gatbox-sync (hub push), gatbox-disk (disk jobs, its own devices' group) and gatbox-browse (the drive browser) and gatbox-fetch (the manuals job), groups gatbox-manuals, gatbox-disk-queue and gatbox-mame (the chip-list spool)"
+   || ! getent passwd gatbox-fetch >/dev/null || ! getent group gatbox-mame >/dev/null || ! getent passwd gatbox-disk-send >/dev/null; then
+    systemd-sysusers /etc/sysusers.d/gatbox.conf && SYSUSERS_RAN=1 && log "users gatbox-dump (T48 dumps, group plugdev), gatbox-sync (hub push), gatbox-disk (disk jobs, its own devices' group) and gatbox-browse (the drive browser) and gatbox-fetch (the manuals job) and gatbox-disk-send (disk images to the archive), groups gatbox-manuals, gatbox-disk-queue and gatbox-mame (the chip-list spool)"
 fi
 # udev works out GROUP= when it LOADS a rule. Step 5 loaded 98-gatbox-disk.rules before this step could make the gatbox-disk
 # group, so on a first install udev ignored GROUP="gatbox-disk" ("Unknown group": udevadm verify on the Pi said so) and left the
@@ -691,6 +722,17 @@ svc gatbox-rtc-sync.timer '/usr/local/sbin/gatbox-rtc-sync' '/etc/systemd/system
 # The hub push. Its .service runs only when hub.conf is not empty or hubs.d holds a file, so
 # on a Pi with no token the timer runs and the job condition-skips rather than failing every 2 min.
 svc gatbox-sync.timer '/usr/local/bin/gatbox-sync' '/etc/systemd/system/gatbox-sync.*'
+# Disk images to the archive, over the home network only (docs/plans/2026-11-17-disk-image-drain.md). Its .service runs only
+# when archive.conf is not empty, and sends nothing without ARCHIVE_LAN_URL in it.
+lan_now=$(lan_host || true)
+if [ -n "$lan_now" ] && [ "$(send_dropin "$lan_now")" != "$(cat "$SEND_DROPIN" 2>/dev/null)" ]; then
+    mkdir -p "$(dirname "$SEND_DROPIN")" && send_dropin "$lan_now" > "$SEND_DROPIN.tmp" && chmod 644 "$SEND_DROPIN.tmp" && mv "$SEND_DROPIN.tmp" "$SEND_DROPIN"
+    systemctl daemon-reload
+    log "gatbox-disk-send may reach $lan_now (the archive at home, from ARCHIVE_LAN_URL)"
+elif [ -z "$lan_now" ] && [ -e "$SEND_DROPIN" ]; then
+    rm -f "$SEND_DROPIN" && systemctl daemon-reload && log "gatbox-disk-send: no private ARCHIVE_LAN_URL in archive.conf, so it reaches nothing"
+fi
+svc gatbox-disk-send.timer '/usr/local/bin/gatbox-disk-send' '/etc/systemd/system/gatbox-disk-send.*' '/usr/local/lib/gatbox/gatboxlib/*'
 if changed '/usr/local/sbin/gatbox-rtc-sync' '/etc/systemd/system/gatbox-rtc-sync.*' || [ ! -e /var/lib/gatbox/rtc-synced ]; then
     systemctl start gatbox-rtc-sync.service || warn "gatbox-rtc-sync failed: journalctl -u gatbox-rtc-sync"
 fi

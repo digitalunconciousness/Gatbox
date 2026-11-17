@@ -85,9 +85,44 @@ def status():
             "status": st, "request": request, "spool": os.path.isdir(config.DISK_SPOOL)}
 
 
+SEND_STATE = "/var/lib/gatbox-disk-send"
+
+
+def send_state():
+    """gatbox-disk-send's state.json (the drain to the archive, over the home network): {} before it ever ran."""
+    try:
+        with open(os.path.join(os.environ.get("GATBOX_DISK_SEND_STATE", SEND_STATE), "state.json"), encoding="utf-8") as f:
+            st = json.load(f)
+        return st if isinstance(st, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def send_summary(st=None):
+    """What the DISK tab says about the drain: the last run's result and why, when, and how many images are on the archive."""
+    st = send_state() if st is None else st
+    if not st:
+        return None
+    cur = st.get("current") or {}
+    return {"result": st.get("result"), "why": st.get("why"), "at": st.get("at"), "sent": len(st.get("sent") or {}),
+            "current": {"image": cur.get("image"), "have": cur.get("have"), "parts": cur.get("parts"),
+                        "checking": bool(cur.get("checking"))} if cur else None}
+
+
 def images():
-    """GET /api/disk/images: the store's images from their sidecars, newest first. Never their bytes."""
-    return dl.images() if dl.store_mounted() else []
+    """GET /api/disk/images: the store's images from their sidecars, newest first. Never their bytes. The archive state is
+    gatbox-disk-send's where it has one (the sidecar is the disk job's and stays "pending")."""
+    if not dl.store_mounted():
+        return []
+    out, st = dl.images(), send_state()
+    sent, cur = st.get("sent") or {}, st.get("current") or {}
+    for i in out:
+        if i.get("sha256") and i["sha256"] in sent:
+            i["archive"] = "uploaded"
+        elif i.get("sha256") and i["sha256"] == cur.get("sha256"):
+            i["archive"] = "sending"
+            i["sending"] = {"have": cur.get("have"), "parts": cur.get("parts"), "checking": bool(cur.get("checking"))}
+    return out
 
 
 def _machine(body):

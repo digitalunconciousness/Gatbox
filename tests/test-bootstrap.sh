@@ -190,7 +190,7 @@ check "the job runs as gatbox-disk with the queue group" \
     'grep -qx "User=gatbox-disk" "$DISKU" && grep -qx "SupplementaryGroups=gatbox-disk-queue" "$DISKU"'
 check "the job is ordered after the store's mount and never requires it (an unplugged drive must not jam the spool)" \
     'grep -qx "After=srv-gatbox-disks.mount" "$DISKU" && ! grep -qE "^(Requires|RequiresMountsFor|BindsTo)=" "$DISKU"'
-check "gatbox-disk.path is enabled and --check lists it" 'grep -q "svc gatbox-disk.path" "$BOOT" && grep -q "gatbox-disk.path gatbox-manuals.path gatbox-mame-roms.path gatbox-browse.socket; do" "$BOOT"'
+check "gatbox-disk.path is enabled and --check lists it" 'grep -q "svc gatbox-disk.path" "$BOOT" && grep -q "gatbox-disk.path gatbox-manuals.path gatbox-mame-roms.path gatbox-browse.socket gatbox-disk-send.timer; do" "$BOOT"'
 all_in() { local f=$1 w; shift; for w in "$@"; do grep -qF -- "$w" "$f" || return 1; done; }     # every string is in the file
 # FIND A MANUAL (the owner, 2026-11-16): the manuals job, which was written in the repo (2026-11-05) and never wired into the bootstrap, so
 # nothing on the Pi made its user, its spool or its units. It is installed the way the disk job is, and the owner reads the diff first.
@@ -209,7 +209,7 @@ check "the job runs as gatbox-fetch with the manuals group, no capabilities, and
 check "the user is made before gatbox-web restarts with that group (a missing group would stop it starting), and the sysusers step runs when the user is missing" \
     '[ "$(grep -n "systemd-sysusers /etc/sysusers.d" "$BOOT" | head -1 | cut -d: -f1)" -lt "$(grep -n "^svc gatbox-web.service" "$BOOT" | head -1 | cut -d: -f1)" ] && grep -q "! getent passwd gatbox-fetch" "$BOOT"'
 check "gatbox-manuals.path is enabled and --check lists it, the user and the spool" \
-    'grep -q "^svc gatbox-manuals.path" "$BOOT" && grep -q "gatbox-manuals.path gatbox-mame-roms.path gatbox-browse.socket; do" "$BOOT" && all_in "$BOOT" "user gatbox-fetch" "/var/spool/gatbox-manuals"'
+    'grep -q "^svc gatbox-manuals.path" "$BOOT" && grep -q "gatbox-manuals.path gatbox-mame-roms.path gatbox-browse.socket gatbox-disk-send.timer; do" "$BOOT" && all_in "$BOOT" "user gatbox-fetch" "/var/spool/gatbox-manuals"'
 # ROM lists for games added after the seed (phase D4, the owner, 2026-11-16: "wire in the ROM-list job"): the units were in the repo
 # marked NOT INSTALLED, and nothing in the bootstrap installed them.
 MRU="$REPO/backend/gatbox-mame-roms.service"
@@ -225,7 +225,7 @@ check "gatbox-web holds the group and may write the spool, nothing more" \
 check "the job: a DynamicUser with the spool's group, no network, no devices, no capabilities, writing only its spool" \
     'grep -qx "DynamicUser=yes" "$MRU" && grep -qx "SupplementaryGroups=gatbox-mame" "$MRU" && grep -qx "PrivateNetwork=yes" "$MRU" && grep -qx "PrivateDevices=yes" "$MRU" && grep -qx "CapabilityBoundingSet=" "$MRU" && grep -qx "ReadWritePaths=/var/spool/gatbox-mame" "$MRU"'
 check "gatbox-mame-roms.path is enabled and restarted on change, sysusers and tmpfiles run when the group or spool is missing, and --check lists them" \
-    'grep -q "^svc gatbox-mame-roms.path" "$BOOT" && grep -q "getent group gatbox-mame >/dev/null; then" "$BOOT" && grep -q "\[ ! -d /var/spool/gatbox-mame \]" "$BOOT" && all_in "$BOOT" "group gatbox-mame" "/var/spool/gatbox-mame (tmpfiles.d)"'
+    'grep -q "^svc gatbox-mame-roms.path" "$BOOT" && grep -q "getent group gatbox-mame >/dev/null || ! getent passwd gatbox-disk-send >/dev/null; then" "$BOOT" && grep -q "\[ ! -d /var/spool/gatbox-mame \]" "$BOOT" && all_in "$BOOT" "group gatbox-mame" "/var/spool/gatbox-mame (tmpfiles.d)"'
 check "--check reports the user, group, spool, mountpoint and the owner's group" \
     'all_in "$BOOT" "user gatbox-disk" "group gatbox-disk-queue (sysusers" "/var/spool/gatbox-disk" "/srv/gatbox/disks" "+= gatbox-disk-queue"'
 # udev works out GROUP= when it loads a rule. On the Pi (2026-11-14) telling the running udevd to reload did not make it see the
@@ -289,6 +289,37 @@ else
     check "--check: a /etc/gatbox this user cannot open: no false 'create' lines, and a note says what was not looked at" \
         '! grep -qE "create     /etc/gatbox/(hubs.d|hub.conf|archive.conf)" "$T/etc-closed" && grep -q "^note: /etc/gatbox is readable by root only" "$T/etc-closed"'
 fi
+# Disk images to the archive (docs/plans/2026-11-17-disk-image-drain.md): the home network only, the store read-only, imaging first.
+DSS="$REPO/backend/gatbox-disk-send.service"; DST="$REPO/backend/gatbox-disk-send.timer"
+for f in "tools/gatbox-disk-send +/usr/local/bin/gatbox-disk-send +755" "backend/gatbox-disk-send.service +/etc/systemd/system/gatbox-disk-send.service +644" \
+         "backend/gatbox-disk-send.timer +/etc/systemd/system/gatbox-disk-send.timer +644"; do
+    check "MANIFEST installs ${f%% *}" 'grep -qE "^$f" "$BOOT"'
+done
+check "the sender's timer is enabled by svc and listed by --check" \
+    'grep -q "^svc gatbox-disk-send.timer" "$BOOT" && grep -q "gatbox-browse.socket gatbox-disk-send.timer; do" "$BOOT" && grep -q "user gatbox-disk-send" "$BOOT"'
+check "sysusers: its own user, in the disk spool's group only (to read the images), never the devices' group" \
+    'grep -qE "^u gatbox-disk-send - " "$SYSU" && grep -qx "m gatbox-disk-send gatbox-disk-queue" "$SYSU" && ! grep -qE "^m gatbox-disk-send gatbox-disk$" "$SYSU"'
+check "the sender: the store and the spool read-only, nothing writable but its own state" \
+    'grep -qx "ProtectSystem=strict" "$DSS" && grep -qx "ReadOnlyPaths=/srv/gatbox/disks" "$DSS" && grep -qx "StateDirectory=gatbox-disk-send" "$DSS" && ! grep -qE "^ReadWritePaths=" "$DSS"'
+check "... every address denied in the unit itself; only the bootstrap's drop-in opens the archive's one address" \
+    'grep -qx "IPAddressDeny=any" "$DSS" && grep -qx "IPAddressAllow=localhost" "$DSS"'
+# the drop-in from ARCHIVE_LAN_URL (--check reads the two paths from the environment, as for the store's mount unit)
+lan_check() { printf '%s\n' "$1" > "$T/archive.conf"; GATBOX_ARCHIVE_CONF="$T/archive.conf" GATBOX_SEND_DROPIN="$T/${2:-none}.conf" bash "$BOOT" --check 2>&1; }
+check "--check: a private ARCHIVE_LAN_URL: the drop-in that allows that one address" \
+    'lan_check "ARCHIVE_LAN_URL=http://192.0.2.7:8081" | grep -qF "write      gatbox-disk-send.service.d/home.conf (IPAddressAllow=192.0.2.7, the archive at home)"'
+check "... an IPv6 one in brackets too" \
+    'lan_check "ARCHIVE_LAN_URL = http://[2001:db8::7]:8081/" | grep -qF "(IPAddressAllow=2001:db8::7, the archive at home)"'
+for bad in "ARCHIVE_LAN_URL=http://8.8.8.8:8081" "ARCHIVE_LAN_URL=http://archive.example.test:8081" "ARCHIVE_LAN_URL=http://127.0.0.1:8081" \
+           "ARCHIVE_URL=https://archive.example.test" "ARCHIVE_LAN_URL=http://192.0.2.1;touch $T/pwned:8081"; do
+    check "--check: '$bad' is not a private address: no drop-in" '! lan_check "$bad" | grep -q "home.conf" && [ ! -e "$T/pwned" ]'
+done
+printf '# Written by gatbox-bootstrap.sh from ARCHIVE_LAN_URL in /etc/gatbox/archive.conf: edit that, not this.\n[Service]\nIPAddressAllow=192.0.2.7\n' > "$T/have.conf"
+check "--check: the drop-in already matches: nothing said" '! lan_check "ARCHIVE_LAN_URL=http://192.0.2.7:8081" have | grep -q "home.conf"'
+check "--check: ARCHIVE_LAN_URL gone but a drop-in left: told to remove it" 'lan_check "ARCHIVE_URL=https://archive.example.test" have | grep -qF "remove     gatbox-disk-send.service.d/home.conf"'
+check "... the token as a credential, the lowest priority, no devices, and it skips when archive.conf is empty" \
+    'grep -qx "LoadCredential=archive:/etc/gatbox/archive.conf" "$DSS" && all_in "$DSS" "IOSchedulingClass=idle" "Nice=19" "PrivateDevices=yes" && grep -qx "ConditionFileNotEmpty=/etc/gatbox/archive.conf" "$DSS"'
+check "... the timer counts from the end of the last run (a run can take hours)" 'grep -qx "OnUnitInactiveSec=15min" "$DST" && ! grep -q "OnUnitActiveSec" "$DST"'
+check "gatbox-web reads the sender's state, read-only" 'grep -qx "ReadOnlyPaths=-/var/lib/gatbox-disk-send" "$WEBU"'
 # The drive browser (docs/plans/2026-11-15-drive-browser.md): its user, its socket-activated service, and what the service cannot do.
 BRS="$REPO/backend/gatbox-browse.service"; BRK="$REPO/backend/gatbox-browse.socket"
 for f in "backend/gatbox-browse +/usr/local/bin/gatbox-browse +755" "backend/gatbox-browse.socket +/etc/systemd/system/gatbox-browse.socket +644" \
@@ -318,7 +349,7 @@ check "the camera-raw preview reader is in the manifest: the browser imports it 
 check "the COMPARE module is in the manifest: gatbox-browse imports it at start, and a missing file would stop the whole drive browser, not only COMPARE" \
     'grep -q "^backend/gatboxlib/browsehash.py " "$BOOT"'
 check "the bootstrap enables and starts the socket, and --check lists it and the user" \
-    'grep -q "^svc gatbox-browse.socket" "$BOOT" && grep -q "gatbox-browse.socket; do" "$BOOT" && grep -q "create     user gatbox-browse" "$BOOT"'
+    'grep -q "^svc gatbox-browse.socket" "$BOOT" && grep -q "gatbox-browse.socket gatbox-disk-send.timer; do" "$BOOT" && grep -q "create     user gatbox-browse" "$BOOT"'
 if command -v systemd-analyze >/dev/null 2>&1; then
     # the unit files read cleanly: no unknown directive and no syntax error (an unknown user or a missing program is fine here)
     out=$(systemd-analyze verify "$BRK" "$BRS" 2>&1 | grep -iE "unknown (key|section|lvalue)|failed to parse|bad (unit|setting)|invalid" | head -3)

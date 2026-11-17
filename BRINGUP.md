@@ -91,6 +91,14 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       what was under it). The DISK tab shows "takes N GB" beside an image's size when that is less. System change: one MANIFEST line in
       the bootstrap and one in `archive/install.sh` (`sparse.py`); no unit changes. `test-sparse.sh`: 8, `test-disk.sh`: 226,
       `test-archive-disks.sh`: 34, `test-archive-install.sh`: 42, `test-dash.sh`: 390, `test-bootstrap.sh`: 198.
+- [x] **The write gate** (the owner, 2026-11-17: "loopback-gate all writes"; built that day, **not installed**). gatbox-web
+      had no gate on most of its changes: a phone, or any page open on one, could edit the roster, clear the machine, start a
+      disk READ or confirm a rail limit. Now every change is the Pi's own screen's, checked in one place (`route()` in
+      `server.py`), except the phone's own at the cabinet (`PHONE_WRITES`): Start/Stop, a mark, a new file, the profile, the
+      alarm, which machine, a capture, ADD PDF and a tick on the swap checklist. From the network, any change a browser says
+      came from another site's page (`Sec-Fetch-Site`, `Origin`) is refused, those included. Every response carries
+      `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and `Referrer-Policy: same-origin`. No system config.
+      `test-web-gate.sh` (new): 13; the whole suite passes (`test-dash.sh` 390).
 - [x] **Games for the hubs' machines** (the owner, 2026-11-17: new cabcrawl and tracker games should reach the archive without
       her going to it; `docs/plans/2026-11-17-hub-games.md`; built that day, **not installed**). `backend/gatboxweb/hubgames.py`: a hub
       machine's key that names no game in the library becomes a game on the deck (titled from the machine's name), which the library

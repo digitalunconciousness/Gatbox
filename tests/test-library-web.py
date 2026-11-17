@@ -636,6 +636,55 @@ def main():
     st = job_done(rq["id"])
     check("fetching it again under the same title gets its own id; nothing is overwritten",
           c == 202 and rq["id"] and st.get("doc_id") == "widget-pinball-manual-2" and os.path.isfile(f"{folder}/widget-pinball-manual.pdf"))
+    check("READ LIMITS runs on every fetched manual: the status counts what it found (none in this one)",
+          isinstance(st.get("limits"), dict) and st["limits"].get("found") == 0 and st["limits"].get("pages") == 1)
+
+    print("READ LIMITS (the owner, 2026-11-17): limits read off a manual, proposed until she confirms one")
+    wfold = next(f for f in (f"{T}/manuals/widget-wars", f"{T}/manuals/widget-wars-cocktail") if os.path.isfile(f"{f}/widget-wars-manual.pdf"))
+    json.dump({"doc_id": "widget-wars-manual", "pages": 4, "ocr_pages": 1, "notes": ["1 page(s) with no text were not read: the OCR time limit ran out"],
+               "candidates": [{"rail": "-5V", "lo": -5.25, "hi": -4.75, "page": 3, "quote": "-5V 4.75 to 5.25 volts", "how": "text"},
+                              {"rail": "+12V", "lo": 11.4, "hi": 12.6, "page": 2, "quote": "+12V 11.4-12.6V", "how": "text"},
+                              {"rail": "+3.3V", "lo": 3.2, "hi": 3.4, "page": 4, "quote": "+3.3V 3.2-3.4V", "how": "ocr"},
+                              {"rail": "+5V", "lo": "junk", "hi": 1, "page": 1, "quote": "x", "how": "text"}]},
+              open(f"{wfold}/widget-wars-manual.limits.json", "w"))
+    sh = get("/api/specs/widget-wars")
+    fs = {(x["rail"], x["lo"], x["hi"], x["page"], x["how"]) for x in sh["found"]}
+    check("the sheet proposes what was read off the manual: -5V and +3.3V (read by OCR); not the +12V already on the sheet, not a junk entry",
+          fs == {("-5V", -5.25, -4.75, 3, "text"), ("+3.3V", 3.2, 3.4, 4, "ocr")})
+    check("... each with its document's title and the words it was read from; the job's notes come with them",
+          all(x["title"] == "Widget Wars Operations Manual" and x["quote"] for x in sh["found"]) and any("time limit" in n for n in sh["found_notes"]))
+    neg = next(x for x in sh["found"] if x["rail"] == "-5V")
+    lan = next((a for a in _lan_addrs() if "." in a and not a.startswith("127.")), None)
+    if lan:
+        check("from a phone: CONFIRM and NOT THIS are 403", call("POST", "/api/specs/widget-wars/found", {"sig": neg["sig"]}, base=B.replace("127.0.0.1", lan))[0] == 403
+              and call("DELETE", "/api/specs/widget-wars/found", {"sig": neg["sig"]}, base=B.replace("127.0.0.1", lan))[0] == 403)
+    check("CONFIRM a proposal that isn't one (a made-up limit): 404, nothing added (hard rule 12)",
+          call("POST", "/api/specs/widget-wars/found", {"sig": "widget-wars-manual|+5V|1|4|6"})[0] == 404)
+    c, j = call("POST", "/api/specs/widget-wars/found", {"sig": neg["sig"]})
+    rec = next((r for r in L.Library(LIB, create=False).changes(0)["records"] if r["kind"] == "rail_limit"
+                and (r.get("data") or {}).get("rail") == "-5V"), None) if c == 200 else None
+    check("CONFIRM: 200, a rail_limit with that page and those words, confirmed by the owner, in the library",
+          c == 200 and rec and rec["data"]["page"] == 3 and rec["data"]["doc_id"] == "widget-wars-manual" and rec["data"]["lo"] == "-5.25"
+          and rec["data"]["hi"] == "-4.75" and rec["data"]["quote"] == "-5V 4.75 to 5.25 volts" and rec["data"]["confirmed"]["by"] == "owner")
+    check("... it reaches the logger at once: -5V is in the export and the machine's window",
+          exported()["widget-wars"]["rails"].get("-5V") == [-5.25, -4.75] and windows("widget-wars").get("-5V") == [-5.25, -4.75])
+    sh = get("/api/specs/widget-wars")
+    check("... and it moves from the proposals onto the sheet, confirmed",
+          not any(x["rail"] == "-5V" for x in sh["found"])
+          and any(m["confirmed"] and m["page"] == 3 for r in sh["rails"] if r["rail"] == "-5V" for m in r["manual"]))
+    ocr = next(x for x in sh["found"] if x["rail"] == "+3.3V")
+    c, _ = call("DELETE", "/api/specs/widget-wars/found", {"sig": ocr["sig"]})
+    check("NOT THIS: 200, gone from the proposals, nothing added to the library, and a re-read doesn't bring it back",
+          c == 200 and not get("/api/specs/widget-wars")["found"] and "+3.3V" not in (exported()["widget-wars"]["rails"])
+          and not any(r["rail"] == "+3.3V" for r in get("/api/specs/widget-wars")["rails"]))
+    check("NOT THIS twice: 404", call("DELETE", "/api/specs/widget-wars/found", {"sig": ocr["sig"]})[0] == 404)
+    c, rq = call("POST", f"/api/library/games/{k}/limits/read", {"doc_id": "widget-pinball-manual"})
+    st = job_done(rq["id"]) if c == 202 else {}
+    check("READ LIMITS on a document already here: 202, the job reads it and says how many pages, and found none",
+          c == 202 and st.get("op") == "read_limits" and st.get("state") == "done" and st["limits"]["pages"] == 1 and st["limits"]["found"] == 0)
+    check("READ LIMITS on a document that isn't the game's: 404; from a phone: 403",
+          call("POST", f"/api/library/games/{k}/limits/read", {"doc_id": "nope"})[0] == 404
+          and (not lan or call("POST", f"/api/library/games/{k}/limits/read", {"doc_id": "widget-pinball-manual"}, base=B.replace("127.0.0.1", lan))[0] == 403))
     c, rq = call("POST", f"/api/library/games/{k}/manual/fetch", {"identifier": "page-only-item", "file": "page.pdf", "title": "A page"})
     st = job_done(rq["id"])
     check("a download that isn't a PDF (a web page): stopped with the reason, no file left, nothing in the library",

@@ -1842,7 +1842,9 @@
     if (!st) return toast("Still downloading: it shows in the documents when it's done.", "warn", 8000);
     if (st.state === "stopped") return toast("The download failed: " + st.error, "bad", 10000);
     LB.data = null;
-    toast(`FETCHED ${st.title}: ${st.pages} page${st.pages === 1 ? "" : "s"}`);
+    const L = st.limits || {};
+    toast(`FETCHED ${st.title}: ${st.pages} page${st.pages === 1 ? "" : "s"}` +
+          (L.found ? ` · ${L.found} rail limit${L.found === 1 ? "" : "s"} read off it: check them on the spec sheet` : L.pages ? " · no rail limits found in it" : ""), "", 9000);
     if (S.view === "library") loadManuals();
   }
   async function addGame() {
@@ -2116,6 +2118,23 @@
       wrap.appendChild(t);
       c.appendChild(wrap);
     }
+    // READ LIMITS: what the manuals job read off the documents, each waiting for the owner's look at the page (hard rule 12)
+    const found = s.found || [];
+    if (found.length || (s.found_notes || []).length) {
+      const box = el("div", "found");
+      box.appendChild(el("h3", null, `Read off the manuals (${found.length}): check each on its page`));
+      for (const x of found) {
+        const line = el("div", "specline");
+        add(line, el("span", "rail", x.rail.replace("-", "−")), el("b", null, " " + fmtW([x.lo, x.hi]) + " "), cite(x),
+            x.how === "ocr" ? el("span", "tag warn", "READ BY OCR: CHECK THE NUMBERS") : null,
+            btn("CONFIRM", "primary", () => confirmFound(slug, x, docOf(x.doc))),
+            btn("NOT THIS", "", () => specCall("DELETE", `/api/specs/${encodeURIComponent(slug)}/found`, {sig: x.sig}, `${x.rail} ${fmtW([x.lo, x.hi])}: set aside`)));
+        box.appendChild(line);
+        box.appendChild(el("div", "quote", `“${x.quote}” · ${x.title}`));
+      }
+      for (const n of s.found_notes || []) box.appendChild(el("div", "mut", n));
+      c.appendChild(box);
+    }
     if (s.facts.length) {
       const wrap = el("div"), t = el("table", "t spec-t"), hr = el("tr");
       wrap.style.overflowX = "auto";
@@ -2135,6 +2154,7 @@
       c.appendChild(wrap);
     }
     const have = new Set(s.rails.map(r => r.rail));
+    if (S.local && s.library && d.docs.length) c.appendChild(buttons(btn("READ LIMITS", "", () => readLimits(s.library, d.docs))));
     if (mach) c.appendChild(buttons(
       btn("+ ACTUAL FOR A RAIL", "", async () => {
         const rail = await pickFrom("Which rail?", OTHER_RAILS.filter(r => !have.has(r)).map(r => ({key: r, title: r.replace("-", "−"), sub: "", find: [r]})));
@@ -2142,6 +2162,38 @@
       }),
       btn("+ ACTUAL FACT", "", () => setFactActual(slug, null, null))));
     return c;
+  }
+  // READ LIMITS on a document already here: the manuals job reads every page (OCR for a scanned one), then the proposals show
+  async function readLimits(key, docs) {
+    let doc = docs[0];
+    if (docs.length > 1) {
+      const pick = await pickFrom("Read the rail limits off which document?", docs.map(x => ({key: x.id, title: x.title, find: [x.title.toLowerCase()],
+                                                                                       sub: `${x.pages} page${x.pages === 1 ? "" : "s"}`})));
+      if (!pick) return;
+      doc = docs.find(x => x.id === pick);
+    }
+    let id;
+    try { id = (await api("POST", `/api/library/games/${encodeURIComponent(key)}/limits/read`, {doc_id: doc.id})).id; } catch (e) { return fail(e); }
+    toast(`Reading the rail limits off ${doc.title}: a scanned manual is read by OCR, which takes minutes…`, null, 15000);
+    const st = await manualWait(id, 1200);
+    if (!st) return toast("Still reading: the proposals show on the spec sheet when it's done.", "warn", 8000);
+    if (st.state === "stopped") return toast("Couldn't read it: " + st.error, "bad", 9000);
+    const L = st.limits || {};
+    toast(`${doc.title}: ${L.found || 0} limit${L.found === 1 ? "" : "s"} found on ${L.pages} page${L.pages === 1 ? "" : "s"}` +
+          (L.ocr_pages ? ` (${L.ocr_pages} read by OCR)` : ""), L.found ? "" : "warn", 8000);
+    if (S.view === "library") loadManuals();
+  }
+  async function confirmFound(slug, x, doc) {
+    const ok = await sheet(`CONFIRM ${x.rail} ${fmtW([x.lo, x.hi])}?`, (pane, done) => {
+      pane.appendChild(el("div", null, `${x.title}, page ${x.page}: “${x.quote}”. ` +
+        (x.how === "ocr" ? "This page was read by OCR, which can misread a digit: check the numbers on the page. " : "Check it on the page. ") +
+        `Once confirmed, it's this machine's ${x.rail} window in the logger (unless an actual of its own says otherwise).`));
+      if (doc) { const box = el("div", "pagebox"), im = el("img"); im.src = pageUrl(slug, doc.file, x.page, 1200); box.appendChild(im); pane.appendChild(box); }
+      const row = el("div", "btnrow"), y = el("button", "primary", "CONFIRM"), n = el("button", null, "CANCEL");
+      y.addEventListener("click", () => done(true)); n.addEventListener("click", () => done(false));
+      add(row, y, n); pane.appendChild(row);
+    });
+    if (ok) specCall("POST", `/api/specs/${encodeURIComponent(slug)}/found`, {sig: x.sig}, `${x.rail} ${fmtW([x.lo, x.hi])} confirmed from ${x.title} p.${x.page}`);
   }
   async function specCall(method, path, body, msg) {
     try {

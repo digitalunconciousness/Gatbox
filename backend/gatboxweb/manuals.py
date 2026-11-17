@@ -410,8 +410,77 @@ def sheet(slug):
     listed = {f["what"] for f in facts}
     facts += [{"what": w, "value": None, "actual": a} for w, a in (act.get("facts") or {}).items() if w not in listed]
     order = lambda r: (0 if r.startswith("+") else 1, float(re.sub(r"[^0-9.]", "", r) or 0))   # noqa: E731
+    prop, notes = found(lib, specs.get("rails") or [])
     return {"slug": own, "library": lib, "machine": own in (roster.slugs() or set()),
-            "rails": [rails[r] for r in sorted(rails, key=order)], "facts": facts}
+            "rails": [rails[r] for r in sorted(rails, key=order)], "facts": facts, "found": prop, "found_notes": notes}
+
+
+# --- READ LIMITS: limits read off the manuals, proposed until the owner confirms one (gatboxlib/railread.py) -------------
+DISMISSED = "limits-dismissed.json"
+
+
+def found(lib, rails=None):
+    """-> (proposals, notes): what the manuals job read off this game's documents (<doc>.limits.json beside each PDF), less what is
+    already on the sheet and what the owner said NOT THIS to. Each: {rail, lo, hi, page, quote, how, doc, title, sig}."""
+    if not lib:
+        return [], []
+    titles = _titles(lib)
+    if rails is None:
+        rails = (_listed(lib).get("specs") or {}).get("rails") or []
+    have = {(r.get("rail"), r.get("doc"), r.get("page"), round(float(r["lo"]), 3), round(float(r["hi"]), 3))
+            for r in rails if isinstance(r, dict) and isinstance(r.get("lo"), (int, float)) and isinstance(r.get("hi"), (int, float))}
+    gone = set((_state(DISMISSED).get(lib) or []))
+    out, notes = [], []
+    for d in _dirs(lib):
+        try:
+            names = sorted(n for n in os.listdir(d) if n.endswith(".limits.json"))
+        except OSError:
+            continue
+        for n in names:
+            try:
+                with open(os.path.join(d, n), encoding="utf-8") as f:
+                    j = json.load(f)
+            except (OSError, ValueError):
+                continue
+            doc = j.get("doc_id") or n[:-len(".limits.json")]
+            t = titles.get(doc, doc)
+            notes += [f"{t}: {x}" for x in j.get("notes") or []]
+            for c in j.get("candidates") or []:
+                try:
+                    rail, lo, hi, page = c["rail"], float(c["lo"]), float(c["hi"]), int(c["page"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                sig = f"{doc}|{rail}|{page}|{lo:g}|{hi:g}"
+                if not RAIL.match(rail) or sig in gone or (rail, doc, page, round(lo, 3), round(hi, 3)) in have:
+                    continue
+                out.append({"rail": rail, "lo": lo, "hi": hi, "page": page, "quote": str(c.get("quote") or "")[:300],
+                            "how": "ocr" if c.get("how") == "ocr" else "text", "doc": doc, "title": t, "sig": sig})
+    return out, notes
+
+
+def confirm_found(slug, body):
+    """POST /api/specs/<slug>/found {sig}: the owner looked at the page and this is the limit: it is kept, confirmed. Only a limit
+    the manuals job read off this game's own documents (hard rule 12: no number from anywhere else)."""
+    lib = _lib(slug)
+    sig = body.get("sig") if isinstance(body, dict) else None
+    c = next((x for x in found(lib)[0] if x["sig"] == sig), None)
+    if c is None:
+        raise Bad(404, "that limit isn't one read off this game's manuals (or it is on the sheet already)")
+    if not libsource.current():
+        raise Bad(409, "the game library isn't set up on this Pi yet (gatbox-library seed --plan)")
+    return libsource.add_confirmed(lib, c["rail"], c["doc"], c["page"], c["lo"], c["hi"], c["quote"])
+
+
+def dismiss_found(slug, body):
+    """DELETE /api/specs/<slug>/found {sig}: NOT THIS. Kept in gatbox-web's state, so a re-read doesn't bring it back."""
+    lib = _lib(slug)
+    sig = body.get("sig") if isinstance(body, dict) else None
+    if not isinstance(sig, str) or not any(x["sig"] == sig for x in found(lib)[0]):
+        raise Bad(404, "no such proposal on this game's sheet")
+    with _state_lock:
+        d = _state(DISMISSED)
+        d.setdefault(lib, []).append(sig)
+        _save(DISMISSED, d)
 
 
 def confirm(slug, body):

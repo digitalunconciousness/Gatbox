@@ -76,6 +76,12 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       drive, so it can never be taken for the drive an image came from) and queues it for the archive. The same bytes already in the
       store: nothing moves, and it says where. Hidden files, `.part` files and symlinks are not imports. No system config.
       `test-disk.sh`: 216, `test-dash.sh`: 383.
+- [x] **Games for the hubs' machines** (the owner, 2026-11-17: new cabcrawl and tracker games should reach the archive without
+      her going to it; `docs/plans/2026-11-17-hub-games.md`; built that day, **not installed**). `backend/gatboxweb/hubgames.py`: a hub
+      machine's key that names no game in the library becomes a game on the deck (titled from the machine's name), which the library
+      sync takes to the archive; one that reads like a game the library has waits under LIBRARY → FROM THE HUBS (N) for SAME AS (the key
+      kept, retired onto that game, which the apps follow) or ADD AS NEW. The apps (cabcrawl and the tracker PRs) give a new machine a key
+      from its name. No system config: one new file in the MANIFEST. `test-library-web.sh`: 150, `test-dash.sh`: 384.
 - [ ] **Owner requests (2026-09-29)**, off-spec, one at a time with her OK on each design:
       [x] + ADD MACHINE / EDIT / EXPORT ROSTER, and CAPTURE → SAVE READING (code + tests/test-roster.sh, test-dash)
       [x] installed (d578961) [x] each machine's ROM checklist from MAME's own hash data, no ROM sets downloaded

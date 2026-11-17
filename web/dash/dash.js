@@ -1710,7 +1710,8 @@
     const btn = (label, cls, f, off) => { const b = el("button", cls, label); b.disabled = !!off; b.addEventListener("click", f); return b; };
     add(row, btn(`ALL GAMES (${d.count})`, null, () => pickGame(false)),
         btn(`MISSING (${d.missing})`, d.missing ? "warn" : null, () => pickGame(true), !d.missing),
-        d.conflicts ? btn(`CONFLICTS (${d.conflicts})`, "warn", loadConflicts) : null);
+        d.conflicts ? btn(`CONFLICTS (${d.conflicts})`, "warn", loadConflicts) : null,
+        d.from_hubs && S.local ? btn(`FROM THE HUBS (${d.from_hubs})`, "warn", fromHubs) : null);
     if (S.local) add(row, btn("+ ADD GAME", null, addGame), btn("EDIT GAME", null, () => editGame(g), !g),
                      slug && !g ? btn("FIND GAME (MAME)", "primary", () => findGame(slug)) : null,
                      g ? btn("FIND A MANUAL", g.missing ? "primary" : null, () => findManual(g)) : null);
@@ -1846,6 +1847,26 @@
     toast(`FETCHED ${st.title}: ${st.pages} page${st.pages === 1 ? "" : "s"}` +
           (L.found ? ` · ${L.found} rail limit${L.found === 1 ? "" : "s"} read off it: check them on the spec sheet` : L.pages ? " · no rail limits found in it" : ""), "", 9000);
     if (S.view === "library") loadManuals();
+  }
+  // FROM THE HUBS: a hub machine's key that might be a game the library has under another key. SAME AS keeps the hub's key as a
+  // retired key pointing at that game (the apps follow it); ADD AS NEW makes the game. Plainly new keys never wait here.
+  async function fromHubs() {
+    let r;
+    try { r = await api("GET", "/api/library/hubgames"); } catch (e) { return fail(e); }
+    for (const e of r.waiting) {
+      const who = e.machines.map(m => `${m.name} (${m.hub})`).join(", ");
+      const opts = e.similar.map((s, i) => [s.key, `SAME AS ${s.title}`, i === 0]).concat([["new", "ADD AS NEW"]]);
+      const as = await choose(`The hub calls it ${e.key}`,
+        `${who}: its hub names the game "${e.key}", which the library hasn't got. The library has ` +
+        `${e.similar.map(s => `${s.title} (key ${s.key})`).join(", ")}, which may be the same game.`, opts);
+      if (!as) break;
+      try {
+        await api("POST", `/api/library/hubgames/${encodeURIComponent(e.key)}`, {as});
+        toast(as === "new" ? `ADDED ${e.title} · key ${e.key}` : `${e.key} is now ${e.similar.find(s => s.key === as).title}`);
+      } catch (err) { fail(err); }
+    }
+    LB.data = null;
+    loadManuals();
   }
   async function addGame() {
     const cur = mnSlug(), orphan = cur && !gameOf(cur) ? cur : null;       // the machine in view, if it has no game yet

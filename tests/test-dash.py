@@ -2832,6 +2832,11 @@ def main():
         st_path = f"{T}/sync/status.json"
         st0 = json.load(open(st_path)) if os.path.exists(st_path) else {"at": time.time(), "ok": True}
         json.dump(dict(st0, library={"at": time.time() - 120, "ok": True, "pending": 0, "identical": False}), open(st_path, "w"))
+        # a hub machine whose key reads like a game the library has (the owner, 2026-11-17): FROM THE HUBS asks
+        br = f"{T}/sync/hubs/bravo/roster.json"
+        br0 = json.load(open(br))
+        json.dump({"machines": br0["machines"] + [{"slug": "s-0043-the-gauntlet-legends", "name": "The Gauntlet Legends #2",
+                                                   "model_key": "the-gauntlet-legends"}]}, open(br, "w"))
         c.open(B + "/dash/", 1024, 600)
         c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)
         q = lambda js: c.eval(js)                                  # noqa: E731
@@ -2843,6 +2848,19 @@ def main():
               lib_has("CONFLICTS (2)") and q("[...document.querySelectorAll('#lb-body .btnrow button')].some(b => b.textContent === 'CONFLICTS (2)' && b.classList.contains('warn'))")
               and lib_has("CONFLICT ×2"))
         shot("31a-conflicts-bar")
+        check("FROM THE HUBS (1): a hub's key that may be a game the library has, lit like MISSING",
+              q("[...document.querySelectorAll('#lb-body .btnrow button')].some(b => b.textContent === 'FROM THE HUBS (1)' && b.classList.contains('warn'))"))
+        lib_tap("FROM THE HUBS")
+        c.wait("[...document.querySelectorAll('#pane button')].some(b => b.textContent === 'SAME AS Gauntlet Legends')", 10)
+        check("... it names the key, the machine and its hub, the game it may be, and offers SAME AS and ADD AS NEW",
+              all(x in text("#pane") for x in ("the-gauntlet-legends", "The Gauntlet Legends #2 (BRAVO)", "Gauntlet Legends (key gauntlet-legends)", "ADD AS NEW")))
+        shot("31a2-from-the-hubs")
+        q("[...document.querySelectorAll('#pane button')].find(b => b.textContent === 'SAME AS Gauntlet Legends').click()")
+        check("SAME AS: the hub's key now stands for Gauntlet Legends, and the button goes",
+              settles(c, "document.querySelector('#toast').textContent.includes('the-gauntlet-legends is now Gauntlet Legends')", 10)
+              and settles(c, "![...document.querySelectorAll('#lb-body .btnrow button')].some(b => b.textContent.startsWith('FROM THE HUBS'))", 10)
+              and api("GET", "/api/library/hubgames")["waiting"] == [])
+        json.dump(br0, open(br, "w"))
         lib_tap("ALL GAMES")
         c.wait("document.querySelectorAll('#pane .picklist .row').length >= 3", 10)
         check("ALL GAMES says CONFLICT ×2 on the game, in words", q("[...document.querySelectorAll('#pane .picklist .row')].some(r => r.textContent.startsWith('Gauntlet') && r.textContent.includes('CONFLICT ×2'))"))

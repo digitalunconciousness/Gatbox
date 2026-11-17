@@ -565,6 +565,38 @@ def main():
           and get("/api/roster/s-0005-widget-wars-2").get("library") is None)
     check("a slug that is on no roster at all, this Pi's or a hub's: still 404",
           call("POST", "/api/library/games/widget-wars/machines", {"slug": "s-9999-nowhere"})[0] == 404)
+
+    print("games for the hubs' machines (the owner, 2026-11-17: a new cabcrawl or tracker game reaches the archive without her):")
+    json.dump({"machines": [{"slug": "s-0005-widget-wars-2", "name": "Widget Wars 2", "status": "In shop"},
+                            {"slug": "s-0006-gizmo-blaster", "name": "Gizmo Blaster #2", "model_key": "gizmo-blaster"},
+                            {"slug": "s-0007-gizmo-blaster", "name": "Gizmo Blaster #3", "model_key": "gizmo-blaster"},
+                            {"slug": "s-0008-the-widget-wars", "name": "The Widget Wars", "model_key": "the-widget-wars"},
+                            {"slug": "s-0009-sprocket", "name": "Sprocket", "model_key": "Not A Key!"}]}, open(f"{sd}/roster.json", "w"))
+    st_ = get("/api/library")
+    lib_ = L.Library(LIB, create=False)
+    gb = lib_.get("game", "gizmo-blaster")
+    check("a hub key the library hasn't got: the game is made at once, titled from the machine's name (the cabinet number dropped)",
+          gb and gb["data"]["title"] == "Gizmo Blaster" and gb["data"]["kind"] == "video" and "machine list" in gb["data"]["notes"]
+          and "s-0006-gizmo-blaster" in gb["data"]["notes"] and "s-0007-gizmo-blaster" in gb["data"]["notes"])
+    check("... once, for two machines with the same key", sum(1 for r in lib_.changes(0)["records"] if r["kind"] == "game" and r["id"] == "gizmo-blaster") == 1)
+    check("a key that reads like a game the library has (The Widget Wars ~ Widget Wars): nothing made, it waits for the owner",
+          lib_.get("game", "the-widget-wars") is None and st_["from_hubs"] == 1)
+    check("a key that isn't one (Not A Key!) and a machine with none: left alone", lib_.get("game", "Not A Key!") is None)
+    w_ = get("/api/library/hubgames")["waiting"]
+    check("FROM THE HUBS lists it: the key, the machine and its hub, and the game it may be",
+          len(w_) == 1 and w_[0]["key"] == "the-widget-wars" and w_[0]["machines"][0]["slug"] == "s-0008-the-widget-wars"
+          and w_[0]["similar"] == [{"key": "widget-wars", "title": "Widget Wars"}])
+    if lan:
+        check("from a phone: deciding is 403", call("POST", "/api/library/hubgames/the-widget-wars", {"as": "widget-wars"}, base=B.replace("127.0.0.1", lan))[0] == 403)
+    check("SAME AS a game that isn't there: 400; a key that isn't waiting: 404",
+          call("POST", "/api/library/hubgames/the-widget-wars", {"as": "nope"})[0] == 400
+          and call("POST", "/api/library/hubgames/gizmo-blaster", {"as": "new"})[0] == 404)
+    c, _ = call("POST", "/api/library/hubgames/the-widget-wars", {"as": "widget-wars"})
+    tw = L.Library(LIB, create=False).get("game", "the-widget-wars")
+    check("SAME AS Widget Wars: the hub's key is kept, retired onto Widget Wars (replaced_by), so the apps follow it there",
+          c == 200 and tw and tw["data"]["replaced_by"] == "widget-wars" and L.Library(LIB, create=False).resolve("the-widget-wars")["id"] == "widget-wars")
+    check("... and nothing waits any more", get("/api/library")["from_hubs"] == 0 and get("/api/library/hubgames")["waiting"] == [])
+    check("... the library's game list doesn't grow a second Widget Wars", sum(1 for g in get("/api/library")["games"] if g["title"] == "Widget Wars") == 1)
     for f_ in ("status.json", "hub.json", "roster.json"):
         os.remove(f"{sd}/{f_}")
 

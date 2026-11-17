@@ -20,7 +20,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from . import (browse, captures, config, devices, disk, dump, games, hubs, libconflicts, libsource, libsync_api, mame,
+from . import (browse, captures, config, devices, disk, dump, games, hubgames, hubs, libconflicts, libsource, libsync_api, mame,
                mame_request, manual_request, manuals, meter, orders, phone, report, rom_check, romsync, roster,
                sessions, system, titles, wifi)
 from .live import LIVE
@@ -838,6 +838,16 @@ def api_manual_files(h, m, q):
     _manual_queued(h, req, f"files of {req['identifier']}")
 
 
+def api_hubgames(h, m, q):
+    h.json(200, hubgames.waiting())
+
+
+def api_hubgames_decide(h, m, q):
+    out = hubgames.decide(unquote(m["key"]), h.body(), h.is_local())
+    h.log_line(f"library: hub key {out['key']} -> {out['as']}")
+    h.json(200, out)
+
+
 def api_limits_read(h, m, q):
     req = manual_request.read_limits(unquote(m["key"]), h.body(), h.is_local())
     _manual_queued(h, req, f"read limits off {req['folder']}/{req['doc_id']}.pdf")
@@ -1189,6 +1199,8 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("POST", r"/api/library/games/(?P<key>[^/]+)/manual/files", api_manual_files),
     ("POST", r"/api/library/games/(?P<key>[^/]+)/manual/fetch", api_manual_fetch),
     ("POST", r"/api/library/games/(?P<key>[^/]+)/limits/read", api_limits_read),
+    ("GET", r"/api/library/hubgames", api_hubgames),
+    ("POST", r"/api/library/hubgames/(?P<key>[^/]+)", api_hubgames_decide),
     ("GET", r"/api/library/mame", api_library_mame),
     ("GET", r"/api/library/conflicts", api_library_conflicts),
     ("POST", r"/api/library/conflicts/resolve", api_library_conflict_choose),
@@ -1346,6 +1358,7 @@ def main():
     dump.watch()
     disk.watch()
     libsource.watch()                                      # the logger's flat export follows the game library
+    hubgames.watch()                                       # a hub machine's new game becomes a library game (and reaches the archive)
     manual_request.watch()                                 # a manual fetched on request becomes a library document
     mame_request.watch()                                   # a game with a MAME set and no chip list gets one from the job
     threading.Thread(target=_warm, name="warm", daemon=True).start()

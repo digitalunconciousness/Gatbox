@@ -69,8 +69,13 @@ def status():
     names = _machine_names()
     conflicts = libconflicts.by_game()
     games = sorted((_summary(v, k, names, conflicts) for k in v.live()), key=lambda g: g["title"].lower())
+    from . import hubgames
+    try:
+        hub_waiting = len(hubgames.scan())
+    except (OSError, ValueError, meter.Bad):
+        hub_waiting = 0
     return {"seeded": True, "games": games, "count": len(games), "missing": sum(1 for g in games if g["missing"]),
-            "bytes": v.lib.size(), "conflicts": sum(g["conflicts"] for g in games)}
+            "bytes": v.lib.size(), "conflicts": sum(g["conflicts"] for g in games), "from_hubs": hub_waiting}
 
 
 def is_low(free, total):

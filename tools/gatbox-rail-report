@@ -46,6 +46,7 @@ import math
 import os
 import statistics as st
 import sys
+import tempfile
 from collections import Counter
 from datetime import datetime, timezone
 
@@ -426,7 +427,10 @@ def main():
     # --- plot: one panel per meter mode -------------------------------------------
     plot_out = None if args.no_plot else (args.plot or (args.csvfile.rsplit(".", 1)[0] + ".png"))
     if plot_out and not args.plot and not os.access(os.path.dirname(os.path.abspath(plot_out)), os.W_OK):
-        plot_out = os.path.join(os.getcwd(), os.path.basename(plot_out))
+        # Beside the CSV isn't writable (/var/log/gatbox is root's): the current folder, and if that isn't writable either
+        # (a terminal still in /var/log/gatbox: the audit, 2026-11-17), the temp folder. The report itself never depends on it.
+        here = os.getcwd()
+        plot_out = os.path.join(here if os.access(here, os.W_OK) else tempfile.gettempdir(), os.path.basename(plot_out))
     try:
         if plot_out:
             import matplotlib
@@ -436,9 +440,13 @@ def main():
         say("(no matplotlib; skipped plot. sudo apt install python3-matplotlib)")
         plot_out = None
     if plot_out:
-        draw(plt, args, rows, labels, count, base, steps, window, alarm, in_w, is_off, suspect, exc, off_runs,
-             marks, plot_out)
-        say(f"plot:      {plot_out}")
+        try:
+            draw(plt, args, rows, labels, count, base, steps, window, alarm, in_w, is_off, suspect, exc, off_runs,
+                 marks, plot_out)
+            say(f"plot:      {plot_out}")
+        except OSError as e:                        # a plot that can't be written costs the plot, never the report
+            say(f"(plot not written: {e.strerror or e}: {plot_out}; --plot PATH puts it elsewhere)")
+            plot_out = None
 
     if args.json:
         J.update({

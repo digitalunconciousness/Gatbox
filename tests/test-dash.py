@@ -1509,6 +1509,8 @@ def main():
         dk_tap("TARGET CHECK")
         check("TARGET CHECK on the drive the image came from: TARGET REFUSED, it says why, and that RESTORE is the way",
               dk_has("TARGET REFUSED", 30) and "the drive the image came from" in text("#dk-body") and "use RESTORE" in text("#dk-body"))
+        check("... and the refusal says when it was (the last job, at HH:MM:SS), so an old one doesn't read as now",
+              re.search(r"the last job, at \d\d:\d\d:\d\d", text("#dk-body")) is not None)
         check("RESTORE CHECK sits beside TARGET CHECK, and the words under them say what it is for",
               q("[...document.querySelectorAll('#dk-body .btnrow button')].map(b => b.textContent).join('|').includes('TARGET CHECK|RESTORE CHECK')")
               and "RESTORE CHECK is the same for the drive this image came from" in text("#dk-body"))

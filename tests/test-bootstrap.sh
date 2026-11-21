@@ -421,6 +421,22 @@ for bad in --chekc --checksudo --dry-run -n extract --check=1; do
           '[ $rc = 2 ] && [[ $out == *"unknown argument"* ]] && [[ $out == *"--check"* ]]'
 done
 
+echo "what the bootstrap records as installed (installed.json, for the SYSTEM tab):"
+G="$T/rel"; mkdir -p "$G"
+gi() { git -C "$G" -c user.name=t -c user.email=t@example.com -c init.defaultBranch=main "$@"; }
+gi init -q && echo 1 > "$G/a" && gi add a && gi commit -q -m one && gi tag -a v2026.11.21 -m r
+# the function itself, out of the bootstrap, run against this throwaway checkout
+eval "$(sed -n '/^installed_json() {/,/^}/p' "$BOOT")"
+j1=$(REPO=$G installed_json)
+check "a release: its tag, the commit, the branch, no local changes" \
+  'python3 -c "import json,sys; d=json.loads(sys.argv[1]); assert d[\"describe\"]==\"v2026.11.21\" and d[\"branch\"]==\"main\" and len(d[\"commit\"])==40 and d[\"local_changes\"] is False" "$j1"'
+check "the same checkout gives the same record (no time in it, so --check stays quiet)" '[ "$(REPO=$G installed_json)" = "$j1" ]'
+echo 2 > "$G/a"; j2=$(REPO=$G installed_json)
+check "a changed tracked file says so" \
+  'python3 -c "import json,sys; d=json.loads(sys.argv[1]); assert d[\"local_changes\"] is True and d[\"describe\"].endswith(\"-dirty\")" "$j2"'
+check "it is written last, and only when it differs" \
+  'grep -q "^if ! installed_ok; then" "$BOOT" && [ "$(grep -n "^if ! installed_ok; then" "$BOOT" | cut -d: -f1)" -gt "$(grep -n "hotspot fallback moved" "$BOOT" | cut -d: -f1)" ]'
+
 echo "--- --check on this Pi:"; sed 's/^/    /' "$T/check"
 echo "bootstrap: $pass passed, $fail failed"
 [ "$fail" = 0 ]

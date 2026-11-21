@@ -110,6 +110,12 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       `test-dash.sh`: 391. For CarnEvil: SET MAME SET on `carnevil` (set `carnevil`), and the machine `s-0001-carnevil` linked to
       it (ALL GAMES on its page); then MAME CHECK compares against MAME 0.276's disks. The audit expects "no reference" next:
       the CHD in `_chd/` isn't either of 0.276's CarnEvil disks.
+- [x] **Releases, and what is installed** (the owner, 2026-11-21: releases, no nightlies; built that day, **not installed**).
+      A `v*` tag on `main` that CI passes becomes a GitHub release (`.github/workflows/release.yml`, README "Releases").
+      The bootstrap now ends by recording what it installed in `/usr/local/share/gatbox/installed.json` (the tag or
+      commit, the branch, local changes; no time, so `--check` stays quiet), and SYSTEM → Software shows it.
+      System change: that one file, written by the bootstrap; no unit changes. `test-bootstrap.sh`: 202,
+      `test-web-api.sh`: 187.
 - [x] **The write gate** (the owner, 2026-11-17: "loopback-gate all writes"; built that day, **not installed**). gatbox-web
       had no gate on most of its changes: a phone, or any page open on one, could edit the roster, clear the machine, start a
       disk READ or confirm a rail limit. Now every change is the Pi's own screen's, checked in one place (`route()` in

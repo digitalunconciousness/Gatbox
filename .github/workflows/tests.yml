@@ -22,23 +22,33 @@ jobs:
         with:
           python-version: '3.13'
 
-      # On the Pi these are apt packages (python3-matplotlib, python3-qrcode) and the
-      # code lazy-imports both, so a machine without them degrades instead of failing.
+      # On the Pi these are apt packages (python3-matplotlib, python3-qrcode, python3-pil) and the
+      # code lazy-imports them (and python3-pil), so a machine without them degrades instead of failing.
       # CI installs them so the plot, PDF and label paths are actually exercised.
       - name: Plot and QR dependencies
-        run: python -m pip install --disable-pip-version-check matplotlib qrcode
+        run: python -m pip install --disable-pip-version-check matplotlib qrcode pillow
+
+      # The command-line tools the Pi's bootstrap installs with apt, which the suites call:
+      # poppler (pdftotext, pdftoppm), sleuthkit (mmls, fls, icat), catdoc, the filesystem
+      # makers (FORMAT), mtools, tesseract (READ LIMITS' OCR), chdman (MAME CHECK), ddrescue.
+      - name: Command-line tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends poppler-utils sleuthkit catdoc \
+            dosfstools exfatprogs e2fsprogs mtools tesseract-ocr tesseract-ocr-eng mame-tools \
+            gddrescue sqlite3 shellcheck
 
       - name: Report the versions under test
         run: |
           python -VV
-          python -c "import matplotlib, qrcode; print('matplotlib', matplotlib.__version__)"
+          python -c "import matplotlib, qrcode, PIL; print('matplotlib', matplotlib.__version__, 'pillow', PIL.__version__)"
 
       - name: Run the test suite
         run: |
           failed=()
           for t in tests/test-*.sh; do
-            # test-dash drives a real browser; it runs in its own job below.
-            [ "$t" = tests/test-dash.sh ] && continue
+            # These drive a real browser; they run in the dashboard job below.
+            case "$t" in tests/test-dash.sh|tests/test-dash-load.sh|tests/test-archive-layout.sh) continue ;; esac
             echo "::group::$t"
             if bash "$t"; then :; else failed+=("$t"); fi
             echo "::endgroup::"
@@ -59,13 +69,38 @@ jobs:
         with:
           python-version: '3.13'
       - name: Plot and QR dependencies
-        run: python -m pip install --disable-pip-version-check matplotlib qrcode
+        run: python -m pip install --disable-pip-version-check matplotlib qrcode pillow
+
+      # The command-line tools the Pi's bootstrap installs with apt, which the suites call:
+      # poppler (pdftotext, pdftoppm), sleuthkit (mmls, fls, icat), catdoc, the filesystem
+      # makers (FORMAT), mtools, tesseract (READ LIMITS' OCR), chdman (MAME CHECK), ddrescue.
+      - name: Command-line tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends poppler-utils sleuthkit catdoc \
+            dosfstools exfatprogs e2fsprogs mtools tesseract-ocr tesseract-ocr-eng mame-tools \
+            gddrescue sqlite3 shellcheck
       - uses: browser-actions/setup-chrome@v1
         id: chrome
         with:
           chrome-version: stable
-      - name: Run the dashboard screenshot tests
+      # Ubuntu 24.04 runners' AppArmor refuses the unprivileged user namespaces Chrome's
+      # sandbox needs, and Chrome exits on its first page ("the browser went away"). The Pi
+      # has no such restriction, so CI lifts it rather than tests/cdp.py adding --no-sandbox.
+      - name: Let Chrome's sandbox start
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Run the browser tests (dashboard, its load times, the archive's pages)
         env:
           # Pi OS has `chromium`; the runner installs Chrome somewhere else.
           GATBOX_CHROME: ${{ steps.chrome.outputs.chrome-path }}
-        run: bash tests/test-dash.sh
+        run: |
+          failed=()
+          for t in tests/test-dash.sh tests/test-dash-load.sh tests/test-archive-layout.sh; do
+            echo "::group::$t"
+            if bash "$t"; then :; else failed+=("$t"); fi
+            echo "::endgroup::"
+          done
+          if [ ${#failed[@]} -ne 0 ]; then
+            printf 'FAILED: %s\n' "${failed[@]}"
+            exit 1
+          fi

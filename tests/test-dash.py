@@ -1082,8 +1082,10 @@ def main():
         wifi = ("[...document.querySelectorAll('#sy-grid .card')]"
                 ".find(c => (c.querySelector('h2') || {}).textContent === 'Wi-Fi')")
         check("system: a Wi-Fi card", q(f"!!({wifi})"))
+        # The card is drawn first and filled when /api/wifi answers, so wait for it the way the
+        # Library tile above does: read straight away, a slow machine sees an empty card.
         check("system: it lists a saved network",
-              "HomeNetwork" in q(f"(({wifi}) || {{}}).textContent || ''"))
+              settles(c, f"((({wifi}) || {{}}).textContent || '').includes('HomeNetwork')", 15))
         check("system: it offers a scan", q(
             "(() => { const c = " + wifi + "; if (!c) return false;"
             " return [...c.querySelectorAll('button')].some(b => b.textContent === 'SCAN'); })()"))

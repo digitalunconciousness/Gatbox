@@ -153,11 +153,14 @@ check "--check tells a Pi without sleuthkit and python3-pil to install both" \
 check "the package list names catdoc (the drive browser's text search reads old Office files with it)" 'grep -qw catdoc <<<"$PKGLINES"'
 check "--check tells a Pi without catdoc to install it" 'grep -q "install    package catdoc" "$T/check-none"'
 check "--check tells a Pi with smartd enabled to disable it" 'grep -q "disable    smartd (smartmontools.service)" "$T/check-none"'
+check "the install step masks rpcbind, socket and service (the audit, 2026-11-17: port 111 open, no NFS here)" \
+    'grep -q "systemctl mask --now rpcbind.socket rpcbind.service" "$BOOT"'
+check "--check tells a Pi with rpcbind running to mask it" 'grep -q "mask       rpcbind" "$T/check-none"'
 printf '#!/bin/sh\nprintf "install ok installed"\n' > "$FB/dpkg-query" # every package is installed
-printf '#!/bin/sh\ncase "$*" in *smartmontools*) exit 1;; esac\nexit 0\n' > "$FB/systemctl"   # smartd is off
+printf '#!/bin/sh\ncase "$*" in *smartmontools*|*rpcbind*) exit 1;; esac\nexit 0\n' > "$FB/systemctl"   # smartd and rpcbind are off
 PATH="$FB:$PATH" bash "$BOOT" --check > "$T/check-have" 2>&1
 check "--check says neither when both are installed and smartd is off" \
-    '! grep -qE "package (hdparm|smartmontools)|disable    smartd" "$T/check-have"'
+    '! grep -qE "package (hdparm|smartmontools)|disable    smartd|mask       rpcbind" "$T/check-have"'
 
 # Task 4: the disk job. A user and two groups, a spool, a bare mountpoint, a udev rule, two units, a tool, and the image
 # store's mount unit, which is written from /etc/gatbox/disks.conf. Every system-config piece is read by the owner first.

@@ -91,6 +91,17 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       what was under it). The DISK tab shows "takes N GB" beside an image's size when that is less. System change: one MANIFEST line in
       the bootstrap and one in `archive/install.sh` (`sparse.py`); no unit changes. `test-sparse.sh`: 8, `test-disk.sh`: 226,
       `test-archive-disks.sh`: 34, `test-archive-install.sh`: 42, `test-dash.sh`: 390, `test-bootstrap.sh`: 198.
+- [x] **rpcbind masked, and the owner's answers on the Pi's audit** (2026-11-17; built that day, **not installed**).
+      rpcbind (from Pi OS's nfs-common) listened on port 111 on every interface, the hotspot included (audit 14.1). Nothing
+      here uses NFS, so the bootstrap masks `rpcbind.socket` and `rpcbind.service` (the owner: "turn the bind off if nothing
+      uses it"); `--check` lists it; `systemctl unmask rpcbind.socket rpcbind.service` undoes it. System change: those two
+      units masked, shown in the PR. `test-bootstrap.sh`: 200. Her answers on the rest:
+      - **Arming from a remote screen is fine** (14.5): a hold through Raspberry Pi Connect's screen sharing counts as the Pi's
+        own screen, as it does today.
+      - **The USB over-current storm of 2026-11-16** (6.4) came from a USB device on a port that pulled it down; nothing is
+        plugged into that port any more.
+      - **`_chd/carnevil.chd` was made from the CarnEvil image itself with chdman**, so it is not a MAME reference: MAME CHECK
+        will never match against it. MAME 0.276's CarnEvil disks are a different dump.
 - [x] **SET MAME SET** (the Pi's audit, 2026-11-17, 8.6: MAME CHECK said "no disk" for the CarnEvil image because the library game
       `carnevil` had no MAME set, and nothing on the 7" could give an existing game one; built that day, **not installed**).
       LIBRARY → SET MAME SET, on the Pi's own screen, for a game with no set: MAME's title list is searched, a clone is stored as
@@ -1427,8 +1438,8 @@ The installed raillog and rail-report now differ from `payload/` on purpose.
   again, reseat both ends before suspecting anything else.
 
 ### Open items
-- A **Hauppauge** USB device (3-1.2) appeared/re-enumerated during the bench test (`can't set config #1, error -71`
-  once). The user didn't say whether it belongs there. Not needed by GATBOX; check what it is before cabinet use.
+- ~~A **Hauppauge** USB device (3-1.2) appeared/re-enumerated during the bench test~~ Closed 2026-11-17: the owner's capture
+  card, plugged in once, not part of this project. Nothing in the repo refers to it (the Pi's audit checked).
 - No barcade Wi-Fi profile yet → the GATBOX hotspot is how to reach the box in the cabinet.
 - No RTC battery → timestamps depend on NTP. Offline, the file header says `clock=` accordingly.
 - The 5 A settings assume a real 5 A supply (see above).

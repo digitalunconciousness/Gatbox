@@ -411,6 +411,8 @@ if [ "${1:-}" = "--check" ]; then
         systemctl -q is-enabled "$u" 2>/dev/null || DIFFS+=("enable     $u"); done
     systemctl -q is-enabled smartmontools.service 2>/dev/null \
         && DIFFS+=("disable    smartd (smartmontools.service): the disk jobs call smartctl on demand, nothing polls the drives")
+    { systemctl -q is-enabled rpcbind.socket 2>/dev/null || systemctl -q is-active rpcbind.service 2>/dev/null; } \
+        && DIFFS+=("mask       rpcbind (.socket, .service): port 111 open to the LAN and the hotspot, and nothing here uses NFS")
     getent passwd gatbox-dump >/dev/null || DIFFS+=("create     user gatbox-dump (sysusers.d)")
     getent passwd gatbox-disk >/dev/null || DIFFS+=("create     user gatbox-disk (sysusers.d)")
     getent passwd gatbox-browse >/dev/null || DIFFS+=("create     user gatbox-browse (sysusers.d)")
@@ -542,6 +544,14 @@ fi
 # and the daemon goes. A unit an admin has disabled stays disabled across the package's upgrades.
 if systemctl -q is-enabled smartmontools.service 2>/dev/null || systemctl -q is-active smartmontools.service 2>/dev/null; then
     systemctl disable --now smartmontools.service >/dev/null 2>&1 && log "smartd (smartmontools.service) disabled: smartctl stays, the daemon polling drives does not"
+fi
+# rpcbind comes with Pi OS's nfs-common and listens on port 111 on every interface, the hotspot included (the Pi's audit,
+# 2026-11-17). Nothing on the deck mounts or serves NFS, so it is masked (the owner, 2026-11-17: "turn the bind off if nothing
+# uses it"). Masked rather than purged: no package goes, nfs-common can't start it again, and `systemctl unmask rpcbind.socket
+# rpcbind.service` brings it back if NFS is ever wanted.
+if systemctl -q is-enabled rpcbind.socket 2>/dev/null || systemctl -q is-active rpcbind.service 2>/dev/null; then
+    systemctl mask --now rpcbind.socket rpcbind.service >/dev/null 2>&1 \
+        && log "rpcbind masked (port 111 closed): nothing here uses NFS; systemctl unmask rpcbind.socket rpcbind.service undoes it"
 fi
 log "sigrok-cli $(sigrok-cli --version 2>/dev/null | head -n 1 | awk '{print $2}'), mame $(dpkg-query -W -f='${Version}' mame 2>/dev/null)"
 drivers=$(sigrok-cli -L 2>/dev/null || true)

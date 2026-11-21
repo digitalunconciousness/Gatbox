@@ -814,6 +814,12 @@ def api_library_link(h, m, q):
     h.json(200, g)
 
 
+def api_library_set_mame(h, m, q):
+    g = games.set_mame(unquote(m["key"]), h.body(), h.is_local())
+    h.log_line(f"library: {g['key']} given a MAME set")
+    h.json(200, g)
+
+
 def api_library_unlink(h, m, q):
     h.json(200, games.unlink(unquote(m["key"]), unquote(m["slug"]), h.is_local()))
 
@@ -1197,6 +1203,7 @@ ROUTES = [(method, re.compile(pattern), fn) for method, pattern, fn in [
     ("POST", r"/api/library/games", api_library_add),
     ("GET", r"/api/library/games/(?P<key>[^/]+)", api_library_game),
     ("PUT", r"/api/library/games/(?P<key>[^/]+)", api_library_edit),
+    ("PUT", r"/api/library/games/(?P<key>[^/]+)/mame", api_library_set_mame),
     ("GET", r"/api/library/games/(?P<key>[^/]+)/images", api_library_images),
     ("GET", r"/api/library/titles", api_library_titles),
     ("POST", r"/api/library/games/(?P<key>[^/]+)/machines", api_library_link),

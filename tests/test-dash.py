@@ -1082,8 +1082,10 @@ def main():
         wifi = ("[...document.querySelectorAll('#sy-grid .card')]"
                 ".find(c => (c.querySelector('h2') || {}).textContent === 'Wi-Fi')")
         check("system: a Wi-Fi card", q(f"!!({wifi})"))
+        # The card is drawn first and filled when /api/wifi answers, so wait for it the way the
+        # Library tile above does: read straight away, a slow machine sees an empty card.
         check("system: it lists a saved network",
-              "HomeNetwork" in q(f"(({wifi}) || {{}}).textContent || ''"))
+              settles(c, f"((({wifi}) || {{}}).textContent || '').includes('HomeNetwork')", 15))
         check("system: it offers a scan", q(
             "(() => { const c = " + wifi + "; if (!c) return false;"
             " return [...c.querySelectorAll('button')].some(b => b.textContent === 'SCAN'); })()"))
@@ -1509,6 +1511,8 @@ def main():
         dk_tap("TARGET CHECK")
         check("TARGET CHECK on the drive the image came from: TARGET REFUSED, it says why, and that RESTORE is the way",
               dk_has("TARGET REFUSED", 30) and "the drive the image came from" in text("#dk-body") and "use RESTORE" in text("#dk-body"))
+        check("... and the refusal says when it was (the last job, at HH:MM:SS), so an old one doesn't read as now",
+              re.search(r"the last job, at \d\d:\d\d:\d\d", text("#dk-body")) is not None)
         check("RESTORE CHECK sits beside TARGET CHECK, and the words under them say what it is for",
               q("[...document.querySelectorAll('#dk-body .btnrow button')].map(b => b.textContent).join('|').includes('TARGET CHECK|RESTORE CHECK')")
               and "RESTORE CHECK is the same for the drive this image came from" in text("#dk-body"))
@@ -2636,6 +2640,8 @@ def main():
         check("EDIT GAME: the title changes, the key never does",
               lib_has("SPROCKET WARSS") and "key sprocket-wars" in text("#lb-body")
               and api("GET", "/api/library/games/sprocket-wars")["title"] == "SPROCKET WARSS")
+        check("SET MAME SET is offered for a game made without a MAME set (the audit, 2026-11-17: carnevil had no way to get one)",
+              "SET MAME SET" in text("#lb-body") and " · MAME " not in text("#lb-body .lb-game"))
         bad_frame, small, short = {}, {}, {}
         for v in ("library",):
             f, sm = q(BOX_FRAME), q(BOX_SMALL)
@@ -2659,7 +2665,7 @@ def main():
             shot("26-library-phone")
             check("from a phone: the games and MISSING read; no ADD GAME, no EDIT GAME, no FIND A MANUAL; no horizontal scroll",
                   "MISSING (" in text("#lb-body") and "+ ADD GAME" not in text("#lb-body") and "EDIT GAME" not in text("#lb-body")
-                  and "FIND A MANUAL" not in text("#lb-body")
+                  and "FIND A MANUAL" not in text("#lb-body") and "SET MAME SET" not in text("#lb-body")
                   and q("document.documentElement.scrollWidth <= 391"))
             c.open(B + "/dash/", 1024, 600)
             c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)

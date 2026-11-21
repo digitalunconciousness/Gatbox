@@ -1716,11 +1716,12 @@
         d.from_hubs && S.local ? btn(`FROM THE HUBS (${d.from_hubs})`, "warn", fromHubs) : null);
     if (S.local) add(row, btn("+ ADD GAME", null, addGame), btn("EDIT GAME", null, () => editGame(g), !g),
                      slug && !g ? btn("FIND GAME (MAME)", "primary", () => findGame(slug)) : null,
-                     g ? btn("FIND A MANUAL", g.missing ? "primary" : null, () => findManual(g)) : null);
+                     g ? btn("FIND A MANUAL", g.missing ? "primary" : null, () => findManual(g)) : null,
+                     g && !g.mame ? btn("SET MAME SET", null, () => setMame(g)) : null);
     head.appendChild(row);
     const info = el("div", "lb-game");
     if (g) {
-      add(info, el("b", null, g.title), el("span", "mut", ` ${[g.mfr, g.year].filter(Boolean).join(" ")} · key ${g.key} · ${docsLine(g)}`
+      add(info, el("b", null, g.title), el("span", "mut", ` ${[g.mfr, g.year].filter(Boolean).join(" ")} · key ${g.key}${g.mame ? " · MAME " + g.mame : ""} · ${docsLine(g)}`
           + (g.machines.length ? ` · machines: ${g.machines.map(m => m.name).join(", ")}` : " · no machine")),
           g.conflicts ? conflictBadge(g.conflicts) : null);
       if (g.why && g.missing) info.appendChild(el("div", "warn", "Why no manual: " + g.why));
@@ -1788,6 +1789,31 @@
       const g = await api("POST", "/api/library/games", body);
       await api("POST", `/api/library/games/${encodeURIComponent(g.key)}/machines`, {slug});
       toast(`ADDED ${g.title} · key ${g.key} · ${machineName(slug)} uses it`);
+    } catch (e) { fail(e); }
+    LB.data = null;
+    loadManuals();
+  }
+  // SET MAME SET: a game that has no MAME set gets one from MAME's own list (the audit, 2026-11-17: carnevil was made without
+  // one, and nothing on screen could add it). The ROM-list job then builds its chips and disks; MAME CHECK reads those.
+  async function setMame(g) {
+    const q = await keypad({title: `Search MAME's list for ${g.title}`, max: 60, value: g.title});
+    if (!q) return;
+    let r;
+    try { r = await api("GET", "/api/library/titles?q=" + encodeURIComponent(q)); } catch (e) { return fail(e); }
+    if (!r.built) return toast(r.why, "warn", 8000);
+    if (!r.results.length) return toast(`Nothing in MAME's list for "${q}".`, "warn", 7000);
+    const pick = await pickFrom(`MAME: ${r.count} for "${q}"`, r.results.map(x => ({
+      key: x.set, title: x.title, find: [x.desc.toLowerCase(), x.set],
+      sub: `${[x.mfr, x.year].filter(Boolean).join(" ")} · set ${x.set}${x.clone_of ? ` (clone of ${x.clone_of})` : ""}${x.in_library ? ` · already ${x.in_library}'s` : ""}`,
+      subCls: x.in_library ? "warn" : null})));
+    if (!pick) return;
+    const x = r.results.find(y => y.set === pick);
+    const ok = await choose(`${g.title}: MAME set ${x.clone_of || x.set}`, `${x.desc}. A dump of one of its chips settles which version.`,
+                           [["ok", "SET IT", true]]);
+    if (!ok) return;
+    try {
+      await api("PUT", `/api/library/games/${encodeURIComponent(g.key)}/mame`, {set: x.set});
+      toast(`${g.title}: MAME set ${x.clone_of || x.set}`);
     } catch (e) { fail(e); }
     LB.data = null;
     loadManuals();
@@ -3242,6 +3268,10 @@
     } else {
       big(s.op === "check" ? "TARGET REFUSED" : s.op === "format_check" ? "FORMAT REFUSED" : s.op === "format" ? (s.written ? "FAILED" : "NOT FORMATTED")
           : s.op === "write" ? (s.written ? "FAILED" : "NOT WRITTEN") : "STOPPED", "bad");
+      // When it happened: this card is the last job's until the next one, and "another disk read or write is running" an hour
+      // later read as busy now (the audit, 2026-11-17).
+      const when = s.finished_at || s.at;
+      if (when) line(`the last job, at ${hms(when, true)}`, "mut");
       line(s.error || "");
       if (s.hint) line("→ " + s.hint, "mut");
       if (s.op === "format" && s.written) line("The format had started: the drive has no usable filesystem now. Format it again.", "warn");

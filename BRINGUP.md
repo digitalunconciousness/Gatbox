@@ -1421,8 +1421,8 @@ The installed raillog and rail-report now differ from `payload/` on purpose.
   again, reseat both ends before suspecting anything else.
 
 ### Open items
-- A **Hauppauge** USB device (3-1.2) appeared/re-enumerated during the bench test (`can't set config #1, error -71`
-  once). The user didn't say whether it belongs there. Not needed by GATBOX; check what it is before cabinet use.
+- ~~A **Hauppauge** USB device (3-1.2) appeared/re-enumerated during the bench test~~ Closed 2026-11-17: the owner's capture
+  card, plugged in once, not part of this project. Nothing in the repo refers to it (the Pi's audit checked).
 - No barcade Wi-Fi profile yet → the GATBOX hotspot is how to reach the box in the cabinet.
 - No RTC battery → timestamps depend on NTP. Offline, the file header says `clock=` accordingly.
 - The 5 A settings assume a real 5 A supply (see above).

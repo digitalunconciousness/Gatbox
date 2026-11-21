@@ -2638,6 +2638,8 @@ def main():
         check("EDIT GAME: the title changes, the key never does",
               lib_has("SPROCKET WARSS") and "key sprocket-wars" in text("#lb-body")
               and api("GET", "/api/library/games/sprocket-wars")["title"] == "SPROCKET WARSS")
+        check("SET MAME SET is offered for a game made without a MAME set (the audit, 2026-11-17: carnevil had no way to get one)",
+              "SET MAME SET" in text("#lb-body") and " · MAME " not in text("#lb-body .lb-game"))
         bad_frame, small, short = {}, {}, {}
         for v in ("library",):
             f, sm = q(BOX_FRAME), q(BOX_SMALL)
@@ -2661,7 +2663,7 @@ def main():
             shot("26-library-phone")
             check("from a phone: the games and MISSING read; no ADD GAME, no EDIT GAME, no FIND A MANUAL; no horizontal scroll",
                   "MISSING (" in text("#lb-body") and "+ ADD GAME" not in text("#lb-body") and "EDIT GAME" not in text("#lb-body")
-                  and "FIND A MANUAL" not in text("#lb-body")
+                  and "FIND A MANUAL" not in text("#lb-body") and "SET MAME SET" not in text("#lb-body")
                   and q("document.documentElement.scrollWidth <= 391"))
             c.open(B + "/dash/", 1024, 600)
             c.wait("document.querySelector('#m-profile').textContent.length > 0", 15)

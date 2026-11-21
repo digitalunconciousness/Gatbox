@@ -1,0 +1,15 @@
+# Dependabot opens a PR when an action these workflows use has a new release (checkout,
+# setup-python, upload-artifact, setup-chrome, codeql-action). Nothing else: the Pi's
+# packages come from apt through the bootstrap, not from a manifest here.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "CI"

@@ -84,6 +84,11 @@ jobs:
         id: chrome
         with:
           chrome-version: stable
+      # Ubuntu 24.04 runners' AppArmor refuses the unprivileged user namespaces Chrome's
+      # sandbox needs, and Chrome exits on its first page ("the browser went away"). The Pi
+      # has no such restriction, so CI lifts it rather than tests/cdp.py adding --no-sandbox.
+      - name: Let Chrome's sandbox start
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Run the dashboard screenshot tests
         env:
           # Pi OS has `chromium`; the runner installs Chrome somewhere else.

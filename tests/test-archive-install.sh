@@ -123,6 +123,7 @@ echo "the unit and the real thing's guards:"
 if command -v systemd-analyze >/dev/null 2>&1; then
     v=$(cd "$T" && systemd-analyze verify "$REPO/archive/gatbox-archive.service" 2>&1 | grep -v "is not executable\|Command /usr/local/bin\|User gatbox-archive\|Group gatbox-archive\|EnvironmentFile" )
     check "systemd-analyze finds nothing to complain about in the unit" '[ -z "$v" ]'
+    [ -z "$v" ] || printf '        %s\n' "$v"
 else echo "  skip  no systemd-analyze"; fi
 check "the unit never lets the archive call out or see the system" 'grep -q "^IPAddressDeny=any" "$REPO/archive/gatbox-archive.service" && grep -q "^ProtectSystem=strict" "$REPO/archive/gatbox-archive.service" && grep -q "^NoNewPrivileges=yes" "$REPO/archive/gatbox-archive.service"'
 out=$(ARCHIVE_PREFIX="$T/real" bash "$INSTALL" --check 2>&1)

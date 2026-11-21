@@ -47,8 +47,8 @@ jobs:
         run: |
           failed=()
           for t in tests/test-*.sh; do
-            # test-dash drives a real browser; it runs in its own job below.
-            [ "$t" = tests/test-dash.sh ] && continue
+            # These drive a real browser; they run in the dashboard job below.
+            case "$t" in tests/test-dash.sh|tests/test-dash-load.sh|tests/test-archive-layout.sh) continue ;; esac
             echo "::group::$t"
             if bash "$t"; then :; else failed+=("$t"); fi
             echo "::endgroup::"
@@ -89,8 +89,18 @@ jobs:
       # has no such restriction, so CI lifts it rather than tests/cdp.py adding --no-sandbox.
       - name: Let Chrome's sandbox start
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: Run the dashboard screenshot tests
+      - name: Run the browser tests (dashboard, its load times, the archive's pages)
         env:
           # Pi OS has `chromium`; the runner installs Chrome somewhere else.
           GATBOX_CHROME: ${{ steps.chrome.outputs.chrome-path }}
-        run: bash tests/test-dash.sh
+        run: |
+          failed=()
+          for t in tests/test-dash.sh tests/test-dash-load.sh tests/test-archive-layout.sh; do
+            echo "::group::$t"
+            if bash "$t"; then :; else failed+=("$t"); fi
+            echo "::endgroup::"
+          done
+          if [ ${#failed[@]} -ne 0 ]; then
+            printf 'FAILED: %s\n' "${failed[@]}"
+            exit 1
+          fi

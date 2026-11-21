@@ -18,7 +18,7 @@ import time
 from gatboxlib import library as L
 from gatboxlib import libview
 
-from . import config, hubs, libconflicts, libsource, mame_request, meter, roster
+from . import config, hubs, libconflicts, libsource, mame_request, meter, roster, titles
 from .live import LIVE
 
 LOW_FREE = 2 * 1024 ** 3        # SYSTEM warns below 2 GB free on /srv, or at 90% used
@@ -220,6 +220,39 @@ def add(body, local):
         _refused(v.lib.put("mame", key, {"model_key": key, "set": mame_set, "prefer": mame_set, "status": "check",
                                          "why": "found by the title search: a dump of one of its chips settles which version"}, 0, by="gatbox"))
     LIVE.emit("library", {"key": key, "action": "added"})
+    return detail(key)
+
+
+def set_mame(key, body, local):
+    """PUT /api/library/games/<key>/mame {set}: give a game that has no MAME set one, from MAME's own list (the audit, 2026-11-17:
+    FIND GAME sets one only when it makes the game, and EDIT GAME takes none, so a game made any other way, like carnevil, could
+    never get one). A clone is stored as its parent, as FIND GAME does; the ROM-list job then builds its chips and disks. A game
+    that already has a set keeps it: changing one would leave the old set's ROM list behind."""
+    if not local:
+        raise meter.Bad(403, "the library is edited on the Pi's own screen")
+    name = body.get("set") if isinstance(body, dict) else None
+    if not isinstance(name, str) or not name.strip():
+        raise meter.Bad(400, "set: the MAME set's name")
+    v = _view()
+    if v.lib.get("game", key) is None or key not in v.live():
+        raise meter.Bad(404, f"no game {key!r} in the library")
+    hit = titles.lookup(name.strip())
+    if hit is None:
+        raise meter.Bad(400, f"MAME's list has no set {name.strip()!r}")
+    mame_set = hit[2] or hit[0]
+    cur = (v.recs("mame", key) or [None])[0]
+    if cur is not None and cur["data"].get("set"):
+        raise meter.Bad(409, f"{key} already has the MAME set {cur['data']['set']!r}")
+    for other in v.live():
+        if other != key and any(m["data"].get("set") == mame_set for m in v.recs("mame", other)):
+            raise meter.Bad(409, f"the MAME set {mame_set!r} is already the game {other!r}'s")
+    data = {"model_key": key, "set": mame_set, "prefer": mame_set, "status": "check",
+            "why": "set on the Pi's own screen from MAME's list: a dump of one of its chips settles which version"}
+    if cur is None:
+        _refused(v.lib.put("mame", key, data, 0, by="gatbox"))
+    else:
+        _refused(v.lib.put("mame", cur["id"], dict(cur["data"], **data), cur["rev"], by="gatbox"))
+    LIVE.emit("library", {"key": key, "action": "edited"})
     return detail(key)
 
 

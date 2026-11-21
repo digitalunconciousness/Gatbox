@@ -81,5 +81,13 @@ check "and not as a stray note"               '! grep -q "phase=" <<<"$out"'
 check "--json carries it"                     '[ "$(jq_ "[d[\"phase\"]]" <<<"$js")" = as_found ]'
 check "a file without the line: phase null"   '[ "$(rep "$T/free.csv" --json | jq_ "[d[\"phase\"]]")" = None ]'
 
+# A plot it can't write costs the plot, not the report (the audit, 2026-11-17: run from /var/log/gatbox, where the PNG can't
+# go, it ended in a traceback and the --json was never printed).
+nowrite=$(python3 "$REPORT" "$T/free.csv" --plot /nonexistent/dir/x.png 2>&1); rc=$?
+check "an unwritable plot path: exit 0, no traceback, it says the plot wasn't written" \
+      '[ "$rc" = 0 ] && ! grep -q Traceback <<<"$nowrite" && grep -q "plot not written" <<<"$nowrite"'
+check "... and --json still prints, with plot null" \
+      '[ "$(python3 "$REPORT" "$T/free.csv" --plot /nonexistent/dir/x.png --json 2>/dev/null | jq_ "[d[\"plot\"]]")" = None ]'
+
 echo "report: $pass passed, $fail failed"
 [ "$fail" = 0 ]

@@ -95,7 +95,11 @@ if "-w" in a and chip:                                    # write, then verify (
     old = open(chip, "rb").read()
     new = bytearray(o & s for o, s in zip(old, src))      # a UV EPROM: programming only clears bits
     if os.environ.get("FAKE_WRITE_FAIL") == "1":
-        new[200] = old[200]
+        # Leave unprogrammed the first byte the write would change. A fixed address failed
+        # 1 time in 256 with a random image: where the image's byte was 0xFF, nothing was left.
+        i = next((i for i, (o, n) in enumerate(zip(old, new)) if o != n), None)
+        if i is not None:
+            new[i] = old[i]
     for pct in (0, 50, 100):
         sys.stderr.write(f"\rWriting Code...  {pct}%\x1b[K")
     sys.stderr.write("\rWriting Code...  OK\x1b[K\n")

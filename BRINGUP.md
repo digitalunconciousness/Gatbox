@@ -91,6 +91,14 @@ Resume from the first unchecked box. ⏸ = waiting on the owner (hands on hardwa
       what was under it). The DISK tab shows "takes N GB" beside an image's size when that is less. System change: one MANIFEST line in
       the bootstrap and one in `archive/install.sh` (`sparse.py`); no unit changes. `test-sparse.sh`: 8, `test-disk.sh`: 226,
       `test-archive-disks.sh`: 34, `test-archive-install.sh`: 42, `test-dash.sh`: 390, `test-bootstrap.sh`: 198.
+- [x] **SET MAME SET** (the Pi's audit, 2026-11-17, 8.6: MAME CHECK said "no disk" for the CarnEvil image because the library game
+      `carnevil` had no MAME set, and nothing on the 7" could give an existing game one; built that day, **not installed**).
+      LIBRARY → SET MAME SET, on the Pi's own screen, for a game with no set: MAME's title list is searched, a clone is stored as
+      its parent (as FIND GAME does), and the ROM-list job then builds the game's chips and disks, which MAME CHECK reads. A game
+      that already has a set keeps it (409). `PUT /api/library/games/<key>/mame`. No system config. `test-library-web.sh`: 156,
+      `test-dash.sh`: 391. For CarnEvil: SET MAME SET on `carnevil` (set `carnevil`), and the machine `s-0001-carnevil` linked to
+      it (ALL GAMES on its page); then MAME CHECK compares against MAME 0.276's disks. The audit expects "no reference" next:
+      the CHD in `_chd/` isn't either of 0.276's CarnEvil disks.
 - [x] **The write gate** (the owner, 2026-11-17: "loopback-gate all writes"; built that day, **not installed**). gatbox-web
       had no gate on most of its changes: a phone, or any page open on one, could edit the roster, clear the machine, start a
       disk READ or confirm a rail limit. Now every change is the Pi's own screen's, checked in one place (`route()` in

@@ -56,6 +56,14 @@ def _rank(row, tokens, q):
     return 3
 
 
+def lookup(name):
+    """A MAME set by its name: (set, description, parent or ""), or None. Raises Bad 409 when the title list isn't built."""
+    titles, _ = _load()
+    if titles is None:
+        raise meter.Bad(409, "MAME's title list isn't built on this Pi yet: the install builds it from MAME (gatbox-mame-roms --titles).")
+    return next(((r[0], r[1], r[4]) for r in titles if r[0] == name), None)
+
+
 def search(q):
     """GET /api/library/titles?q=: up to 30 games whose description holds every word typed, best first (the exact title, then a
     title that starts with it, then words at the start of words), parents before their clones. Each carries the key a new game

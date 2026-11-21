@@ -64,7 +64,21 @@ check "mV and V DC stay in one file"               '[ "$(grep -vc "^#\|^iso" "${
 check "junk 726.4 V AC is a settling note"         'grep -qx "# settling=.*,726.4,V,AC AUTO" "${F[1]}" && ! grep -q "^[^#].*,726.4," "${F[1]}"'
 check "HOLD doesn't split the file"                '[ "$(grep -vc "^#\|^iso" "${F[1]}")" = 2 ]'
 check "each ended file says why (mode-change)"      '[ "$(grep -l "^# mode-change=" "${F[@]}" | wc -l)" = 4 ]'
-check "same-second names get _2, _3 …"             '[[ ${F[1]} == *_2.csv ]]'
+# Names come from the wall clock, so which files share a second depends on where a second
+# ticks over: check the rule on all five (in each second the first file has no suffix and
+# the next ones _2, _3 in order), and that the rule was exercised. Five files opened within
+# 4 s always put two in one second; a fast replay opens them well inside that.
+same_second_names() {
+    local f b n prev="" k=0 shared=0
+    for f in "${F[@]}"; do
+        [[ $(basename "$f") =~ ^(rail_[0-9]{8}_[0-9]{6})(_([0-9]+))?\.csv$ ]] || return 1
+        b=${BASH_REMATCH[1]}; n=${BASH_REMATCH[3]:-1}
+        if [ "$b" = "$prev" ]; then k=$((k + 1)); shared=1; else k=1; prev=$b; fi
+        [ "$n" = "$k" ] || return 1
+    done
+    [ "$shared" = 1 ]
+}
+check "same-second names get _2, _3 …"             'same_second_names'
 while read -r f; do rebuild "$f"; done < <(files dial) > "$T/dial.back"
 check "samples + settling notes = everything sent" 'diff <(grep -v "^#\|^iso" "$T/dial.csv" | cut -d, -f3-5) "$T/dial.back" >/dev/null'
 

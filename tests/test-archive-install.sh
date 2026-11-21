@@ -121,7 +121,9 @@ sys.exit(main([\"token\", \"add\", \"deck\", \"--role\", \"device\"]))" | grep -
 
 echo "the unit and the real thing's guards:"
 if command -v systemd-analyze >/dev/null 2>&1; then
-    v=$(cd "$T" && systemd-analyze verify "$REPO/archive/gatbox-archive.service" 2>&1 | grep -v "is not executable\|Command /usr/local/bin\|User gatbox-archive\|Group gatbox-archive\|EnvironmentFile" )
+    # Only what it says about this unit: verify also reports on the host's own units (a CI
+    # runner's xfs_scrub_all.service and walinuxagent.service warn about CPUAccounting=).
+    v=$(cd "$T" && systemd-analyze verify "$REPO/archive/gatbox-archive.service" 2>&1 | grep "gatbox-archive" | grep -v "is not executable\|Command /usr/local/bin\|User gatbox-archive\|Group gatbox-archive\|EnvironmentFile" )
     check "systemd-analyze finds nothing to complain about in the unit" '[ -z "$v" ]'
     [ -z "$v" ] || printf '        %s\n' "$v"
 else echo "  skip  no systemd-analyze"; fi

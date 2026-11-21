@@ -214,6 +214,22 @@ def versions():
     return _versions
 
 
+# What the bootstrap recorded at the end of its last run (gatbox-bootstrap.sh, INSTALLED): the
+# release tag or commit it installed. Read each time, so a re-run shows without a restart.
+INSTALLED = os.environ.get("GATBOX_INSTALLED", "/usr/local/share/gatbox/installed.json")
+
+
+def installed():
+    try:
+        with open(INSTALLED, encoding="utf-8") as fh:
+            d = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(d, dict):
+        return None
+    return {k: d.get(k) for k in ("describe", "commit", "branch", "local_changes")}
+
+
 def logger(procs):
     running = any(c.split(b"\0")[1:2] == [b"/usr/local/bin/gatbox-raillog"] for c in procs)   # bash <script>
     return {"running": running, "stopped": os.path.exists(os.path.join(config.CTRL, "stopped")),
@@ -284,7 +300,7 @@ def snapshot():
             "undervoltage_now": (_read(os.path.join(vm, "in0_lcrit_alarm")) == "1") if vm else None,
             "ext5v_v": _vc_volts("EXT5V_V"),
             "disk": disk(), "network": network(), "clock": clock(), "kiosk": kiosk(procs),
-            "logger": logger(procs), "versions": versions(), "hub": hub(), "library": games.storage(),
+            "logger": logger(procs), "versions": versions(), "installed": installed(), "hub": hub(), "library": games.storage(),
         }
         out["errors"] = dict(_errors)
         _cache[:] = [time.monotonic(), out]

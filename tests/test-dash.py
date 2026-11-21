@@ -291,6 +291,9 @@ def setup():
         {"id": 412, "external_id": None, "issue": "Rail sags under load",
          "priority": "High", "status": "Open", "source": "web",
          "reported": 1790000000.0}]}}, open(f"{T}/sync/orders.json", "w"))
+    # What the bootstrap recorded: a release, and the checkout had a local change.
+    json.dump({"describe": "v2026.11.21-dirty", "commit": "0" * 40, "branch": "main", "local_changes": True},
+              open(f"{T}/installed.json", "w"))
     json.dump({"at": 1790000000.0, "ssids": ["HomeNetwork", "OldArcade"]},
               open(f"{T}/wifi/saved.json", "w"))
     json.dump({"at": 1790000000.0, "ssids": ["HomeNetwork", "CafeOpen"]},
@@ -299,7 +302,7 @@ def setup():
                "state": "joined", "detail": "hunter2-must-not-appear"},
               open(f"{T}/wifi/status.json", "w"))
     env = dict(os.environ, GATBOX_WEB_PORT=str(PORT), STATE_DIRECTORY=f"{T}/ctrl", CACHE_DIRECTORY=f"{T}/cache",
-               GATBOX_WIFI_SPOOL=f"{T}/wifi", GATBOX_SYNC_STATE=f"{T}/sync",
+               GATBOX_WIFI_SPOOL=f"{T}/wifi", GATBOX_SYNC_STATE=f"{T}/sync", GATBOX_INSTALLED=f"{T}/installed.json",
                GATBOX_LOGDIR=f"{T}/log", GATBOX_RUNDIR=f"{T}/run", GATBOX_REPORT=os.path.join(REPO, "tools/gatbox-rail-report"),
                GATBOX_DATA=f"{T}/data", MPLCONFIGDIR=f"{T}/cache/mpl", GATBOX_DUMP_SPOOL=f"{T}/spool",
                GATBOX_ROMS=f"{T}/roms", GATBOX_MINIPRO_PARTS=f"{T}/parts.txt", GATBOX_MAME_ROMS=f"{T}/mame-roms.json",
@@ -1071,6 +1074,10 @@ def main():
         hubcard = ("[...document.querySelectorAll('#sy-grid .card')]"
                    ".find(c => (c.querySelector('h2') || {}).textContent === 'Hub')")
         check("system: a Hub tile", q(f"!!({hubcard})"))
+        softcard = ("[...document.querySelectorAll('#sy-grid .card')]"
+                    ".find(c => (c.querySelector('h2') || {}).textContent === 'Software')")
+        check("system: Software says what the bootstrap installed, and that it had local changes",
+              settles(c, f"(({softcard}) || {{}}).textContent.includes('v2026.11.21-dirty on main (local changes)')", 15))
         libcard = ("[...document.querySelectorAll('#sy-grid .card')]"
                    ".find(c => (c.querySelector('h2') || {}).textContent === 'Library')")
         check("system: a Library tile, before the library is set up: it says so, with the manuals' size and the room on /srv",

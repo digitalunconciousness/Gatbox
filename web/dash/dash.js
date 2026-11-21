@@ -1552,8 +1552,13 @@
       const asked = r => { wifiReq = (r && r.id) || null; wifiStuck = null; return load(); };
       load();
     }
-    const v = d.versions || {};
-    tile("Software", Object.entries(v).map(([k, x]) => [k, x]));
+    const v = d.versions || {}, ins = d.installed;
+    // What the bootstrap installed: the release (or commit) and whether it had local changes.
+    const installedRow = ins && ins.describe
+      ? ["GATBOX", `${ins.describe}${ins.branch ? " on " + ins.branch : ""}${ins.local_changes ? " (local changes)" : ""}`,
+         ins.local_changes ? "warn" : null]
+      : ["GATBOX", "not recorded yet: the next bootstrap run records it"];
+    tile("Software", [installedRow, ...Object.entries(v).map(([k, x]) => [k, x])]);
     if (d.errors && Object.keys(d.errors).length) tile("Couldn't read", Object.entries(d.errors).map(([k, x]) => [k, x, "warn"]));
     if (!BOX) {                                     // the 7" has no way back from a page it leaves for
       const lk = el("div", "card");

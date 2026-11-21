@@ -8,17 +8,44 @@ on:
     branches: [main, 'integration/**']
   pull_request:
     branches: [main]
+  # Weekly, so a change on GitHub's side (a new runner image, a new Chrome) shows up here
+  # rather than in the middle of somebody's PR.
+  schedule:
+    - cron: '23 10 * * 0'
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   tests:
     runs-on: ubuntu-latest
+    # The repository is checked out as Gatbox/, with cabcrawl/ and ArcadeTech-Tracker/
+    # beside it: test-contract, test-rules, test-antislop and test-hooks then compare every
+    # vendored copy (contract v1, the library's read side, RULES.md, the antislop skills,
+    # the privacy check and its hook) with the hubs' copies on their default branches.
+    # GATBOX owns them, so a hub that is behind fails here until it is brought up to date.
+    defaults:
+      run:
+        working-directory: Gatbox
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          path: Gatbox
+      - uses: actions/checkout@v7
+        with:
+          repository: digitalunconciousness/cabcrawl
+          path: cabcrawl
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          repository: digitalunconciousness/ArcadeTech-Tracker
+          path: ArcadeTech-Tracker
+          persist-credentials: false
 
       # The Pi runs Trixie's Python 3.13. Nothing newer: the code must not rely on
       # anything 3.14 added, so CI pins the same version the deployment has.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
 
@@ -42,6 +69,7 @@ jobs:
         run: |
           python -VV
           python -c "import matplotlib, qrcode, PIL; print('matplotlib', matplotlib.__version__, 'pillow', PIL.__version__)"
+          for r in cabcrawl ArcadeTech-Tracker; do echo "$r at $(git -C ../$r log -1 --format='%h %s')"; done
 
       - name: Run the test suite
         run: |
@@ -64,8 +92,8 @@ jobs:
     # Split out so a browser problem on the runner cannot mask a logic failure above.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
       - name: Plot and QR dependencies
@@ -80,7 +108,7 @@ jobs:
           sudo apt-get install -y -q --no-install-recommends poppler-utils sleuthkit catdoc \
             dosfstools exfatprogs e2fsprogs mtools tesseract-ocr tesseract-ocr-eng mame-tools \
             gddrescue sqlite3 shellcheck
-      - uses: browser-actions/setup-chrome@v1
+      - uses: browser-actions/setup-chrome@v2
         id: chrome
         with:
           chrome-version: stable
@@ -93,14 +121,29 @@ jobs:
         env:
           # Pi OS has `chromium`; the runner installs Chrome somewhere else.
           GATBOX_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          # Every page of the archive at every width it is tested at.
+          ARCHIVE_SHOTS: ${{ runner.temp }}/shots/archive
         run: |
           failed=()
+          mkdir -p "$RUNNER_TEMP/shots/dash"
           for t in tests/test-dash.sh tests/test-dash-load.sh tests/test-archive-layout.sh; do
             echo "::group::$t"
-            if bash "$t"; then :; else failed+=("$t"); fi
+            # test-dash keeps its 7" and phone screenshots in the folder it is given.
+            args=(); [ "$t" = tests/test-dash.sh ] && args=("$RUNNER_TEMP/shots/dash")
+            if bash "$t" "${args[@]}"; then :; else failed+=("$t"); fi
             echo "::endgroup::"
           done
           if [ ${#failed[@]} -ne 0 ]; then
             printf 'FAILED: %s\n' "${failed[@]}"
             exit 1
           fi
+      # On the run's page under Artifacts, passed or not: a failed check is easier to read
+      # beside the picture of what the screen looked like.
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: screenshots
+          path: ${{ runner.temp }}/shots
+          if-no-files-found: ignore
+          retention-days: 14

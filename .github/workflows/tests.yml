@@ -22,16 +22,26 @@ jobs:
         with:
           python-version: '3.13'
 
-      # On the Pi these are apt packages (python3-matplotlib, python3-qrcode) and the
-      # code lazy-imports both, so a machine without them degrades instead of failing.
+      # On the Pi these are apt packages (python3-matplotlib, python3-qrcode, python3-pil) and the
+      # code lazy-imports them (and python3-pil), so a machine without them degrades instead of failing.
       # CI installs them so the plot, PDF and label paths are actually exercised.
       - name: Plot and QR dependencies
-        run: python -m pip install --disable-pip-version-check matplotlib qrcode
+        run: python -m pip install --disable-pip-version-check matplotlib qrcode pillow
+
+      # The command-line tools the Pi's bootstrap installs with apt, which the suites call:
+      # poppler (pdftotext, pdftoppm), sleuthkit (mmls, fls, icat), catdoc, the filesystem
+      # makers (FORMAT), mtools, tesseract (READ LIMITS' OCR), chdman (MAME CHECK), ddrescue.
+      - name: Command-line tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends poppler-utils sleuthkit catdoc \
+            dosfstools exfatprogs e2fsprogs mtools tesseract-ocr tesseract-ocr-eng mame-tools \
+            gddrescue sqlite3 shellcheck
 
       - name: Report the versions under test
         run: |
           python -VV
-          python -c "import matplotlib, qrcode; print('matplotlib', matplotlib.__version__)"
+          python -c "import matplotlib, qrcode, PIL; print('matplotlib', matplotlib.__version__, 'pillow', PIL.__version__)"
 
       - name: Run the test suite
         run: |
@@ -59,7 +69,17 @@ jobs:
         with:
           python-version: '3.13'
       - name: Plot and QR dependencies
-        run: python -m pip install --disable-pip-version-check matplotlib qrcode
+        run: python -m pip install --disable-pip-version-check matplotlib qrcode pillow
+
+      # The command-line tools the Pi's bootstrap installs with apt, which the suites call:
+      # poppler (pdftotext, pdftoppm), sleuthkit (mmls, fls, icat), catdoc, the filesystem
+      # makers (FORMAT), mtools, tesseract (READ LIMITS' OCR), chdman (MAME CHECK), ddrescue.
+      - name: Command-line tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends poppler-utils sleuthkit catdoc \
+            dosfstools exfatprogs e2fsprogs mtools tesseract-ocr tesseract-ocr-eng mame-tools \
+            gddrescue sqlite3 shellcheck
       - uses: browser-actions/setup-chrome@v1
         id: chrome
         with:

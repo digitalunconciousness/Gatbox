@@ -56,6 +56,11 @@
 
 1. The owner plugs the MEGA4 (from the Pi, no brick) into a working USB 3 port and the T48 into one of its ports.
    The Pi's `lsusb`, `lsusb -t` and `lsusb -v` give the MEGA4's IDs and the T48's port.
+   **Done 2026-11-22:** the MEGA4 is on the Pi's one working blue port (the top USB 3 port broke about 2026-11-15)
+   and reads as two hubs: 2109:0817 (USB 3 half, bus 2 port 1) and 2109:2817 (USB 2 half, bus 1 port 1). The T48
+   (a466:0a53) is on MEGA4 port 3 (1-1.3). The 4 TB store is on MEGA4 port 2 (2-1.2, 5 Gb/s): it is never switched,
+   and the job refuses any port that isn't the T48's. The Waveshare HAT (1a40:0101) is on the Pi's USB 2 port 1-2 with
+   the meter's PL-2303, the EY-H2 and the dock.
 2. The bootstrap adds `uhubctl` only; the owner runs it. Then `sudo uhubctl` lists the MEGA4 and whether it reports
    per-port power switching, and one `sudo uhubctl -l <hub> -p <port> -a cycle` with the T48 idle shows in the
    kernel log whether the port's power really goes off.

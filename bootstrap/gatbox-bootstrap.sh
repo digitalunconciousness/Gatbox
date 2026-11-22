@@ -185,6 +185,7 @@ PKGS=(sigrok-cli python3-matplotlib python3-qrcode rsync git curl util-linux-ext
       dosfstools exfatprogs e2fsprogs                               # the disk job's FORMAT: mkfs and fsck for FAT, exFAT and ext4, run on a scratch file in the store, never on a drive
       catdoc                                                        # the drive browser's text search (F3): catdoc, xls2csv, catppt read old Word, Excel and PowerPoint files (poppler-utils reads PDFs)
       sleuthkit python3-pil                                         # the drive browser (docs/plans/2026-11-15-drive-browser.md): fls, fsstat, mmls, icat read a stored image, nothing is mounted; Pillow makes thumbnails
+      uhubctl                                                       # POWER CYCLE T48: the MEGA4's port power, the T48's port only (docs/plans/2026-11-22-mega4-t48-power-cycle.md)
       mame)                                                        # mame -romident only, no gameplay
 # minipro: pinned upstream release. Bump deliberately: check its T48 support and changelog, and refresh
 # bootstrap/files/minipro-<tag>/ (its udev rules, which its `make install` skips on Pi OS) at the same time.

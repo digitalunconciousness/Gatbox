@@ -65,18 +65,21 @@ NoNewPrivileges=yes
 # The kernel and the rest of the system, read-only or out of reach (2026-11-17's security pass). AF_NETLINK stays: /api/system asks
 # `iw` for the Wi-Fi link, and iw talks netlink. No SystemCallFilter beyond @system-service: the reports run matplotlib and the
 # manuals pdftoppm, and a narrower filter is a guess that only the Pi can check.
+# Plus clock_adjtime, and no ProtectClock: /api/system reads the kernel's NTP state with adjtimex(modes = 0), which glibc makes
+# clock_adjtime on the Pi. Both @system-service and ProtectClock (an implied ~@clock) refuse it, and the refusal is SIGSYS: on
+# 2026-11-22 the Pi killed gatbox-web 217 times in 35 minutes. Setting the clock still needs CAP_SYS_TIME, which this unit
+# never has: the Pi answered a write attempt under this filter with EPERM.
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes
 ProtectControlGroups=yes
-ProtectClock=yes
 ProtectHostname=yes
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
 SystemCallArchitectures=native
-SystemCallFilter=@system-service
+SystemCallFilter=@system-service clock_adjtime
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 Nice=10
 

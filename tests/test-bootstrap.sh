@@ -72,6 +72,18 @@ check "tmpfiles creates the spool 2770 root:gatbox-wifi" \
     'grep -qE "^d /var/spool/gatbox-wifi +2770 +root +gatbox-wifi" "$REPO/bootstrap/files/tmpfiles-gatbox.conf"'
 check "gatbox-web may write to the spool"        'grep -q "ReadWritePaths=-/var/spool/gatbox-wifi" "$REPO/backend/gatbox-web.service"'
 check "gatbox-web is in the gatbox-wifi group"   'grep -q "SupplementaryGroups=gatbox-wifi" "$REPO/backend/gatbox-web.service"'
+# /api/system reads the NTP state with adjtimex(modes = 0), which is clock_adjtime on the Pi. A filter without it, or ProtectClock
+# (an implied ~@clock), and the kernel kills gatbox-web with SIGSYS on its first /api/system (the Pi, 2026-11-22: 217 restarts).
+check "gatbox-web's syscall filter allows clock_adjtime, and nothing (ProtectClock, ~@clock) takes it away" \
+    'grep -qE "^SystemCallFilter=@system-service( .*)? clock_adjtime( |$)" "$REPO/backend/gatbox-web.service" && ! grep -qE "^ProtectClock=(yes|true|1)" "$REPO/backend/gatbox-web.service" && ! grep -qE "^SystemCallFilter=~.*@clock" "$REPO/backend/gatbox-web.service"'
+if systemd-run --user --quiet --wait --pipe true >/dev/null 2>&1; then
+    props=(); while IFS= read -r l; do props+=(-p "$l"); done < <(grep -E "^(SystemCallFilter|SystemCallArchitectures|ProtectClock)=" "$REPO/backend/gatbox-web.service")
+    adj=$(systemd-run --user --quiet --wait --pipe -p NoNewPrivileges=yes "${props[@]}" python3 -I -c \
+        'import ctypes; b = ctypes.create_string_buffer(512); print("read", ctypes.CDLL(None).adjtimex(b) >= 0)' 2>&1)
+    check "... and under the unit's own filter lines, in a transient user unit, a read-only adjtimex runs" '[[ $adj == "read True" ]]'
+else
+    echo "  skip  the adjtimex run under the unit's filter (no systemd user manager here)"
+fi
 check "--check reports the spool"                'grep -q "/var/spool/gatbox-wifi" "$BOOT"'
 
 # Phase 8: several hubs. Both credential paths must always exist, or the unit fails outright.

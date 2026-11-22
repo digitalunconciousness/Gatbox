@@ -17,6 +17,22 @@ whose files changed. `bash bootstrap/gatbox-bootstrap.sh --check` shows what a r
 `GATBOX_AP_PSK='…'` arms the fallback hotspot (the passphrase is never stored in this repo).
 Joining a network — by QR, from the 7" screen, or from the desktop — is `docs/network.md`.
 
+### Releases
+
+A release is a `v*` tag on `main` (a date: `v2026.11.21`) that CI passed: `.github/workflows/release.yml`
+runs the whole of `tests.yml` on the tagged commit and makes the GitHub release, its notes the PRs merged
+since the last one, only if that passes. To put a release on the Pi, or go back to an earlier one:
+
+```
+cd ~/gatbox && git fetch --tags && git checkout v2026.11.21
+sudo bash bootstrap/gatbox-bootstrap.sh
+```
+
+`git checkout main && git pull` and the same bootstrap run return to the tip. Each run records what it
+installed in `/usr/local/share/gatbox/installed.json`, and SYSTEM → Software shows it ("v2026.11.21", or a
+commit and "(local changes)" when the checkout had any). Nothing checks a step back across a change to a
+file format the deck keeps (the library, the CSV header); a release's notes say when one has changed.
+
 ## Layout
 
 | Path | What |

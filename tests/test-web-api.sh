@@ -63,7 +63,7 @@ FX=/var/log/gatbox/rail_20260925_021402.csv
 
 GATBOX_WEB_PORT=$PORT STATE_DIRECTORY="$T/ctrl" CACHE_DIRECTORY="$T/cache" GATBOX_LOGDIR="$T/log" GATBOX_RUNDIR="$T/run" \
 GATBOX_REPORT="$REPO/tools/gatbox-rail-report" GATBOX_WEB_HEARTBEAT=1 MPLCONFIGDIR="$T/cache/mpl" \
-GATBOX_WIFI_SPOOL="$T/wifi" GATBOX_SYNC_STATE="$T/sync" \
+GATBOX_WIFI_SPOOL="$T/wifi" GATBOX_SYNC_STATE="$T/sync" GATBOX_INSTALLED="$T/installed.json" \
     setsid python3 "$REPO/backend/gatbox-web" > "$T/web.log" 2>&1 &
 echo $! > "$T/web.pid"
 waitfor 'curl -fs -o /dev/null "$B/kiosk/state"' 50 || { echo "gatbox-web didn't start"; cat "$T/web.log"; exit 1; }
@@ -288,6 +288,7 @@ check "POST /api/session/stop -> 202, stopped" '[ "$(api POST /api/session/stop)
 
 echo "system + devices:"
 check "/api/system: the panel's fields"       '[ "$(api GET /api/system)" = 200 ] && [ "$(js "all(k in d for k in (\"temp_c\", \"throttled\", \"ext5v_v\", \"disk\", \"network\", \"clock\", \"kiosk\", \"versions\", \"logger\", \"hub\"))")" = True ]'
+check "/api/system: installed is null before the bootstrap has recorded one"  '[ "$(js "d[\"installed\"] is None")" = True ]'
 check "/api/system: hub is null until sync runs"  '[ "$(js "d[\"hub\"] is None")" = True ]'
 check "/api/system: clock source + disk"      '[ "$(js "d[\"clock\"][\"source\"] in (\"ntp\", \"rtc\", \"unverified\"), d[\"disk\"][\"system\"][\"total\"] > 0")" = "True True" ]'
 check "/api/devices: dmm, t48, scanner, touch" '[ "$(api GET /api/devices)" = 200 ] && [ "$(js "sorted(k for k in d if k != \"usb\")")" = "['"'"'dmm'"'"', '"'"'scanner'"'"', '"'"'t48'"'"', '"'"'touch'"'"']" ]'
@@ -415,6 +416,9 @@ waitfor '[ "$(api GET /api/system)" = 200 ] && [ "$(js "len((d[\"hub\"] or {}).g
 check "SYSTEM: one line per hub, by label"       '[ "$(js "[(x[\"label\"], x[\"jobs\"], x[\"queued\"]) for x in d[\"hub\"][\"hubs\"]]")" = "[('"'"'ALPHA'"'"', False, 0), ('"'"'BRAVO'"'"', True, 2)]" ]'
 check "the old keys are still there"             '[ "$(js "(d[\"hub\"][\"queued\"], d[\"hub\"][\"sent_total\"])")" = "(2, 5)" ]'
 check "held and conflicts are listed"            '[ "$(js "(d[\"hub\"][\"held\"], [c[\"machine\"] for c in d[\"hub\"][\"conflicts\"]])")" = "(['"'"'nobody-has'"'"'], ['"'"'gauntlet'"'"'])" ]'
+echo '{"branch": "main", "commit": "0123456789abcdef0123456789abcdef01234567", "describe": "v2026.11.21", "local_changes": false, "extra": "x"}' > "$T/installed.json"
+waitfor '[ "$(api GET /api/system)" = 200 ] && [ "$(js "(d[\"installed\"] or {}).get(\"describe\")")" = v2026.11.21 ]' 100
+check "SYSTEM: what the bootstrap installed, the known fields only"  '[ "$(js "sorted(d[\"installed\"])")" = "['"'"'branch'"'"', '"'"'commit'"'"', '"'"'describe'"'"', '"'"'local_changes'"'"']" ]'
 api GET /api/roster >/dev/null
 check "the picker is grouped by hub label"       '[ "$(js "[(g[\"label\"], g[\"slugs\"]) for g in d[\"groups\"]]")" = "[('"'"'ALPHA'"'"', ['"'"'gauntlet-legends'"'"', '"'"'gauntlet'"'"']), ('"'"'BRAVO'"'"', ['"'"'gauntlet'"'"', '"'"'s-0042-ms-pac-man'"'"', '"'"'s-0099-other'"'"'])]" ]'
 check "a customer machine is in the list, with its hub and model" '[ "$(js "[(m[\"hub\"], m.get(\"model_key\")) for m in d[\"machines\"] if m[\"slug\"] == \"s-0042-ms-pac-man\"]")" = "[('"'"'BRAVO'"'"', '"'"'gauntlet'"'"')]" ]'

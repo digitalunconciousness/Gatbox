@@ -201,6 +201,22 @@ mame_roms_ok() { GATBOX_DATA="$REPO/data" python3 "$REPO/tools/gatbox-mame-roms"
 MAME_TITLES=/usr/local/share/gatbox/mame-titles.json
 mame_titles_wanted() { [ -x /usr/games/mame ]; }
 mame_titles_ok() { python3 "$REPO/tools/gatbox-mame-roms" --titles-check "$MAME_TITLES"; }
+# What this run installed, for the SYSTEM tab: the release tag (or the commit), the commit, the
+# branch, and whether the checkout had local changes. No time in it, so --check stays quiet
+# when nothing changed. git runs as root over the owner's checkout: safe.directory for that one.
+INSTALLED=/usr/local/share/gatbox/installed.json
+installed_json() {
+    local g=(git -c safe.directory="$REPO" -C "$REPO")
+    python3 - "$("${g[@]}" describe --tags --always --dirty 2>/dev/null)" "$("${g[@]}" rev-parse HEAD 2>/dev/null)" \
+        "$("${g[@]}" rev-parse --abbrev-ref HEAD 2>/dev/null)" "$("${g[@]}" status --porcelain --untracked-files=no 2>/dev/null)" <<'PY'
+import json, sys
+describe, commit, branch, dirty = (sys.argv[1:] + [""] * 4)[:4]
+print(json.dumps({"describe": describe or None, "commit": commit or None,
+                  "branch": branch if branch not in ("", "HEAD") else None,   # a checked-out tag has none
+                  "local_changes": bool(dirty)}, sort_keys=True))
+PY
+}
+installed_ok() { [ "$(cat "$INSTALLED" 2>/dev/null)" = "$(installed_json)" ]; }
 MINIPRO_URL=https://gitlab.com/DavidGriffith/minipro.git
 MINIPRO_SRC=/usr/local/src/minipro
 # gatbox-web's fonts: Chakra Petch + Share Tech Mono (SIL OFL), the project's design-token fonts, pinned to one
@@ -455,6 +471,7 @@ if [ "${1:-}" = "--check" ]; then
     command -v minipro >/dev/null && ! parts_ok && DIFFS+=("generate   $PARTS_LIST")
     mame_roms_wanted && ! mame_roms_ok && DIFFS+=("generate   $MAME_ROMS (from mame -listxml: a minute or two)")
     mame_titles_wanted && ! mame_titles_ok && DIFFS+=("generate   $MAME_TITLES (MAME's title list, once per MAME version: a minute or two)")
+    installed_ok || DIFFS+=("record     $INSTALLED ($(git -c safe.directory="$REPO" -C "$REPO" describe --tags --always --dirty 2>/dev/null))")
     if ((${#DIFFS[@]})); then printf 'a run would change:\n'; printf '  %s\n' "${DIFFS[@]}"; ((${#NOTES[@]})) && printf 'note: %s\n' "${NOTES[@]}"; exit 3; fi
     echo "nothing to change: this Pi matches the checkout"
     ((${#NOTES[@]})) && printf 'note: %s\n' "${NOTES[@]}"
@@ -857,6 +874,14 @@ elif systemctl -q is-enabled gatbox-ap-fallback.service 2>/dev/null; then
     log "hotspot fallback moved from boot-only to the 2-minute timer (GATBOX_AP_PSK=off removes it)"
 else
     log "skipped (set GATBOX_AP_PSK to enable)"
+fi
+
+# What is installed, written last: only a run that got this far records itself.
+if ! installed_ok; then
+    tmp=$(mktemp)
+    installed_json > "$tmp" && install -D -m 644 "$tmp" "$INSTALLED"
+    rm -f "$tmp"
+    log "installed: $(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["describe"], *(["on", d["branch"]] if d["branch"] else []))' "$INSTALLED")"
 fi
 
 # ---------------------------------------------------------------------------
